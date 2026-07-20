@@ -92,6 +92,13 @@ pub enum Rem6CliError {
     InvalidRiscvO3ScalarMemoryDepth {
         value: String,
     },
+    InvalidRiscvO3ScalarLiveWindowDepth {
+        value: String,
+    },
+    RiscvO3ScalarLiveWindowDepthBelowMemoryDepth {
+        scalar_memory_depth: usize,
+        scalar_live_window_depth: usize,
+    },
     InvalidRiscvO3IssueWidth {
         value: String,
     },
@@ -347,6 +354,7 @@ pub enum Rem6CliError {
     RiscvPcCountTargetRequiresExecution,
     RiscvBranchLookaheadRequiresExecution,
     RiscvO3ScalarMemoryDepthRequiresExecution,
+    RiscvO3ScalarLiveWindowDepthRequiresExecution,
     RiscvO3IssueWidthRequiresExecution,
     RiscvO3WritebackWidthRequiresExecution,
     RiscvBranchPredictorRequiresExecution,
@@ -389,6 +397,7 @@ pub enum Rem6CliError {
     RiscvPcCountTargetRequiresRiscv,
     RiscvBranchLookaheadRequiresRiscv,
     RiscvO3ScalarMemoryDepthRequiresRiscv,
+    RiscvO3ScalarLiveWindowDepthRequiresRiscv,
     RiscvO3IssueWidthRequiresRiscv,
     RiscvO3WritebackWidthRequiresRiscv,
     RiscvBranchPredictorRequiresRiscv,
@@ -588,6 +597,21 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidRiscvO3ScalarMemoryDepth { value } => {
                 write!(formatter, "invalid RISC-V O3 scalar memory depth {value}")
+            }
+            Self::InvalidRiscvO3ScalarLiveWindowDepth { value } => {
+                write!(
+                    formatter,
+                    "invalid RISC-V O3 scalar live-window depth {value}"
+                )
+            }
+            Self::RiscvO3ScalarLiveWindowDepthBelowMemoryDepth {
+                scalar_memory_depth,
+                scalar_live_window_depth,
+            } => {
+                write!(
+                    formatter,
+                    "RISC-V O3 scalar live-window depth {scalar_live_window_depth} is below scalar memory depth {scalar_memory_depth}"
+                )
             }
             Self::InvalidRiscvO3IssueWidth { value } => {
                 write!(formatter, "invalid RISC-V O3 issue width {value}")
@@ -943,6 +967,12 @@ impl fmt::Display for Rem6CliError {
                     "--riscv-o3-scalar-memory-depth requires --execute"
                 )
             }
+            Self::RiscvO3ScalarLiveWindowDepthRequiresExecution => {
+                write!(
+                    formatter,
+                    "--riscv-o3-scalar-live-window-depth requires --execute"
+                )
+            }
             Self::RiscvO3IssueWidthRequiresExecution => {
                 write!(formatter, "--riscv-o3-issue-width requires --execute")
             }
@@ -1074,6 +1104,12 @@ impl fmt::Display for Rem6CliError {
                 write!(
                     formatter,
                     "--riscv-o3-scalar-memory-depth requires --isa riscv"
+                )
+            }
+            Self::RiscvO3ScalarLiveWindowDepthRequiresRiscv => {
+                write!(
+                    formatter,
+                    "--riscv-o3-scalar-live-window-depth requires --isa riscv"
                 )
             }
             Self::RiscvO3IssueWidthRequiresRiscv => {

@@ -774,15 +774,29 @@ impl RiscvCore {
         state.branch_lookahead = lookahead;
         state
             .o3_runtime
-            .set_branch_derived_scalar_memory_window_limit(lookahead.saturating_add(1));
+            .set_branch_derived_window_depths(lookahead.saturating_add(1));
     }
 
     pub fn set_o3_scalar_memory_depth(&self, depth: usize) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .o3_runtime
-            .set_scalar_memory_window_limit(depth);
+        let depth = depth.clamp(
+            MIN_RISCV_O3_SCALAR_MEMORY_DEPTH,
+            MAX_RISCV_O3_SCALAR_MEMORY_DEPTH,
+        );
+        self.set_o3_window_depths(depth, depth);
+    }
+
+    pub fn set_o3_window_depths(
+        &self,
+        scalar_memory_depth: usize,
+        scalar_live_window_depth: usize,
+    ) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        assert!(
+            state
+                .o3_runtime
+                .set_window_depths(scalar_memory_depth, scalar_live_window_depth),
+            "RISC-V O3 scalar live-window depth must be valid and at least scalar memory depth",
+        );
     }
 
     pub fn set_o3_issue_width(&self, issue_width: usize) {

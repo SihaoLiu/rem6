@@ -11,7 +11,6 @@ use super::o3_store_forwarding::{
 };
 use super::*;
 
-const MAX_O3_SCALAR_MEMORY_DEPTH: usize = 4;
 use crate::{
     riscv_o3_window_policy::RiscvScalarIntegerLiveWindow,
     riscv_scalar_memory_window::independent_scalar_load_destination,
@@ -48,19 +47,59 @@ impl O3ScalarMemoryWindowState {
 }
 
 impl O3RuntimeState {
-    pub(crate) fn set_scalar_memory_window_limit(&mut self, limit: usize) {
-        self.scalar_memory_window_limit = limit.clamp(1, MAX_O3_SCALAR_MEMORY_DEPTH);
-        self.scalar_memory_window_limit_explicit = true;
+    pub(crate) fn set_window_depths(
+        &mut self,
+        scalar_memory_depth: usize,
+        scalar_live_window_depth: usize,
+    ) -> bool {
+        if !(MIN_RISCV_O3_SCALAR_MEMORY_DEPTH..=MAX_RISCV_O3_SCALAR_MEMORY_DEPTH)
+            .contains(&scalar_memory_depth)
+            || !(MIN_RISCV_O3_SCALAR_LIVE_WINDOW_DEPTH..=MAX_RISCV_O3_SCALAR_LIVE_WINDOW_DEPTH)
+                .contains(&scalar_live_window_depth)
+            || scalar_live_window_depth < scalar_memory_depth
+        {
+            return false;
+        }
+        self.scalar_memory_window_limit = scalar_memory_depth;
+        self.scalar_live_window_limit = scalar_live_window_depth;
+        self.window_depths_explicit = true;
+        true
     }
 
-    pub(crate) fn set_branch_derived_scalar_memory_window_limit(&mut self, limit: usize) {
-        if !self.scalar_memory_window_limit_explicit {
-            self.scalar_memory_window_limit = limit.clamp(1, MAX_O3_SCALAR_MEMORY_DEPTH);
+    #[cfg(test)]
+    pub(crate) fn set_scalar_memory_window_limit(&mut self, limit: usize) {
+        let limit = limit.clamp(
+            MIN_RISCV_O3_SCALAR_MEMORY_DEPTH,
+            MAX_RISCV_O3_SCALAR_MEMORY_DEPTH,
+        );
+        self.scalar_memory_window_limit = limit;
+        self.scalar_live_window_limit = limit;
+        self.window_depths_explicit = true;
+    }
+
+    pub(crate) fn set_branch_derived_window_depths(&mut self, limit: usize) {
+        if !self.window_depths_explicit {
+            let limit = limit.clamp(
+                MIN_RISCV_O3_SCALAR_MEMORY_DEPTH,
+                MAX_RISCV_O3_SCALAR_MEMORY_DEPTH,
+            );
+            self.scalar_memory_window_limit = limit;
+            self.scalar_live_window_limit = limit;
         }
     }
 
     pub(crate) const fn scalar_memory_window_limit(&self) -> usize {
         self.scalar_memory_window_limit
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn scalar_live_window_limit(&self) -> usize {
+        self.scalar_live_window_limit
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn window_depths_explicit(&self) -> bool {
+        self.window_depths_explicit
     }
 
     pub(crate) fn scalar_memory_window_state(&self) -> Option<O3ScalarMemoryWindowState> {
@@ -370,6 +409,60 @@ mod tests {
 
     use super::*;
     use crate::{CpuFetchEvent, CpuFetchRecord};
+
+    #[test]
+    fn window_depth_pair_defaults_and_branch_derivation_move_together() {
+        let mut runtime = O3RuntimeState::default();
+
+        assert_eq!(runtime.scalar_memory_window_limit(), 2);
+        assert_eq!(runtime.scalar_live_window_limit(), 2);
+        assert!(!runtime.window_depths_explicit());
+
+        runtime.set_branch_derived_window_depths(4);
+
+        assert_eq!(runtime.scalar_memory_window_limit(), 4);
+        assert_eq!(runtime.scalar_live_window_limit(), 4);
+        assert!(!runtime.window_depths_explicit());
+    }
+
+    #[test]
+    fn explicit_window_depth_pair_is_atomic_and_stable() {
+        let mut runtime = O3RuntimeState::default();
+
+        assert!(runtime.set_window_depths(3, 6));
+        assert_eq!(runtime.scalar_memory_window_limit(), 3);
+        assert_eq!(runtime.scalar_live_window_limit(), 6);
+        assert!(runtime.window_depths_explicit());
+
+        for (memory, live) in [(0, 6), (5, 6), (3, 0), (3, 9), (4, 3)] {
+            assert!(!runtime.set_window_depths(memory, live));
+            assert_eq!(runtime.scalar_memory_window_limit(), 3);
+            assert_eq!(runtime.scalar_live_window_limit(), 6);
+            assert!(runtime.window_depths_explicit());
+        }
+
+        runtime.set_branch_derived_window_depths(2);
+
+        assert_eq!(runtime.scalar_memory_window_limit(), 3);
+        assert_eq!(runtime.scalar_live_window_limit(), 6);
+    }
+
+    #[test]
+    fn scalar_memory_compatibility_setter_sets_both_limits() {
+        let mut runtime = O3RuntimeState::default();
+
+        runtime.set_scalar_memory_window_limit(7);
+
+        assert_eq!(runtime.scalar_memory_window_limit(), 4);
+        assert_eq!(runtime.scalar_live_window_limit(), 4);
+        assert!(runtime.window_depths_explicit());
+
+        runtime.set_scalar_memory_window_limit(0);
+
+        assert_eq!(runtime.scalar_memory_window_limit(), 1);
+        assert_eq!(runtime.scalar_live_window_limit(), 1);
+        assert!(runtime.window_depths_explicit());
+    }
 
     #[test]
     fn disjoint_scalar_store_then_load_stages_two_live_data_access_rows() {

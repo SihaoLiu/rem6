@@ -132,6 +132,9 @@ fn validate_non_execution_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliEr
     if config.riscv_o3_scalar_memory_depth_is_explicit() {
         return Err(Rem6CliError::RiscvO3ScalarMemoryDepthRequiresExecution);
     }
+    if config.riscv_o3_scalar_live_window_depth_is_explicit() {
+        return Err(Rem6CliError::RiscvO3ScalarLiveWindowDepthRequiresExecution);
+    }
     if config.riscv_o3_issue_width_is_explicit() {
         return Err(Rem6CliError::RiscvO3IssueWidthRequiresExecution);
     }
@@ -237,6 +240,10 @@ fn validate_cache_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
     }
     if config.riscv_o3_scalar_memory_depth_is_explicit() && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::RiscvO3ScalarMemoryDepthRequiresRiscv);
+    }
+    if config.riscv_o3_scalar_live_window_depth_is_explicit() && config.isa() != RequestedIsa::Riscv
+    {
+        return Err(Rem6CliError::RiscvO3ScalarLiveWindowDepthRequiresRiscv);
     }
     if config.riscv_o3_issue_width_is_explicit() && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::RiscvO3IssueWidthRequiresRiscv);

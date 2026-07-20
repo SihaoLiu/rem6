@@ -4,8 +4,10 @@ use crate::o3_runtime_trace::{O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3Run
 use crate::riscv_branch_kind::is_riscv_link_register;
 use crate::riscv_data_completion::apply_data_completion;
 use crate::riscv_defaults::{
-    DEFAULT_RISCV_O3_ISSUE_WIDTH, MAX_RISCV_O3_ISSUE_WIDTH, MAX_RISCV_O3_WRITEBACK_WIDTH,
-    MIN_RISCV_O3_ISSUE_WIDTH, MIN_RISCV_O3_WRITEBACK_WIDTH,
+    DEFAULT_RISCV_O3_ISSUE_WIDTH, MAX_RISCV_O3_ISSUE_WIDTH, MAX_RISCV_O3_SCALAR_LIVE_WINDOW_DEPTH,
+    MAX_RISCV_O3_SCALAR_MEMORY_DEPTH, MAX_RISCV_O3_WRITEBACK_WIDTH, MIN_RISCV_O3_ISSUE_WIDTH,
+    MIN_RISCV_O3_SCALAR_LIVE_WINDOW_DEPTH, MIN_RISCV_O3_SCALAR_MEMORY_DEPTH,
+    MIN_RISCV_O3_WRITEBACK_WIDTH,
 };
 use crate::riscv_execution_event::RiscvCpuExecutionEvent;
 use crate::riscv_fu_latency::riscv_o3_fu_latency_class as o3_fu_latency_class;
@@ -237,7 +239,8 @@ pub struct O3RuntimeState {
     live_data_accesses: Vec<O3LiveDataAccess>,
     live_data_access_younger_sequences: BTreeSet<u64>,
     scalar_memory_window_limit: usize,
-    scalar_memory_window_limit_explicit: bool,
+    scalar_live_window_limit: usize,
+    window_depths_explicit: bool,
     issue_width: usize,
     last_live_commit_tick: Option<u64>,
     next_sequence: u64,
@@ -685,7 +688,8 @@ impl Default for O3RuntimeState {
             live_data_accesses: Vec::new(),
             live_data_access_younger_sequences: BTreeSet::new(),
             scalar_memory_window_limit: 2,
-            scalar_memory_window_limit_explicit: false,
+            scalar_live_window_limit: 2,
+            window_depths_explicit: false,
             issue_width: DEFAULT_RISCV_O3_ISSUE_WIDTH,
             last_live_commit_tick: None,
             next_sequence: 0,

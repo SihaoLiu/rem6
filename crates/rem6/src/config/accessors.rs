@@ -7,12 +7,13 @@ use rem6_stats::PcCountPair;
 use rem6_system::{ExecutionMode, RiscvDataCacheProtocol};
 
 use super::{
-    CliCachePrefetcher, CliDebugFlag, CliDramLowPowerTiming, CliDramMemoryProfile,
-    CliDramRefreshTiming, CliDramTiming, GuestHostCallResponseConfig, KernelResourceSelector,
-    LoadBlobRequest, MemoryDumpRequest, PowerAnalysisFormat, ReadfileRequest, Rem6RunConfig,
-    RequestedIsa, RiscvSeFileRequest, RiscvSeInputSource, RunFabricConfig,
-    RunHostExecutionModeSwitchSpec, RunMemorySystem, RunRiscvDataTranslationConfig, StatsFormat,
-    TraceReplayHostEventSpec, DEFAULT_RISCV_IN_ORDER_WIDTH,
+    resolve_riscv_o3_window_depths, CliCachePrefetcher, CliDebugFlag, CliDramLowPowerTiming,
+    CliDramMemoryProfile, CliDramRefreshTiming, CliDramTiming, GuestHostCallResponseConfig,
+    KernelResourceSelector, LoadBlobRequest, MemoryDumpRequest, PowerAnalysisFormat,
+    ReadfileRequest, Rem6RunConfig, RequestedIsa, RiscvO3WindowDepths, RiscvSeFileRequest,
+    RiscvSeInputSource, RunFabricConfig, RunHostExecutionModeSwitchSpec, RunMemorySystem,
+    RunRiscvDataTranslationConfig, StatsFormat, TraceReplayHostEventSpec,
+    DEFAULT_RISCV_IN_ORDER_WIDTH,
 };
 
 impl Rem6RunConfig {
@@ -108,13 +109,29 @@ impl Rem6RunConfig {
         self.riscv_branch_lookahead
     }
 
+    pub(crate) fn riscv_o3_window_depths(&self) -> RiscvO3WindowDepths {
+        resolve_riscv_o3_window_depths(
+            self.riscv_branch_lookahead,
+            self.riscv_o3_scalar_memory_depth,
+            self.riscv_o3_scalar_live_window_depth,
+        )
+        .expect("RISC-V O3 window depths were validated during config construction")
+    }
+
     pub fn riscv_o3_scalar_memory_depth(&self) -> usize {
-        self.riscv_o3_scalar_memory_depth
-            .unwrap_or_else(|| self.riscv_branch_lookahead.saturating_add(1))
+        self.riscv_o3_window_depths().scalar_memory()
     }
 
     pub const fn riscv_o3_scalar_memory_depth_is_explicit(&self) -> bool {
         self.riscv_o3_scalar_memory_depth.is_some()
+    }
+
+    pub fn riscv_o3_scalar_live_window_depth(&self) -> usize {
+        self.riscv_o3_window_depths().scalar_live()
+    }
+
+    pub const fn riscv_o3_scalar_live_window_depth_is_explicit(&self) -> bool {
+        self.riscv_o3_scalar_live_window_depth.is_some()
     }
 
     pub fn riscv_o3_issue_width(&self) -> usize {
