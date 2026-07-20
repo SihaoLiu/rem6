@@ -380,7 +380,7 @@ Run:
 
 ```bash
 wc -l docs/architecture/gem5-to-rem6-migration.md
-TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy architecture_docs_have_one_authority -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy architecture_docs_have_clear_boundaries -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy gem5_migration_sections_are_auditable -- --nocapture
 ```
 

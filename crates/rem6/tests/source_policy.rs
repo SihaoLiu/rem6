@@ -1096,8 +1096,8 @@ fn gem5_migration_sections_are_auditable() {
         );
         if cells[0] == "`tests/gem5/stats`" {
             assert_eq!(
-                cells[2], "65% representative",
-                "`tests/gem5/stats` score should not change without explicit score evidence"
+                cells[2], "74% representative",
+                "`tests/gem5/stats` score ratchet must retain canonical four-route/two-format power evidence"
             );
         }
     }
