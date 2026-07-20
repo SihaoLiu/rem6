@@ -460,19 +460,11 @@ fn event_summary_inst_type_json(events: &[O3RuntimeTraceRecord]) -> String {
     fields.extend(O3RuntimeFuLatencyClass::ALL.into_iter().map(|class| {
         format!(
             "\"{}\":{}",
-            event_summary_inst_type_stem(class),
+            class.inst_type_descriptor().source_stem(),
             fu_classes[class.index()]
         )
     }));
     format!("{{{}}}", fields.join(","))
-}
-
-fn event_summary_inst_type_stem(class: O3RuntimeFuLatencyClass) -> &'static str {
-    match class {
-        O3RuntimeFuLatencyClass::ScalarIntegerMul => "int_mul",
-        O3RuntimeFuLatencyClass::ScalarIntegerDiv => "int_div",
-        _ => class.stat_stem(),
-    }
 }
 
 fn event_summary_lsq_latency(

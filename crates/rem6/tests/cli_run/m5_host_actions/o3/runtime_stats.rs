@@ -188,6 +188,7 @@ fn rem6_run_o3_runtime_json_exposes_iq_iew_commit_matrices() {
             "representative O3 runtime matrix lane {pointer} should be positive: {o3_runtime}"
         );
     }
+    assert_o3_runtime_json_preserves_legacy_inst_type_alias_order(&json);
 
     for (pointer, stat_path) in [
         ("/iq/insts_issued", "sim.cpu0.o3.iq.insts_issued"),
@@ -230,6 +231,112 @@ fn rem6_run_o3_runtime_json_exposes_iq_iew_commit_matrices() {
             "structured O3 runtime {pointer} should match stat path {stat_path}"
         );
     }
+}
+
+fn assert_o3_runtime_json_preserves_legacy_inst_type_alias_order(json: &Value) {
+    let mut expected_paths = Vec::new();
+    for alias in ["MemRead", "MemWrite", "IntMult", "IntDiv"] {
+        push_o3_runtime_inst_type_alias_pair(&mut expected_paths, "iq.issuedInstType", alias);
+    }
+    for alias in ["MemRead", "MemWrite", "IntMult", "IntDiv"] {
+        push_o3_runtime_inst_type_alias_pair(
+            &mut expected_paths,
+            "commit.committedInstType",
+            alias,
+        );
+    }
+    for alias in [
+        "FloatAdd",
+        "FloatCmp",
+        "FloatMisc",
+        "FloatMult",
+        "FloatMultAcc",
+        "FloatDiv",
+        "FloatSqrt",
+        "SimdMult",
+        "SimdDiv",
+        "SimdFloatAdd",
+        "SimdFloatCmp",
+        "SimdFloatMisc",
+        "SimdFloatMult",
+        "SimdFloatMultAcc",
+        "SimdFloatDiv",
+        "SimdFloatSqrt",
+    ] {
+        push_o3_runtime_inst_type_alias_pair(&mut expected_paths, "iq.issuedInstType", alias);
+    }
+    for alias in [
+        "FloatAdd",
+        "FloatCmp",
+        "FloatMisc",
+        "FloatMult",
+        "FloatMultAcc",
+        "FloatDiv",
+        "FloatSqrt",
+        "SimdMult",
+        "SimdDiv",
+        "SimdFloatAdd",
+        "SimdFloatCmp",
+        "SimdFloatMisc",
+        "SimdFloatMult",
+        "SimdFloatMultAcc",
+        "SimdFloatDiv",
+        "SimdFloatSqrt",
+    ] {
+        push_o3_runtime_inst_type_alias_pair(
+            &mut expected_paths,
+            "commit.committedInstType",
+            alias,
+        );
+    }
+
+    let stats = json
+        .pointer("/stats")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing stats array in run JSON: {json}"));
+    let filtered = stats
+        .iter()
+        .filter_map(|sample| {
+            let path = sample.pointer("/path").and_then(Value::as_str)?;
+            let relevant = path.starts_with("system.cpu.iq.issuedInstType.")
+                || path.starts_with("system.cpu.iq.issuedInstType_0::")
+                || path.starts_with("system.cpu.commit.committedInstType.")
+                || path.starts_with("system.cpu.commit.committedInstType_0::");
+            relevant.then(|| {
+                let id = sample
+                    .pointer("/id")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_else(|| panic!("missing derived sample id for {path}: {sample}"));
+                (path.to_string(), id)
+            })
+        })
+        .collect::<Vec<_>>();
+    let actual_paths = filtered
+        .iter()
+        .map(|(path, _)| path.as_str())
+        .collect::<Vec<_>>();
+    let expected_paths = expected_paths
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual_paths, expected_paths,
+        "system.cpu O3 inst-type aliases should preserve legacy derived record order"
+    );
+    for window in filtered.windows(2) {
+        let previous = &window[0];
+        let current = &window[1];
+        assert_eq!(
+            current.1,
+            previous.1.saturating_add(1),
+            "filtered O3 inst-type alias IDs should be contiguous: previous={previous:?}, current={current:?}"
+        );
+    }
+}
+
+fn push_o3_runtime_inst_type_alias_pair(paths: &mut Vec<String>, family: &str, alias: &str) {
+    paths.push(format!("system.cpu.{family}.{alias}"));
+    paths.push(format!("system.cpu.{family}_0::{alias}"));
 }
 
 #[test]

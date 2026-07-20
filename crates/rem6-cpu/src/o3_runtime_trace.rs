@@ -73,6 +73,16 @@ pub enum O3RuntimeFuLatencyClass {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct O3RuntimeInstTypeDescriptor {
+    class: O3RuntimeFuLatencyClass,
+    source_stem: &'static str,
+    gem5_alias: &'static str,
+    event_iq_stat_suffix: &'static str,
+    event_commit_stat_suffix: &'static str,
+    zero_extended_alias: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum O3RuntimeLsqOperation {
     None,
     Load,
@@ -93,6 +103,198 @@ pub enum O3RuntimeLsqOrdering {
     Release,
     AcquireRelease,
 }
+
+impl O3RuntimeInstTypeDescriptor {
+    const fn new(
+        class: O3RuntimeFuLatencyClass,
+        source_stem: &'static str,
+        gem5_alias: &'static str,
+        event_iq_stat_suffix: &'static str,
+        event_commit_stat_suffix: &'static str,
+        zero_extended_alias: bool,
+    ) -> Self {
+        Self {
+            class,
+            source_stem,
+            gem5_alias,
+            event_iq_stat_suffix,
+            event_commit_stat_suffix,
+            zero_extended_alias,
+        }
+    }
+
+    pub const fn class(&self) -> O3RuntimeFuLatencyClass {
+        self.class
+    }
+
+    pub const fn source_stem(&self) -> &'static str {
+        self.source_stem
+    }
+
+    pub const fn gem5_alias(&self) -> &'static str {
+        self.gem5_alias
+    }
+
+    pub const fn event_iq_stat_suffix(&self) -> &'static str {
+        self.event_iq_stat_suffix
+    }
+
+    pub const fn event_commit_stat_suffix(&self) -> &'static str {
+        self.event_commit_stat_suffix
+    }
+
+    pub const fn zero_extended_alias(&self) -> bool {
+        self.zero_extended_alias
+    }
+}
+
+pub const O3_RUNTIME_INST_TYPE_DESCRIPTORS: [O3RuntimeInstTypeDescriptor;
+    O3RuntimeFuLatencyClass::COUNT] = [
+    O3RuntimeInstTypeDescriptor::new(
+        O3RuntimeFuLatencyClass::ScalarIntegerMul,
+        "int_mul",
+        "IntMult",
+        "event.iq_issued_inst_type.int_mul",
+        "event.commit_committed_inst_type.int_mul",
+        false,
+    ),
+    O3RuntimeInstTypeDescriptor::new(
+        O3RuntimeFuLatencyClass::ScalarIntegerDiv,
+        "int_div",
+        "IntDiv",
+        "event.iq_issued_inst_type.int_div",
+        "event.commit_committed_inst_type.int_div",
+        false,
+    ),
+    O3RuntimeInstTypeDescriptor::new(
+        O3RuntimeFuLatencyClass::ScalarFloatAdd,
+        "float_add",
+        "FloatAdd",
+        "event.iq_issued_inst_type.float_add",
+        "event.commit_committed_inst_type.float_add",
+        true,
+    ),
+    O3RuntimeInstTypeDescriptor::new(
+        O3RuntimeFuLatencyClass::ScalarFloatCompare,
+        "float_compare",
+        "FloatCmp",
+        "event.iq_issued_inst_type.float_compare",
+        "event.commit_committed_inst_type.float_compare",
+        true,
+    ),
+    O3RuntimeInstTypeDescriptor::new(
+        O3RuntimeFuLatencyClass::ScalarFloatMisc,
+        "float_misc",
+        "FloatMisc",
+        "event.iq_issued_inst_type.float_misc",
+        "event.commit_committed_inst_type.float_misc",
+        true,
+    ),
+    O3RuntimeInstTypeDescriptor::new(
+        O3RuntimeFuLatencyClass::ScalarFloatMul,
+        "float_mul",
+        "FloatMult",
+        "event.iq_issued_inst_type.float_mul",
+        "event.commit_committed_inst_type.float_mul",
+        true,
+    ),
+    O3RuntimeInstTypeDescriptor::new(
+        O3RuntimeFuLatencyClass::ScalarFloatFma,
+        "float_fma",
+        "FloatMultAcc",
+        "event.iq_issued_inst_type.float_fma",
+        "event.commit_committed_inst_type.float_fma",
+        true,
+    ),
+    O3RuntimeInstTypeDescriptor::new(
+        O3RuntimeFuLatencyClass::ScalarFloatDiv,
+        "float_div",
+        "FloatDiv",
+        "event.iq_issued_inst_type.float_div",
+        "event.commit_committed_inst_type.float_div",
+        true,
+    ),
+    O3RuntimeInstTypeDescriptor::new(
+        O3RuntimeFuLatencyClass::ScalarFloatSqrt,
+        "float_sqrt",
+        "FloatSqrt",
+        "event.iq_issued_inst_type.float_sqrt",
+        "event.commit_committed_inst_type.float_sqrt",
+        true,
+    ),
+    O3RuntimeInstTypeDescriptor::new(
+        O3RuntimeFuLatencyClass::VectorIntegerMul,
+        "vector_integer_mul",
+        "SimdMult",
+        "event.iq_issued_inst_type.vector_integer_mul",
+        "event.commit_committed_inst_type.vector_integer_mul",
+        true,
+    ),
+    O3RuntimeInstTypeDescriptor::new(
+        O3RuntimeFuLatencyClass::VectorIntegerDiv,
+        "vector_integer_div",
+        "SimdDiv",
+        "event.iq_issued_inst_type.vector_integer_div",
+        "event.commit_committed_inst_type.vector_integer_div",
+        true,
+    ),
+    O3RuntimeInstTypeDescriptor::new(
+        O3RuntimeFuLatencyClass::VectorFloatAdd,
+        "vector_float_add",
+        "SimdFloatAdd",
+        "event.iq_issued_inst_type.vector_float_add",
+        "event.commit_committed_inst_type.vector_float_add",
+        true,
+    ),
+    O3RuntimeInstTypeDescriptor::new(
+        O3RuntimeFuLatencyClass::VectorFloatCompare,
+        "vector_float_compare",
+        "SimdFloatCmp",
+        "event.iq_issued_inst_type.vector_float_compare",
+        "event.commit_committed_inst_type.vector_float_compare",
+        true,
+    ),
+    O3RuntimeInstTypeDescriptor::new(
+        O3RuntimeFuLatencyClass::VectorFloatMisc,
+        "vector_float_misc",
+        "SimdFloatMisc",
+        "event.iq_issued_inst_type.vector_float_misc",
+        "event.commit_committed_inst_type.vector_float_misc",
+        true,
+    ),
+    O3RuntimeInstTypeDescriptor::new(
+        O3RuntimeFuLatencyClass::VectorFloatMul,
+        "vector_float_mul",
+        "SimdFloatMult",
+        "event.iq_issued_inst_type.vector_float_mul",
+        "event.commit_committed_inst_type.vector_float_mul",
+        true,
+    ),
+    O3RuntimeInstTypeDescriptor::new(
+        O3RuntimeFuLatencyClass::VectorFloatFma,
+        "vector_float_fma",
+        "SimdFloatMultAcc",
+        "event.iq_issued_inst_type.vector_float_fma",
+        "event.commit_committed_inst_type.vector_float_fma",
+        true,
+    ),
+    O3RuntimeInstTypeDescriptor::new(
+        O3RuntimeFuLatencyClass::VectorFloatDiv,
+        "vector_float_div",
+        "SimdFloatDiv",
+        "event.iq_issued_inst_type.vector_float_div",
+        "event.commit_committed_inst_type.vector_float_div",
+        true,
+    ),
+    O3RuntimeInstTypeDescriptor::new(
+        O3RuntimeFuLatencyClass::VectorFloatSqrt,
+        "vector_float_sqrt",
+        "SimdFloatSqrt",
+        "event.iq_issued_inst_type.vector_float_sqrt",
+        "event.commit_committed_inst_type.vector_float_sqrt",
+        true,
+    ),
+];
 
 impl O3RuntimeFuLatencyClass {
     pub const COUNT: usize = 18;
@@ -185,6 +387,10 @@ impl O3RuntimeFuLatencyClass {
             Self::VectorFloatDiv => "vector_float_div",
             Self::VectorFloatSqrt => "vector_float_sqrt",
         }
+    }
+
+    pub const fn inst_type_descriptor(self) -> &'static O3RuntimeInstTypeDescriptor {
+        &O3_RUNTIME_INST_TYPE_DESCRIPTORS[self.index()]
     }
 }
 

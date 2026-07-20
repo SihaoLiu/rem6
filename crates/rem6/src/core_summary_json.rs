@@ -150,14 +150,6 @@ fn o3_runtime_fu_latency_class_json(summary: &Rem6CoreSummary) -> String {
     fields.join(",")
 }
 
-fn o3_runtime_inst_type_stem(class: O3RuntimeFuLatencyClass) -> &'static str {
-    match class {
-        O3RuntimeFuLatencyClass::ScalarIntegerMul => "int_mul",
-        O3RuntimeFuLatencyClass::ScalarIntegerDiv => "int_div",
-        _ => class.stat_stem(),
-    }
-}
-
 fn o3_runtime_inst_type_json(summary: &Rem6CoreSummary) -> String {
     let mut fields = vec![
         format!("\"mem_read\":{}", summary.o3_runtime.lsq_loads()),
@@ -166,7 +158,7 @@ fn o3_runtime_inst_type_json(summary: &Rem6CoreSummary) -> String {
     fields.extend(O3RuntimeFuLatencyClass::ALL.into_iter().map(|class| {
         format!(
             "\"{}\":{}",
-            o3_runtime_inst_type_stem(class),
+            class.inst_type_descriptor().source_stem(),
             summary.o3_runtime.fu_latency_class_instructions(class)
         )
     }));

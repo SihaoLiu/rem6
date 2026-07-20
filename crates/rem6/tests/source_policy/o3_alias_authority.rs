@@ -345,3 +345,143 @@ fn o3_lsq_gem5_aliases_have_one_projection_authority() {
         }
     }
 }
+
+#[test]
+fn o3_inst_type_aliases_have_one_cpu_descriptor_authority() {
+    fn production_code_before_tests(source: &str) -> &str {
+        source
+            .split_once("#[cfg(test)]")
+            .map_or(source, |(production, _)| production)
+    }
+
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let cpu_trace =
+        fs::read_to_string(crate_dir.join("../rem6-cpu/src/o3_runtime_trace.rs")).unwrap();
+    let cpu_public_api =
+        fs::read_to_string(crate_dir.join("../rem6-cpu/src/public_api.rs")).unwrap();
+
+    for anchor in [
+        "pub struct O3RuntimeInstTypeDescriptor",
+        "pub const O3_RUNTIME_INST_TYPE_DESCRIPTORS",
+        "pub const fn inst_type_descriptor(",
+        "pub const fn class(",
+        "pub const fn source_stem(",
+        "pub const fn gem5_alias(",
+        "pub const fn event_iq_stat_suffix(",
+        "pub const fn event_commit_stat_suffix(",
+        "pub const fn zero_extended_alias(",
+    ] {
+        assert!(
+            cpu_trace.contains(anchor),
+            "shared O3 inst-type descriptor authority is missing `{anchor}`"
+        );
+    }
+
+    for public_export in [
+        "O3RuntimeInstTypeDescriptor",
+        "O3_RUNTIME_INST_TYPE_DESCRIPTORS",
+    ] {
+        assert!(
+            cpu_public_api.contains(public_export),
+            "rem6-cpu public API must export `{public_export}`"
+        );
+    }
+
+    assert!(
+        !crate_dir
+            .join("src/debug_output/o3_event_inst_type_stats.rs")
+            .exists(),
+        "debug O3 inst-type suffix mappings must live in the CPU descriptor authority"
+    );
+
+    let consumers = [
+        (
+            "system helpers",
+            "../rem6-system/src/riscv_o3_runtime_stats/helpers.rs",
+        ),
+        ("core summary JSON", "src/core_summary_json.rs"),
+        ("runtime stats output", "src/stats_output/o3_runtime.rs"),
+        ("text O3 stats", "src/stats_output/text_o3.rs"),
+        ("JSON aliases", "src/stats_output/json_aliases.rs"),
+        (
+            "debug O3 summary JSON",
+            "src/debug_output/o3_summary_json.rs",
+        ),
+        (
+            "debug O3 event summary JSON",
+            "src/debug_output/o3_event_summary_json.rs",
+        ),
+        (
+            "debug O3 trace totals",
+            "src/debug_output/o3_trace_totals.rs",
+        ),
+    ];
+    let forbidden_local_mappers = [
+        "o3_iq_fu_latency_class_stem",
+        "o3_fu_latency_class_inst_type_stem",
+        "o3_fu_latency_class_inst_type_alias",
+        "o3_runtime_inst_type_stem",
+        "o3_inst_type_stem",
+        "event_summary_inst_type_stem",
+        "o3_event_iq_issued_inst_type_stat_suffix",
+        "o3_event_commit_committed_inst_type_stat_suffix",
+    ];
+    let forbidden_gem5_alias_tokens = [
+        "IntMult",
+        "IntDiv",
+        "FloatAdd",
+        "FloatCmp",
+        "FloatMisc",
+        "FloatMult",
+        "FloatMultAcc",
+        "FloatDiv",
+        "FloatSqrt",
+        "SimdMult",
+        "SimdDiv",
+        "SimdFloatAdd",
+        "SimdFloatCmp",
+        "SimdFloatMisc",
+        "SimdFloatMult",
+        "SimdFloatMultAcc",
+        "SimdFloatDiv",
+        "SimdFloatSqrt",
+    ];
+    let forbidden_scalar_stem_match_arms = [
+        r#"O3RuntimeFuLatencyClass::ScalarIntegerMul => "int_mul""#,
+        r#"O3RuntimeFuLatencyClass::ScalarIntegerDiv => "int_div""#,
+    ];
+    for (consumer_name, consumer_path) in consumers {
+        let consumer_source = fs::read_to_string(crate_dir.join(consumer_path)).unwrap();
+        let consumer = production_code_before_tests(&consumer_source);
+        assert!(
+            consumer.contains("inst_type_descriptor")
+                || consumer.contains("O3_RUNTIME_INST_TYPE_DESCRIPTORS"),
+            "{consumer_name} must consume the shared O3 inst-type descriptor authority"
+        );
+        for mapper in forbidden_local_mappers {
+            let definition = format!("fn {mapper}(");
+            assert!(
+                !consumer.contains(&definition),
+                "{consumer_name} must not retain local O3 inst-type mapper `{mapper}`"
+            );
+        }
+        for alias in forbidden_gem5_alias_tokens {
+            assert!(
+                !consumer.contains(alias),
+                "{consumer_name} must not retain raw O3 gem5 inst-type alias token `{alias}`"
+            );
+        }
+        for match_arm in forbidden_scalar_stem_match_arms {
+            assert!(
+                !consumer.contains(match_arm),
+                "{consumer_name} must not retain scalar O3 inst-type match arm `{match_arm}`"
+            );
+        }
+    }
+
+    let debug_o3 = fs::read_to_string(crate_dir.join("src/debug_output/o3.rs")).unwrap();
+    assert!(
+        !debug_o3.contains("o3_event_inst_type_stats"),
+        "debug_output/o3.rs must not mention o3_event_inst_type_stats"
+    );
+}

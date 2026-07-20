@@ -87,7 +87,8 @@ pub use crate::o3_runtime::{
     O3RuntimeWritebackReservation, RiscvO3WritebackDebugState,
 };
 pub use crate::o3_runtime_trace::{
-    O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeTraceRecord,
+    O3RuntimeFuLatencyClass, O3RuntimeInstTypeDescriptor, O3RuntimeLsqOperation,
+    O3RuntimeLsqOrdering, O3RuntimeTraceRecord, O3_RUNTIME_INST_TYPE_DESCRIPTORS,
 };
 pub use crate::return_address_stack::{
     ReturnAddressStack, ReturnAddressStackConfig, ReturnAddressStackError,

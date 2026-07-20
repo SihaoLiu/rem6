@@ -1,4 +1,4 @@
-use rem6_cpu::{BranchTargetKind, BranchTargetProvider};
+use rem6_cpu::{BranchTargetKind, BranchTargetProvider, O3_RUNTIME_INST_TYPE_DESCRIPTORS};
 use rem6_stats::{StatResetPolicy, StatSnapshot};
 
 use super::{json_record_for_derived_counter, snapshot_sample, snapshot_sample_value};
@@ -737,203 +737,119 @@ fn append_gem5_o3_op_class_json_alias_stats(
     alias_prefix: &str,
     include_zero_extended_aliases: bool,
 ) {
-    for (source_suffix, alias_suffix) in [
-        ("iq.issued_inst_type.mem_read", "iq.issuedInstType.MemRead"),
-        (
-            "iq.issued_inst_type.mem_write",
-            "iq.issuedInstType.MemWrite",
-        ),
-        ("iq.issued_inst_type.int_mul", "iq.issuedInstType.IntMult"),
-        ("iq.issued_inst_type.int_div", "iq.issuedInstType.IntDiv"),
-        (
-            "commit.committed_inst_type.mem_read",
-            "commit.committedInstType.MemRead",
-        ),
-        (
-            "commit.committed_inst_type.mem_write",
-            "commit.committedInstType.MemWrite",
-        ),
-        (
-            "commit.committed_inst_type.int_mul",
-            "commit.committedInstType.IntMult",
-        ),
-        (
-            "commit.committed_inst_type.int_div",
-            "commit.committedInstType.IntDiv",
-        ),
-    ] {
-        append_gem5_o3_json_alias_from_sample(
-            snapshot,
-            records,
-            next_id,
-            cpu,
-            source_suffix,
-            alias_prefix,
-            alias_suffix,
-        );
-    }
-    for (source_suffix, alias_suffix) in [
-        (
-            "iq.issued_inst_type.float_add",
-            "iq.issuedInstType.FloatAdd",
-        ),
-        (
-            "iq.issued_inst_type.float_compare",
-            "iq.issuedInstType.FloatCmp",
-        ),
-        (
-            "iq.issued_inst_type.float_misc",
-            "iq.issuedInstType.FloatMisc",
-        ),
-        (
-            "iq.issued_inst_type.float_mul",
-            "iq.issuedInstType.FloatMult",
-        ),
-        (
-            "iq.issued_inst_type.float_fma",
-            "iq.issuedInstType.FloatMultAcc",
-        ),
-        (
-            "iq.issued_inst_type.float_div",
-            "iq.issuedInstType.FloatDiv",
-        ),
-        (
-            "iq.issued_inst_type.float_sqrt",
-            "iq.issuedInstType.FloatSqrt",
-        ),
-        (
-            "iq.issued_inst_type.vector_integer_mul",
-            "iq.issuedInstType.SimdMult",
-        ),
-        (
-            "iq.issued_inst_type.vector_integer_div",
-            "iq.issuedInstType.SimdDiv",
-        ),
-        (
-            "iq.issued_inst_type.vector_float_add",
-            "iq.issuedInstType.SimdFloatAdd",
-        ),
-        (
-            "iq.issued_inst_type.vector_float_compare",
-            "iq.issuedInstType.SimdFloatCmp",
-        ),
-        (
-            "iq.issued_inst_type.vector_float_misc",
-            "iq.issuedInstType.SimdFloatMisc",
-        ),
-        (
-            "iq.issued_inst_type.vector_float_mul",
-            "iq.issuedInstType.SimdFloatMult",
-        ),
-        (
-            "iq.issued_inst_type.vector_float_fma",
-            "iq.issuedInstType.SimdFloatMultAcc",
-        ),
-        (
-            "iq.issued_inst_type.vector_float_div",
-            "iq.issuedInstType.SimdFloatDiv",
-        ),
-        (
-            "iq.issued_inst_type.vector_float_sqrt",
-            "iq.issuedInstType.SimdFloatSqrt",
-        ),
-        (
-            "commit.committed_inst_type.float_add",
-            "commit.committedInstType.FloatAdd",
-        ),
-        (
-            "commit.committed_inst_type.float_compare",
-            "commit.committedInstType.FloatCmp",
-        ),
-        (
-            "commit.committed_inst_type.float_misc",
-            "commit.committedInstType.FloatMisc",
-        ),
-        (
-            "commit.committed_inst_type.float_mul",
-            "commit.committedInstType.FloatMult",
-        ),
-        (
-            "commit.committed_inst_type.float_fma",
-            "commit.committedInstType.FloatMultAcc",
-        ),
-        (
-            "commit.committed_inst_type.float_div",
-            "commit.committedInstType.FloatDiv",
-        ),
-        (
-            "commit.committed_inst_type.float_sqrt",
-            "commit.committedInstType.FloatSqrt",
-        ),
-        (
-            "commit.committed_inst_type.vector_integer_mul",
-            "commit.committedInstType.SimdMult",
-        ),
-        (
-            "commit.committed_inst_type.vector_integer_div",
-            "commit.committedInstType.SimdDiv",
-        ),
-        (
-            "commit.committed_inst_type.vector_float_add",
-            "commit.committedInstType.SimdFloatAdd",
-        ),
-        (
-            "commit.committed_inst_type.vector_float_compare",
-            "commit.committedInstType.SimdFloatCmp",
-        ),
-        (
-            "commit.committed_inst_type.vector_float_misc",
-            "commit.committedInstType.SimdFloatMisc",
-        ),
-        (
-            "commit.committed_inst_type.vector_float_mul",
-            "commit.committedInstType.SimdFloatMult",
-        ),
-        (
-            "commit.committed_inst_type.vector_float_fma",
-            "commit.committedInstType.SimdFloatMultAcc",
-        ),
-        (
-            "commit.committed_inst_type.vector_float_div",
-            "commit.committedInstType.SimdFloatDiv",
-        ),
-        (
-            "commit.committed_inst_type.vector_float_sqrt",
-            "commit.committedInstType.SimdFloatSqrt",
-        ),
-    ] {
+    append_gem5_o3_memory_inst_type_json_alias_stats(
+        snapshot,
+        records,
+        next_id,
+        cpu,
+        alias_prefix,
+        "iq.issued_inst_type",
+        "iq.issuedInstType",
+    );
+    append_gem5_o3_descriptor_inst_type_json_alias_stats(
+        snapshot,
+        records,
+        next_id,
+        cpu,
+        alias_prefix,
+        "iq.issued_inst_type",
+        "iq.issuedInstType",
+        false,
+        include_zero_extended_aliases,
+    );
+    append_gem5_o3_memory_inst_type_json_alias_stats(
+        snapshot,
+        records,
+        next_id,
+        cpu,
+        alias_prefix,
+        "commit.committed_inst_type",
+        "commit.committedInstType",
+    );
+    append_gem5_o3_descriptor_inst_type_json_alias_stats(
+        snapshot,
+        records,
+        next_id,
+        cpu,
+        alias_prefix,
+        "commit.committed_inst_type",
+        "commit.committedInstType",
+        false,
+        include_zero_extended_aliases,
+    );
+    append_gem5_o3_descriptor_inst_type_json_alias_stats(
+        snapshot,
+        records,
+        next_id,
+        cpu,
+        alias_prefix,
+        "iq.issued_inst_type",
+        "iq.issuedInstType",
+        true,
+        include_zero_extended_aliases,
+    );
+    append_gem5_o3_descriptor_inst_type_json_alias_stats(
+        snapshot,
+        records,
+        next_id,
+        cpu,
+        alias_prefix,
+        "commit.committed_inst_type",
+        "commit.committedInstType",
+        true,
+        include_zero_extended_aliases,
+    );
+}
+
+fn append_gem5_o3_memory_inst_type_json_alias_stats(
+    snapshot: &StatSnapshot,
+    records: &mut Vec<String>,
+    next_id: &mut u64,
+    cpu: u64,
+    alias_prefix: &str,
+    source_family: &str,
+    alias_family: &str,
+) {
+    for (source_name, alias_name) in [("mem_read", "MemRead"), ("mem_write", "MemWrite")] {
         append_gem5_o3_json_alias_from_sample_with_policy(
             snapshot,
             records,
             next_id,
             cpu,
-            source_suffix,
+            &format!("{source_family}.{source_name}"),
             alias_prefix,
-            alias_suffix,
-            include_zero_extended_aliases,
+            &format!("{alias_family}.{alias_name}"),
+            true,
         );
     }
 }
 
-fn append_gem5_o3_json_alias_from_sample(
+fn append_gem5_o3_descriptor_inst_type_json_alias_stats(
     snapshot: &StatSnapshot,
     records: &mut Vec<String>,
     next_id: &mut u64,
     cpu: u64,
-    source_suffix: &str,
     alias_prefix: &str,
-    alias_suffix: &str,
+    source_family: &str,
+    alias_family: &str,
+    zero_extended_alias: bool,
+    include_zero_extended_aliases: bool,
 ) {
-    append_gem5_o3_json_alias_from_sample_with_policy(
-        snapshot,
-        records,
-        next_id,
-        cpu,
-        source_suffix,
-        alias_prefix,
-        alias_suffix,
-        true,
-    );
+    for descriptor in O3_RUNTIME_INST_TYPE_DESCRIPTORS.iter() {
+        if descriptor.zero_extended_alias() != zero_extended_alias {
+            continue;
+        }
+        append_gem5_o3_json_alias_from_sample_with_policy(
+            snapshot,
+            records,
+            next_id,
+            cpu,
+            &format!("{source_family}.{}", descriptor.source_stem()),
+            alias_prefix,
+            &format!("{alias_family}.{}", descriptor.gem5_alias()),
+            !descriptor.zero_extended_alias() || include_zero_extended_aliases,
+        );
+    }
 }
 
 fn append_gem5_o3_json_alias_from_sample_with_policy(

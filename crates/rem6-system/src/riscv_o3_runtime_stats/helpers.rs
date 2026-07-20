@@ -1,6 +1,6 @@
 use rem6_cpu::{
     BranchTargetKind, O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering,
-    O3RuntimeStats,
+    O3RuntimeStats, O3_RUNTIME_INST_TYPE_DESCRIPTORS,
 };
 use rem6_stats::{StatId, StatsError, StatsRegistry};
 
@@ -561,11 +561,12 @@ pub(super) fn register_o3_iq_fu_latency_class_counters(
     prefix: &str,
 ) -> Result<[StatId; O3RuntimeFuLatencyClass::COUNT], StatsError> {
     let mut stats = [StatId::new(0); O3RuntimeFuLatencyClass::COUNT];
-    for class in O3RuntimeFuLatencyClass::ALL {
+    for descriptor in O3_RUNTIME_INST_TYPE_DESCRIPTORS.iter() {
+        let class = descriptor.class();
         stats[class.index()] = register_o3_counter(
             registry,
             prefix,
-            &format!("iq.issued_inst_type.{}", o3_iq_fu_latency_class_stem(class)),
+            &format!("iq.issued_inst_type.{}", descriptor.source_stem()),
             "Count",
         )?;
     }
@@ -577,14 +578,12 @@ pub(super) fn register_o3_iq_fu_latency_class_alias_counters(
     prefix: &str,
 ) -> Result<[StatId; O3RuntimeFuLatencyClass::COUNT], StatsError> {
     let mut stats = [StatId::new(0); O3RuntimeFuLatencyClass::COUNT];
-    for class in O3RuntimeFuLatencyClass::ALL {
+    for descriptor in O3_RUNTIME_INST_TYPE_DESCRIPTORS.iter() {
+        let class = descriptor.class();
         stats[class.index()] = register_o3_counter(
             registry,
             prefix,
-            &format!(
-                "iq.issuedInstType.{}",
-                o3_fu_latency_class_inst_type_alias(class)
-            ),
+            &format!("iq.issuedInstType.{}", descriptor.gem5_alias()),
             "Count",
         )?;
     }
@@ -596,14 +595,12 @@ pub(super) fn register_o3_commit_fu_latency_class_counters(
     prefix: &str,
 ) -> Result<[StatId; O3RuntimeFuLatencyClass::COUNT], StatsError> {
     let mut stats = [StatId::new(0); O3RuntimeFuLatencyClass::COUNT];
-    for class in O3RuntimeFuLatencyClass::ALL {
+    for descriptor in O3_RUNTIME_INST_TYPE_DESCRIPTORS.iter() {
+        let class = descriptor.class();
         stats[class.index()] = register_o3_counter(
             registry,
             prefix,
-            &format!(
-                "commit.committed_inst_type.{}",
-                o3_fu_latency_class_inst_type_stem(class)
-            ),
+            &format!("commit.committed_inst_type.{}", descriptor.source_stem()),
             "Count",
         )?;
     }
@@ -615,51 +612,14 @@ pub(super) fn register_o3_commit_fu_latency_class_alias_counters(
     prefix: &str,
 ) -> Result<[StatId; O3RuntimeFuLatencyClass::COUNT], StatsError> {
     let mut stats = [StatId::new(0); O3RuntimeFuLatencyClass::COUNT];
-    for class in O3RuntimeFuLatencyClass::ALL {
+    for descriptor in O3_RUNTIME_INST_TYPE_DESCRIPTORS.iter() {
+        let class = descriptor.class();
         stats[class.index()] = register_o3_counter(
             registry,
             prefix,
-            &format!(
-                "commit.committedInstType.{}",
-                o3_fu_latency_class_inst_type_alias(class)
-            ),
+            &format!("commit.committedInstType.{}", descriptor.gem5_alias()),
             "Count",
         )?;
     }
     Ok(stats)
-}
-
-pub(super) fn o3_iq_fu_latency_class_stem(class: O3RuntimeFuLatencyClass) -> &'static str {
-    o3_fu_latency_class_inst_type_stem(class)
-}
-
-pub(super) fn o3_fu_latency_class_inst_type_stem(class: O3RuntimeFuLatencyClass) -> &'static str {
-    match class {
-        O3RuntimeFuLatencyClass::ScalarIntegerMul => "int_mul",
-        O3RuntimeFuLatencyClass::ScalarIntegerDiv => "int_div",
-        _ => class.stat_stem(),
-    }
-}
-
-pub(super) fn o3_fu_latency_class_inst_type_alias(class: O3RuntimeFuLatencyClass) -> &'static str {
-    match class {
-        O3RuntimeFuLatencyClass::ScalarIntegerMul => "IntMult",
-        O3RuntimeFuLatencyClass::ScalarIntegerDiv => "IntDiv",
-        O3RuntimeFuLatencyClass::ScalarFloatAdd => "FloatAdd",
-        O3RuntimeFuLatencyClass::ScalarFloatCompare => "FloatCmp",
-        O3RuntimeFuLatencyClass::ScalarFloatMisc => "FloatMisc",
-        O3RuntimeFuLatencyClass::ScalarFloatMul => "FloatMult",
-        O3RuntimeFuLatencyClass::ScalarFloatFma => "FloatMultAcc",
-        O3RuntimeFuLatencyClass::ScalarFloatDiv => "FloatDiv",
-        O3RuntimeFuLatencyClass::ScalarFloatSqrt => "FloatSqrt",
-        O3RuntimeFuLatencyClass::VectorIntegerMul => "SimdMult",
-        O3RuntimeFuLatencyClass::VectorIntegerDiv => "SimdDiv",
-        O3RuntimeFuLatencyClass::VectorFloatAdd => "SimdFloatAdd",
-        O3RuntimeFuLatencyClass::VectorFloatCompare => "SimdFloatCmp",
-        O3RuntimeFuLatencyClass::VectorFloatMisc => "SimdFloatMisc",
-        O3RuntimeFuLatencyClass::VectorFloatMul => "SimdFloatMult",
-        O3RuntimeFuLatencyClass::VectorFloatFma => "SimdFloatMultAcc",
-        O3RuntimeFuLatencyClass::VectorFloatDiv => "SimdFloatDiv",
-        O3RuntimeFuLatencyClass::VectorFloatSqrt => "SimdFloatSqrt",
-    }
 }

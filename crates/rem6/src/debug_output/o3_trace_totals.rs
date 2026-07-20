@@ -974,6 +974,7 @@ impl Rem6O3TraceTotals {
             });
         }
         for class_stats in REM6_O3_FU_LATENCY_CLASS_STATS {
+            let descriptor = class_stats.class.inst_type_descriptor();
             let value = self.event_fu_latency_classes[class_stats.class.index()].instructions;
             stats.push(Rem6O3TraceStat {
                 suffix: class_stats.instructions,
@@ -981,12 +982,12 @@ impl Rem6O3TraceTotals {
                 value,
             });
             stats.push(Rem6O3TraceStat {
-                suffix: o3_event_iq_issued_inst_type_stat_suffix(class_stats.class),
+                suffix: descriptor.event_iq_stat_suffix(),
                 unit: "Count",
                 value,
             });
             stats.push(Rem6O3TraceStat {
-                suffix: o3_event_commit_committed_inst_type_stat_suffix(class_stats.class),
+                suffix: descriptor.event_commit_stat_suffix(),
                 unit: "Count",
                 value,
             });

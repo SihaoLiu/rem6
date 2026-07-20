@@ -820,7 +820,7 @@ fn emit_o3_runtime_event_summary_stats(
             .filter(|event| event.fu_latency_class() == Some(class))
             .count() as u64;
         let latency = fu_latency_classes[class.index()];
-        let inst_type = o3_fu_latency_class_inst_type_stem(class);
+        let inst_type = class.inst_type_descriptor().source_stem();
         increment_count_stat(
             stats,
             format!("sim.cpu{cpu}.o3.event_summary.iq.issued_inst_type.{inst_type}"),
@@ -1408,7 +1408,7 @@ pub(super) fn emit_o3_runtime_stats(
             format!(
                 "sim.cpu{}.o3.iq.issued_inst_type.{}",
                 core.cpu,
-                o3_fu_latency_class_inst_type_stem(class)
+                class.inst_type_descriptor().source_stem()
             ),
             o3.fu_latency_class_instructions(class),
         )?;
@@ -1426,7 +1426,7 @@ pub(super) fn emit_o3_runtime_stats(
             format!(
                 "sim.cpu{}.o3.commit.committed_inst_type.{}",
                 core.cpu,
-                o3_fu_latency_class_inst_type_stem(class)
+                class.inst_type_descriptor().source_stem()
             ),
             o3.fu_latency_class_instructions(class),
         )?;
@@ -1596,14 +1596,6 @@ fn increment_count_stat(
     value: u64,
 ) -> Result<(), Rem6CliError> {
     increment_stat(stats, &name, "Count", StatResetPolicy::Monotonic, value)
-}
-
-fn o3_fu_latency_class_inst_type_stem(class: O3RuntimeFuLatencyClass) -> &'static str {
-    match class {
-        O3RuntimeFuLatencyClass::ScalarIntegerMul => "int_mul",
-        O3RuntimeFuLatencyClass::ScalarIntegerDiv => "int_div",
-        _ => class.stat_stem(),
-    }
 }
 
 fn ratio_ppm(numerator: u64, denominator: u64) -> u64 {

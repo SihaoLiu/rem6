@@ -20,8 +20,6 @@ mod o3_branch_target_mismatch;
 mod o3_checkpoint_restore_json;
 #[path = "o3_event_iew.rs"]
 mod o3_event_iew;
-#[path = "o3_event_inst_type_stats.rs"]
-mod o3_event_inst_type_stats;
 #[path = "o3_event_json.rs"]
 mod o3_event_json;
 #[path = "o3_event_summary_json.rs"]
@@ -76,9 +74,6 @@ pub(super) use o3_checkpoint_restore_json::{
     o3_trace_cpu_checkpoint_restore_component_stats,
 };
 use o3_event_iew::Rem6O3EventIewTotals;
-use o3_event_inst_type_stats::{
-    o3_event_commit_committed_inst_type_stat_suffix, o3_event_iq_issued_inst_type_stat_suffix,
-};
 use o3_event_json::o3_event_to_json;
 pub(crate) use o3_event_summary_json::o3_event_summary_to_json;
 pub(super) use o3_execution_mode_stats::o3_trace_cpu_execution_mode_authority_stats;

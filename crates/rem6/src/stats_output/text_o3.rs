@@ -1,4 +1,4 @@
-use rem6_cpu::{BranchTargetKind, O3RuntimeFuLatencyClass};
+use rem6_cpu::{BranchTargetKind, O3_RUNTIME_INST_TYPE_DESCRIPTORS};
 use rem6_stats::StatSnapshot;
 
 use super::text::{
@@ -114,29 +114,25 @@ pub(super) fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &Stat
                 );
             }
         }
-        for (op_class, class) in [
-            ("IntMult", O3RuntimeFuLatencyClass::ScalarIntegerMul),
-            ("IntDiv", O3RuntimeFuLatencyClass::ScalarIntegerDiv),
-            ("FloatAdd", O3RuntimeFuLatencyClass::ScalarFloatAdd),
-            ("FloatCmp", O3RuntimeFuLatencyClass::ScalarFloatCompare),
-            ("FloatMisc", O3RuntimeFuLatencyClass::ScalarFloatMisc),
-            ("FloatMult", O3RuntimeFuLatencyClass::ScalarFloatMul),
-            ("FloatMultAcc", O3RuntimeFuLatencyClass::ScalarFloatFma),
-            ("FloatDiv", O3RuntimeFuLatencyClass::ScalarFloatDiv),
-            ("FloatSqrt", O3RuntimeFuLatencyClass::ScalarFloatSqrt),
-            ("SimdMult", O3RuntimeFuLatencyClass::VectorIntegerMul),
-            ("SimdDiv", O3RuntimeFuLatencyClass::VectorIntegerDiv),
-            ("SimdFloatAdd", O3RuntimeFuLatencyClass::VectorFloatAdd),
-            ("SimdFloatCmp", O3RuntimeFuLatencyClass::VectorFloatCompare),
-            ("SimdFloatMisc", O3RuntimeFuLatencyClass::VectorFloatMisc),
-            ("SimdFloatMult", O3RuntimeFuLatencyClass::VectorFloatMul),
-            ("SimdFloatMultAcc", O3RuntimeFuLatencyClass::VectorFloatFma),
-            ("SimdFloatDiv", O3RuntimeFuLatencyClass::VectorFloatDiv),
-            ("SimdFloatSqrt", O3RuntimeFuLatencyClass::VectorFloatSqrt),
-        ] {
-            let source_path = format!("sim.cpu{cpu}.o3.fu_{}_instructions", class.stat_stem());
+        for descriptor in O3_RUNTIME_INST_TYPE_DESCRIPTORS.iter() {
+            let source_path = format!(
+                "sim.cpu{cpu}.o3.fu_{}_instructions",
+                descriptor.class().stat_stem()
+            );
             if let Some(value) = snapshot_value(snapshot, &source_path) {
                 append_gem5_o3_iq_inst_type_alias_stats(
+                    output,
+                    snapshot,
+                    &alias_prefix,
+                    descriptor.gem5_alias(),
+                    value,
+                );
+            }
+        }
+        for (op_class, source_name) in [("MemRead", "mem_read"), ("MemWrite", "mem_write")] {
+            let source_path = format!("sim.cpu{cpu}.o3.commit.committed_inst_type.{source_name}");
+            if let Some(value) = snapshot_value(snapshot, &source_path) {
+                append_gem5_o3_commit_inst_type_alias_stats(
                     output,
                     snapshot,
                     &alias_prefix,
@@ -145,35 +141,17 @@ pub(super) fn append_gem5_o3_iq_alias_stats(output: &mut String, snapshot: &Stat
                 );
             }
         }
-        for (op_class, source_name) in [
-            ("MemRead", "mem_read"),
-            ("MemWrite", "mem_write"),
-            ("IntMult", "int_mul"),
-            ("IntDiv", "int_div"),
-            ("FloatAdd", "float_add"),
-            ("FloatCmp", "float_compare"),
-            ("FloatMisc", "float_misc"),
-            ("FloatMult", "float_mul"),
-            ("FloatMultAcc", "float_fma"),
-            ("FloatDiv", "float_div"),
-            ("FloatSqrt", "float_sqrt"),
-            ("SimdMult", "vector_integer_mul"),
-            ("SimdDiv", "vector_integer_div"),
-            ("SimdFloatAdd", "vector_float_add"),
-            ("SimdFloatCmp", "vector_float_compare"),
-            ("SimdFloatMisc", "vector_float_misc"),
-            ("SimdFloatMult", "vector_float_mul"),
-            ("SimdFloatMultAcc", "vector_float_fma"),
-            ("SimdFloatDiv", "vector_float_div"),
-            ("SimdFloatSqrt", "vector_float_sqrt"),
-        ] {
-            let source_path = format!("sim.cpu{cpu}.o3.commit.committed_inst_type.{source_name}");
+        for descriptor in O3_RUNTIME_INST_TYPE_DESCRIPTORS.iter() {
+            let source_path = format!(
+                "sim.cpu{cpu}.o3.commit.committed_inst_type.{}",
+                descriptor.source_stem()
+            );
             if let Some(value) = snapshot_value(snapshot, &source_path) {
                 append_gem5_o3_commit_inst_type_alias_stats(
                     output,
                     snapshot,
                     &alias_prefix,
-                    op_class,
+                    descriptor.gem5_alias(),
                     value,
                 );
             }
