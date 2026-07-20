@@ -88,7 +88,35 @@ fn run_dram_power_uses_accesses_when_they_dominate_residency() {
     );
     let record = record_for_target(&records, "memory.dram").expect("DRAM accesses are activity");
 
-    assert_record_values(record, "memory.dram", 0.001_033, 0.010_500, 38.001_033, 29);
+    assert_record_values(record, "memory.dram", 0.001_129, 0.010_500, 38.001_129, 29);
+}
+
+#[test]
+fn run_dram_power_keeps_commands_out_of_event_count() {
+    let dram = Rem6DramResourceSummary {
+        activity: 13,
+        active: 1,
+        active_banks: 1,
+        accesses: 2,
+        refreshes: 1,
+        commands: 13,
+        read_bytes: 4,
+        low_power_active_powerdown_entries: 1,
+        low_power_exits: 1,
+        ..Rem6DramResourceSummary::default()
+    };
+    let records = run_records_with_dram(5, dram);
+    let record = record_for_target(&records, "memory.dram").unwrap();
+    let expected = watts_from_activity(2, 16, 4, 0.000_004, 0.000_003, 0.000_000_5);
+
+    assert_record_values(
+        record,
+        "memory.dram",
+        expected,
+        0.010_500,
+        38.0 + expected,
+        5,
+    );
 }
 
 #[test]

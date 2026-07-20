@@ -694,6 +694,11 @@ fn dram_resource_power_record(
         .low_power_active_powerdown_entries
         .saturating_add(dram.low_power_precharge_powerdown_entries)
         .saturating_add(dram.low_power_self_refresh_entries);
+    let events = dram
+        .accesses
+        .max(dram.refreshes)
+        .max(low_power_entries)
+        .max(dram.low_power_exits);
     let operations = dram
         .commands
         .saturating_add(dram.refreshes)
@@ -708,14 +713,8 @@ fn dram_resource_power_record(
         .max(dram.low_power_exit_latency_ticks)
         .max(dram.accesses)
         .max(1);
-    let dynamic_watts = watts_from_activity(
-        dram.activity,
-        operations,
-        bytes,
-        0.000_004,
-        0.000_003,
-        0.000_000_5,
-    );
+    let dynamic_watts =
+        watts_from_activity(events, operations, bytes, 0.000_004, 0.000_003, 0.000_000_5);
     let static_watts = 0.010 + (dram.active_banks.max(1) as f64 * 0.000_500);
     Some(
         PowerAnalysisRecord::new(

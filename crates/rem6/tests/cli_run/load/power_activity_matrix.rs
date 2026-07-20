@@ -17,6 +17,7 @@ struct PowerActivityCase {
 struct CanonicalPowerTarget {
     target: &'static str,
     active_path: &'static str,
+    active_stat_path: &'static str,
     base_temperature_c: f64,
 }
 
@@ -78,36 +79,43 @@ const CANONICAL_POWER_TARGETS: &[CanonicalPowerTarget] = &[
     CanonicalPowerTarget {
         target: "cpu.instruction_cache",
         active_path: "/memory_resources/cache/instruction/l1/active",
+        active_stat_path: "sim.memory.resources.cache.instruction.l1.active",
         base_temperature_c: 39.0,
     },
     CanonicalPowerTarget {
         target: "cpu.data_cache",
         active_path: "/memory_resources/cache/data/l1/active",
+        active_stat_path: "sim.memory.resources.cache.data.l1.active",
         base_temperature_c: 39.0,
     },
     CanonicalPowerTarget {
         target: "memory.cache.l2",
         active_path: "/memory_resources/cache/l2/active",
+        active_stat_path: "sim.memory.resources.cache.l2.active",
         base_temperature_c: 38.5,
     },
     CanonicalPowerTarget {
         target: "memory.cache.l3",
         active_path: "/memory_resources/cache/l3/active",
+        active_stat_path: "sim.memory.resources.cache.l3.active",
         base_temperature_c: 38.5,
     },
     CanonicalPowerTarget {
         target: "memory.transport",
         active_path: "/memory_resources/transport/active",
+        active_stat_path: "sim.memory.resources.transport.active",
         base_temperature_c: 37.0,
     },
     CanonicalPowerTarget {
         target: "memory.fabric",
         active_path: "/memory_resources/fabric/active",
+        active_stat_path: "sim.memory.resources.fabric.active",
         base_temperature_c: 37.5,
     },
     CanonicalPowerTarget {
         target: "memory.dram",
         active_path: "/memory_resources/dram/active",
+        active_stat_path: "sim.memory.resources.dram.active",
         base_temperature_c: 38.0,
     },
 ];
@@ -125,6 +133,19 @@ fn json_u64(artifact: &Value, path: &str, row: &str) -> u64 {
         .pointer(path)
         .and_then(Value::as_u64)
         .unwrap_or_else(|| panic!("row {row} missing unsigned JSON path {path}"))
+}
+
+fn stat_u64(stats: &Value, path: &str, row: &str) -> u64 {
+    stats
+        .as_array()
+        .and_then(|samples| {
+            samples
+                .iter()
+                .find(|sample| sample.get("path").and_then(Value::as_str) == Some(path))
+        })
+        .and_then(|sample| sample.get("value"))
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("row {row} missing unsigned stat path {path}"))
 }
 
 fn record_for_target<'a>(
@@ -162,9 +183,11 @@ fn rem6_run_power_activity_matches_canonical_resource_matrix() {
     for case in POWER_ACTIVITY_CASES.iter().copied() {
         let binary_name = format!("power-activity-matrix-{}", case.name);
         let artifact_name = format!("power-activity-matrix-{}-artifact", case.name);
+        let stats_name = format!("power-activity-matrix-{}-stats", case.name);
         let power_name = format!("power-activity-matrix-{}-power", case.name);
         let path = temp_binary(&binary_name, &elf);
         let artifact_path = temp_output(&artifact_name);
+        let stats_path = temp_output(&stats_name);
         let power_path = temp_output(&power_name);
 
         let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
@@ -179,6 +202,10 @@ fn rem6_run_power_activity_matches_canonical_resource_matrix() {
             "--execute",
             "--output",
             artifact_path.to_str().unwrap(),
+            "--stats-format",
+            "json",
+            "--stats-output",
+            stats_path.to_str().unwrap(),
             "--power-format",
             case.format,
             "--power-output",
@@ -195,6 +222,8 @@ fn rem6_run_power_activity_matches_canonical_resource_matrix() {
         );
         let artifact_text = fs::read_to_string(&artifact_path).unwrap();
         let artifact: Value = serde_json::from_str(&artifact_text).unwrap();
+        let stats_text = fs::read_to_string(&stats_path).unwrap();
+        let stats: Value = serde_json::from_str(&stats_text).unwrap();
         let power_text = fs::read_to_string(&power_path).unwrap();
         let imported = imported_power_analysis(case.format, &power_text);
         let records = imported.records();
@@ -204,7 +233,14 @@ fn rem6_run_power_activity_matches_canonical_resource_matrix() {
         assert_active_power_record(case.name, core, 40.0);
 
         for mapping in CANONICAL_POWER_TARGETS.iter().copied() {
-            let active = json_u64(&artifact, mapping.active_path, case.name) > 0;
+            let active_value = json_u64(&artifact, mapping.active_path, case.name);
+            let active_stat = stat_u64(&stats, mapping.active_stat_path, case.name);
+            assert_eq!(
+                active_stat, active_value,
+                "row {} stat {} must match canonical artifact path {}",
+                case.name, mapping.active_stat_path, mapping.active_path
+            );
+            let active = active_value > 0;
             let expected_active = case.expected_active_targets.contains(&mapping.target);
             assert_eq!(
                 active, expected_active,
@@ -227,7 +263,7 @@ fn rem6_run_power_activity_matches_canonical_resource_matrix() {
         }
 
         if let Some(dram_record) = record_for_target(records, "memory.dram") {
-            let events = json_u64(&artifact, "/memory_resources/dram/activity", case.name);
+            let accesses = json_u64(&artifact, "/memory_resources/dram/accesses", case.name);
             let commands = json_u64(&artifact, "/memory_resources/dram/commands", case.name);
             let refreshes = json_u64(&artifact, "/memory_resources/dram/refreshes", case.name);
             let active_powerdown_entries = json_u64(
@@ -250,15 +286,17 @@ fn rem6_run_power_activity_matches_canonical_resource_matrix() {
                 "/memory_resources/dram/low_power/exits",
                 case.name,
             );
+            let low_power_entries = active_powerdown_entries
+                .saturating_add(precharge_powerdown_entries)
+                .saturating_add(self_refresh_entries);
+            let events = accesses.max(refreshes).max(low_power_entries).max(exits);
             let reads = json_u64(&artifact, "/memory_resources/dram/reads", case.name);
             let writes = json_u64(&artifact, "/memory_resources/dram/writes", case.name);
             let read_bytes = json_u64(&artifact, "/memory_resources/dram/read_bytes", case.name);
             let write_bytes = json_u64(&artifact, "/memory_resources/dram/write_bytes", case.name);
             let operations = commands
                 .saturating_add(refreshes)
-                .saturating_add(active_powerdown_entries)
-                .saturating_add(precharge_powerdown_entries)
-                .saturating_add(self_refresh_entries)
+                .saturating_add(low_power_entries)
                 .saturating_add(exits);
             let bytes = read_bytes.saturating_add(write_bytes);
             let legacy_bytes = reads.saturating_add(writes).saturating_mul(64);
