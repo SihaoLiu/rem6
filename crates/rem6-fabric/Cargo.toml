@@ -9,7 +9,7 @@ repository.workspace = true
 rem6-kernel = { path = "../rem6-kernel" }
 
 [dev-dependencies]
-syn = { version = "2", features = ["full"] }
+syn = { version = "2", features = ["full", "visit"] }
 
 [lints]
 workspace = true

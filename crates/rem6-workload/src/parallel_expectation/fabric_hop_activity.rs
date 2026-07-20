@@ -161,10 +161,10 @@ struct ActualFabricHopActivity {
 impl ActualFabricHopActivity {
     fn record(&mut self, activity: &FabricHopActivity) {
         if self.transfer_count == 0 {
-            self.first_tick = activity.ready_tick();
+            self.first_tick = activity.ingress_tick();
             self.last_tick = activity.arrival_tick();
         } else {
-            self.first_tick = self.first_tick.min(activity.ready_tick());
+            self.first_tick = self.first_tick.min(activity.ingress_tick());
             self.last_tick = self.last_tick.max(activity.arrival_tick());
         }
         self.transfer_count += 1;

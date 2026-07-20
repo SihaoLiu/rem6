@@ -1,5 +1,6 @@
 use rem6_kernel::Tick;
 
+use crate::activity::FabricLaneActivity;
 use crate::types::{FabricLinkId, FabricPacket, FabricPacketId, FabricRouterId, VirtualNetworkId};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -83,7 +84,7 @@ pub struct FabricHopTiming {
     link: FabricLinkId,
     virtual_network: VirtualNetworkId,
     router: Option<FabricRouterTiming>,
-    ready_tick: Tick,
+    ingress_tick: Tick,
     start_tick: Tick,
     serialization_ticks: Tick,
     depart_tick: Tick,
@@ -96,7 +97,7 @@ impl FabricHopTiming {
         link: FabricLinkId,
         virtual_network: VirtualNetworkId,
         router: Option<FabricRouterTiming>,
-        ready_tick: Tick,
+        ingress_tick: Tick,
         start_tick: Tick,
         serialization_ticks: Tick,
         depart_tick: Tick,
@@ -106,7 +107,7 @@ impl FabricHopTiming {
             link,
             virtual_network,
             router,
-            ready_tick,
+            ingress_tick,
             start_tick,
             serialization_ticks,
             depart_tick,
@@ -126,8 +127,8 @@ impl FabricHopTiming {
         self.router.as_ref()
     }
 
-    pub const fn ready_tick(&self) -> Tick {
-        self.ready_tick
+    pub const fn ingress_tick(&self) -> Tick {
+        self.ingress_tick
     }
 
     pub const fn start_tick(&self) -> Tick {
@@ -188,123 +189,31 @@ impl FabricTransfer {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FabricRouterActivity {
-    router: FabricRouterId,
-    input_port: u32,
-    output_port: u32,
-    virtual_channel: u16,
-    ready_tick: Tick,
-    start_tick: Tick,
-    latency_ticks: Tick,
-    depart_tick: Tick,
-    queue_delay_ticks: Tick,
-}
-
-impl FabricRouterActivity {
-    pub fn router(&self) -> &FabricRouterId {
-        &self.router
-    }
-
-    pub const fn input_port(&self) -> u32 {
-        self.input_port
-    }
-
-    pub const fn output_port(&self) -> u32 {
-        self.output_port
-    }
-
-    pub const fn virtual_channel(&self) -> u16 {
-        self.virtual_channel
-    }
-
-    pub const fn ready_tick(&self) -> Tick {
-        self.ready_tick
-    }
-
-    pub const fn start_tick(&self) -> Tick {
-        self.start_tick
-    }
-
-    pub const fn latency_ticks(&self) -> Tick {
-        self.latency_ticks
-    }
-
-    pub const fn depart_tick(&self) -> Tick {
-        self.depart_tick
-    }
-
-    pub const fn queue_delay_ticks(&self) -> Tick {
-        self.queue_delay_ticks
-    }
-}
-
-impl From<&FabricRouterTiming> for FabricRouterActivity {
-    fn from(timing: &FabricRouterTiming) -> Self {
-        Self {
-            router: timing.router().clone(),
-            input_port: timing.input_port(),
-            output_port: timing.output_port(),
-            virtual_channel: timing.virtual_channel(),
-            ready_tick: timing.ready_tick(),
-            start_tick: timing.start_tick(),
-            latency_ticks: timing.latency_ticks(),
-            depart_tick: timing.depart_tick(),
-            queue_delay_ticks: timing.queue_delay_ticks(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FabricHopActivity {
     packet: FabricPacketId,
     hop_index: usize,
-    link: FabricLinkId,
-    virtual_network: VirtualNetworkId,
-    router: Option<FabricRouterActivity>,
     bytes: u64,
     flits: u64,
-    ready_tick: Tick,
-    start_tick: Tick,
-    occupied_ticks: Tick,
-    queue_delay_ticks: Tick,
     credit_delay_ticks: Tick,
-    depart_tick: Tick,
-    arrival_tick: Tick,
+    timing: FabricHopTiming,
 }
 
 impl FabricHopActivity {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         packet: FabricPacketId,
         hop_index: usize,
-        link: FabricLinkId,
-        virtual_network: VirtualNetworkId,
-        router: Option<FabricRouterActivity>,
         bytes: u64,
         flits: u64,
-        ready_tick: Tick,
-        start_tick: Tick,
-        occupied_ticks: Tick,
-        queue_delay_ticks: Tick,
         credit_delay_ticks: Tick,
-        depart_tick: Tick,
-        arrival_tick: Tick,
+        timing: FabricHopTiming,
     ) -> Self {
         Self {
             packet,
             hop_index,
-            link,
-            virtual_network,
-            router,
             bytes,
             flits,
-            ready_tick,
-            start_tick,
-            occupied_ticks,
-            queue_delay_ticks,
             credit_delay_ticks,
-            depart_tick,
-            arrival_tick,
+            timing,
         }
     }
 
@@ -316,16 +225,20 @@ impl FabricHopActivity {
         self.hop_index
     }
 
+    pub fn timing(&self) -> &FabricHopTiming {
+        &self.timing
+    }
+
     pub fn link(&self) -> &FabricLinkId {
-        &self.link
+        self.timing.link()
     }
 
     pub const fn virtual_network(&self) -> VirtualNetworkId {
-        self.virtual_network
+        self.timing.virtual_network()
     }
 
-    pub fn router(&self) -> Option<&FabricRouterActivity> {
-        self.router.as_ref()
+    pub fn router(&self) -> Option<&FabricRouterTiming> {
+        self.timing.router()
     }
 
     pub const fn bytes(&self) -> u64 {
@@ -336,20 +249,30 @@ impl FabricHopActivity {
         self.flits
     }
 
-    pub const fn ready_tick(&self) -> Tick {
-        self.ready_tick
+    pub const fn ingress_tick(&self) -> Tick {
+        self.timing.ingress_tick()
     }
 
     pub const fn start_tick(&self) -> Tick {
-        self.start_tick
+        self.timing.start_tick()
     }
 
     pub const fn occupied_ticks(&self) -> Tick {
-        self.occupied_ticks
+        self.timing.serialization_ticks()
+    }
+
+    const fn lane_ready_tick(&self) -> Tick {
+        match &self.timing.router {
+            Some(router) => router.depart_tick(),
+            None => self.ingress_tick(),
+        }
     }
 
     pub const fn queue_delay_ticks(&self) -> Tick {
-        self.queue_delay_ticks
+        match self.start_tick().checked_sub(self.lane_ready_tick()) {
+            Some(delay) => delay,
+            None => panic!("fabric link start must not precede its lane-ready tick"),
+        }
     }
 
     pub const fn credit_delay_ticks(&self) -> Tick {
@@ -357,11 +280,28 @@ impl FabricHopActivity {
     }
 
     pub const fn depart_tick(&self) -> Tick {
-        self.depart_tick
+        self.timing.depart_tick()
     }
 
     pub const fn arrival_tick(&self) -> Tick {
-        self.arrival_tick
+        self.timing.arrival_tick()
+    }
+
+    pub(crate) fn lane_activity(&self) -> FabricLaneActivity {
+        let queue_delay_ticks = self.queue_delay_ticks();
+        FabricLaneActivity::new(
+            self.link().clone(),
+            self.virtual_network(),
+            1,
+            self.bytes(),
+            self.occupied_ticks(),
+            queue_delay_ticks,
+            queue_delay_ticks,
+            self.lane_ready_tick(),
+            self.arrival_tick(),
+        )
+        .with_flit_count(self.flits())
+        .with_credit_delay(self.credit_delay_ticks(), self.credit_delay_ticks())
     }
 }
 

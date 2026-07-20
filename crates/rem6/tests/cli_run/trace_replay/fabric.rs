@@ -336,6 +336,16 @@ fn rem6_trace_replay_fabric_route_uses_router_stage() {
         .and_then(Value::as_array)
         .expect("fabric hop activity details");
     assert_eq!(hops.len(), 4);
+    assert_eq!(
+        hops[0].get("ready_tick").and_then(Value::as_u64),
+        Some(0),
+        "public ready_tick must remain the pre-router hop ingress tick"
+    );
+    assert_eq!(
+        hops[0].get("start_tick").and_then(Value::as_u64),
+        Some(3),
+        "router latency must advance link start beyond hop ingress"
+    );
     let router_hops = hops
         .iter()
         .filter_map(|hop| hop.get("router"))
@@ -646,6 +656,10 @@ fn rem6_trace_replay_fabric_route_emits_lane_and_hop_activity_detail() {
             .is_some());
         assert!(hop.get("depart_tick").and_then(Value::as_u64).is_some());
         assert!(hop.get("arrival_tick").and_then(Value::as_u64).is_some());
+        assert!(
+            hop.get("router").is_some_and(Value::is_null),
+            "router-free fabric hops must retain a null router field without synthesizing metadata: {hop}"
+        );
     }
     for virtual_network in [1, 2] {
         let prefix = format!("sim.trace_replay.fabric.link.cpu_mem.vn{virtual_network}.hop0");

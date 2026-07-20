@@ -23,8 +23,8 @@ pub use snapshot::{
     FabricLaneSnapshot, FabricRouterInputVcSnapshot, FabricRouterOutputPortSnapshot, FabricSnapshot,
 };
 pub use telemetry::{
-    FabricActivityMarker, FabricHopActivity, FabricHopTiming, FabricRouterActivity,
-    FabricRouterTiming, FabricTransfer, FabricWaitForMarker,
+    FabricActivityMarker, FabricHopActivity, FabricHopTiming, FabricRouterTiming, FabricTransfer,
+    FabricWaitForMarker,
 };
 pub use types::{
     FabricError, FabricLinkId, FabricPacket, FabricPacketId, FabricRouterId, VirtualNetworkId,

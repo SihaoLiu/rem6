@@ -13,11 +13,12 @@
 ### Task 1: Add the RED authority and behavior boundaries
 
 **Files:**
+- Modify: `crates/rem6-fabric/Cargo.toml`
 - Modify: `crates/rem6-fabric/tests/source_policy.rs`
 - Modify: `crates/rem6-fabric/tests/fabric_timing.rs`
 - Modify: `crates/rem6/tests/cli_run/trace_replay/fabric.rs`
 
-- [ ] **Step 1: Add AST helpers for exact struct ownership**
+- [x] **Step 1: Add AST helpers for exact struct ownership**
 
 Add these helpers near the existing source-policy helper section:
 
@@ -84,7 +85,13 @@ fn type_path_ends_with(ty: &Type, expected: &[&str]) -> bool {
 }
 ```
 
-- [ ] **Step 2: Add the focused source-policy test**
+Review hardening extends this boundary with `syn::visit` across every
+production source file, a synthetic alias/re-export/nested-item test, exact
+`Option<FabricRouterTiming>` ownership, preserved `const` access for
+`queue_delay_ticks`, and an AST check that `reserve_transfer` constructs one
+timing, clones it into activity, and pushes the original into the transfer.
+
+- [x] **Step 2: Add the focused source-policy test**
 
 Add:
 
@@ -164,7 +171,7 @@ fn fabric_hop_activity_uses_one_timing_authority() {
 }
 ```
 
-- [ ] **Step 3: Require shared timing identity in focused fabric tests**
+- [x] **Step 3: Require shared timing identity in focused fabric tests**
 
 In `fabric_records_transfer_hop_activity_for_multihop_paths`, retain the
 returned transfer and add:
@@ -188,7 +195,9 @@ the third transfer's ambiguous ready assertion and add activity identity:
 assert_eq!(transfers[2].hops()[0].ingress_tick(), 0);
 assert_eq!(transfers[2].hops()[0].start_tick(), 11);
 let hop_activities = fabric.hop_activities_since(activity_start);
-assert_eq!(hop_activities[2].timing(), &transfers[2].hops()[0]);
+for (activity, transfer) in hop_activities.iter().zip(&transfers) {
+    assert_eq!(activity.timing(), &transfer.hops()[0]);
+}
 assert_eq!(hop_activities[2].credit_delay_ticks(), 9);
 ```
 
@@ -201,19 +210,23 @@ assert_eq!(activities[0].ingress_tick(), 0);
 assert_eq!(activities[1].ingress_tick(), 0);
 ```
 
-- [ ] **Step 4: Lock the router-free CLI suppression boundary**
+The multihop row also records a warmup transfer before its marker so nonzero
+marker offsets and retained ordering are executable evidence. The router
+failure row asserts that no hop activity was emitted before retrying.
+
+- [x] **Step 4: Lock the router-free CLI null-metadata boundary**
 
 In `rem6_trace_replay_fabric_route_emits_lane_and_hop_activity_detail`, add to
 the hop loop:
 
 ```rust
 assert!(
-    hop.get("router").is_none(),
-    "router-free fabric hops must not synthesize router metadata: {hop}"
+    hop.get("router").is_some_and(Value::is_null),
+    "router-free fabric hops must retain a null router field without synthesizing metadata: {hop}"
 );
 ```
 
-- [ ] **Step 5: Run the exact RED tests**
+- [x] **Step 5: Run the exact RED tests**
 
 Run:
 
@@ -241,7 +254,7 @@ Expected: compile failure because `FabricHopActivity::timing` and
 - Modify: `crates/rem6-fabric/src/lib.rs`
 - Modify: `crates/rem6-fabric/tests/source_policy.rs`
 
-- [ ] **Step 1: Make hop timing explicit**
+- [x] **Step 1: Make hop timing explicit**
 
 Change `FabricHopTiming` to:
 
@@ -262,7 +275,7 @@ pub struct FabricHopTiming {
 Rename the constructor parameter and accessor from `ready_tick` to
 `ingress_tick`. Delete `FabricHopTiming::ready_tick`.
 
-- [ ] **Step 2: Replace mirrored activity fields with composition**
+- [x] **Step 2: Replace mirrored activity fields with composition**
 
 Delete `FabricRouterActivity` and replace `FabricHopActivity` with:
 
@@ -311,7 +324,7 @@ Add a crate-private `lane_activity()` projection that constructs one
 `FabricLaneActivity` using the delegated fields, derived queue delay,
 `lane_ready_tick()` as the first tick, and arrival as the last tick.
 
-- [ ] **Step 3: Store typed activities directly in the model**
+- [x] **Step 3: Store typed activities directly in the model**
 
 Delete `FabricLaneActivityRecord`. Change:
 
@@ -329,7 +342,7 @@ let timing = FabricHopTiming::new(
     hop.link().clone(),
     virtual_network,
     router_timing,
-    ready_tick,
+    ingress_tick,
     reservation.start_tick,
     serialization_ticks,
     reservation.depart_tick,
@@ -352,12 +365,12 @@ Change lane aggregation to consume `&[FabricHopActivity]` and call
 `lane_activity()`. Return cloned log slices directly from `hop_activities` and
 `hop_activities_since`; delete `collect_hop_activities`.
 
-- [ ] **Step 4: Remove the obsolete public export and update policy inventory**
+- [x] **Step 4: Remove the obsolete public export and update policy inventory**
 
 Remove `FabricRouterActivity` from `crates/rem6-fabric/src/lib.rs` and from the
 telemetry expected-public-item list in `tests/source_policy.rs`.
 
-- [ ] **Step 5: Run the focused authority and timing tests**
+- [x] **Step 5: Run the focused authority and timing tests**
 
 Run:
 
@@ -382,13 +395,13 @@ Expected: all PASS.
 - Test: `crates/rem6/tests/cli_run/trace_replay/fabric.rs`
 - Test: `crates/rem6/tests/cli_run/data_cache_multicore/fabric_qos.rs`
 
-- [ ] **Step 1: Use explicit ingress timing at every projection**
+- [x] **Step 1: Use explicit ingress timing at every projection**
 
 Replace each `FabricHopActivity::ready_tick()` call with
 `FabricHopActivity::ingress_tick()`. Keep JSON field names such as
 `"ready_tick"`, debug record field names, and stat paths unchanged.
 
-- [ ] **Step 2: Verify router-free and router-backed trace replay**
+- [x] **Step 2: Verify router-free and router-backed trace replay**
 
 Run:
 
@@ -397,10 +410,12 @@ cargo test -p rem6 --test cli_run trace_replay::fabric::rem6_trace_replay_fabric
 cargo test -p rem6 --test cli_run trace_replay::fabric::rem6_trace_replay_fabric_route_uses_router_stage -- --exact --nocapture
 ```
 
-Expected: both PASS; router-free hops omit `router`, while router-backed hops
-retain exact router/port/VC/latency fields and stats.
+Expected: both PASS; router-free hops retain `"router": null`, while
+router-backed hops retain exact router/port/VC/latency fields and stats.
+The router-backed row also proves the compatibility key remains ingress by
+asserting `ready_tick == 0` while router latency advances `start_tick == 3`.
 
-- [ ] **Step 3: Verify the real multicore QoS matrix**
+- [x] **Step 3: Verify the real multicore QoS matrix**
 
 Run:
 
@@ -411,7 +426,7 @@ cargo test -p rem6 --test cli_run data_cache_multicore::fabric_qos::rem6_run_rou
 Expected: PASS for FIFO, LIFO, LRG, and no-QoS rows across request VN 7,
 response VN 8, two links, two routers, and VCs 11 through 14.
 
-- [ ] **Step 4: Verify failure rollback**
+- [x] **Step 4: Verify failure rollback**
 
 Run:
 
@@ -428,7 +443,7 @@ Expected: both PASS with no leaked activity or router/lane resource state.
 - Verify only: `docs/architecture/gem5-to-rem6-migration.md`
 - Verify only: `temp/improve-rem6-0.md`
 
-- [ ] **Step 1: Run package verification**
+- [x] **Step 1: Run package verification**
 
 Run:
 
@@ -440,7 +455,7 @@ cargo test -p rem6 --all-targets -q
 
 Expected: all commands exit 0.
 
-- [ ] **Step 2: Run full workspace verification**
+- [x] **Step 2: Run full workspace verification**
 
 Run:
 
@@ -450,14 +465,14 @@ cargo test --workspace --all-targets -q
 
 Expected: exit 0.
 
-- [ ] **Step 3: Run hygiene checks**
+- [x] **Step 3: Run hygiene checks**
 
 Run:
 
 ```bash
 git diff --check
-rg -n "FabricRouterActivity|FabricLaneActivityRecord" crates --glob '*.rs'
-rg -n "\.ready_tick\(\)" crates/rem6/src/artifact_json crates/rem6/src/gpu_cli/fabric.rs crates/rem6/src/debug_output/fabric.rs crates/rem6-workload/src/parallel_expectation/fabric_hop_activity.rs
+rg -n '\b(FabricRouterActivity|FabricLaneActivityRecord)\b' crates --glob '*.rs' --glob '!**/source_policy.rs'
+rg -n "activity\.ready_tick\(\)" crates/rem6/src/artifact_json crates/rem6/src/gpu_cli/fabric.rs crates/rem6/src/debug_output/fabric.rs crates/rem6-workload/src/parallel_expectation/fabric_hop_activity.rs
 wc -l docs/architecture/gem5-to-rem6-migration.md
 git status --short -- temp docs/architecture/gem5-to-rem6-migration.md
 ```
@@ -466,7 +481,7 @@ Expected: no obsolete telemetry types, no ambiguous hop-activity projection
 calls, the ledger remains exactly 1,200 lines, and protected paths are
 untouched.
 
-- [ ] **Step 4: Request independent read-only review**
+- [x] **Step 4: Request independent read-only review**
 
 The reviewer must inspect timing semantics, field authority, queue versus
 router delay derivation, transaction rollback, marker ordering, JSON/stat
@@ -484,6 +499,8 @@ Run:
 
 ```bash
 git add docs/superpowers/plans/2026-07-19-fabric-hop-telemetry-authority.md \
+  docs/superpowers/specs/2026-07-19-fabric-hop-telemetry-authority-design.md \
+  crates/rem6-fabric/Cargo.toml \
   crates/rem6-fabric/src/telemetry.rs \
   crates/rem6-fabric/src/model.rs \
   crates/rem6-fabric/src/lib.rs \
@@ -505,7 +522,8 @@ git push origin main
 Mark the final checkbox complete, then run:
 
 ```bash
-git commit -am "docs: close fabric hop telemetry plan"
+git add docs/superpowers/plans/2026-07-19-fabric-hop-telemetry-authority.md
+git commit -m "docs: close fabric hop telemetry plan"
 git push origin main
 git status --short --branch
 git rev-parse HEAD origin/main

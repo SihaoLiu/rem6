@@ -202,7 +202,7 @@ fn fabric_resource_hop_activities_json(summary: &Rem6FabricResourceSummary) -> S
                 router,
                 activity.bytes(),
                 activity.flits(),
-                activity.ready_tick(),
+                activity.ingress_tick(),
                 activity.start_tick(),
                 activity.occupied_ticks(),
                 activity.queue_delay_ticks(),

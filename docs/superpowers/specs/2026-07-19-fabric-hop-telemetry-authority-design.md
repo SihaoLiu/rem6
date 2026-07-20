@@ -84,7 +84,8 @@ start, occupied, departure, and arrival access to that timing. Link occupied
 ticks derive from serialization ticks. Lane-ready tick derives from the router
 departure tick when a router exists and otherwise from hop ingress. Lane queue
 delay derives from `start_tick - lane_ready_tick` with an invariant assertion;
-it is not stored.
+it is not stored. The existing public `const` availability of
+`queue_delay_ticks` is preserved.
 
 `FabricLaneReservation::ready_tick` is also deleted because reservation code
 always assigns it from `start_tick`.
@@ -116,8 +117,8 @@ Replace the ambiguous `FabricHopActivity::ready_tick` accessor with
 `ingress_tick`. Workspace consumers are updated to the explicit name.
 Existing JSON keys and stat paths named `ready_tick` remain unchanged and
 continue to report the hop ingress tick, preserving command output
-compatibility. Router-free JSON continues to omit the `router` object rather
-than manufacturing empty router metadata.
+compatibility. Router-free JSON retains the existing `"router": null` field
+rather than manufacturing an empty router object.
 
 ## Source Policy
 
@@ -126,10 +127,14 @@ inspection:
 
 - telemetry no longer publicly defines `FabricRouterActivity`;
 - `FabricHopTiming` has only its eight canonical fields;
+- its router field is exactly `Option<FabricRouterTiming>`;
 - `FabricHopActivity` has only its six activity fields, including
   `timing: FabricHopTiming`;
 - `FabricModel.activity_log` is `Vec<FabricHopActivity>`; and
-- production code does not define `FabricLaneActivityRecord`.
+- production source contains neither obsolete identifier, including aliases,
+  re-exports, or nested definitions; and
+- `reserve_transfer` contains one hop-timing construction, clones that timing
+  into the activity, and pushes the original into the transfer timing list.
 
 This policy is the RED boundary before implementation.
 
@@ -171,7 +176,7 @@ authority rather than merely agreeing field-by-field by convention.
 - `crates/rem6-workload/src/parallel_expectation/fabric_hop_activity.rs`: use
   explicit ingress timing for expectation windows.
 - `crates/rem6/tests/cli_run/trace_replay/fabric.rs`: assert the router-free
-  suppression boundary.
+  null-metadata boundary.
 
 ## Verification
 

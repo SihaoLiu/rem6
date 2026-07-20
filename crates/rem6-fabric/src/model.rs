@@ -11,8 +11,8 @@ use crate::snapshot::{
     FabricLaneSnapshot, FabricRouterInputVcSnapshot, FabricRouterOutputPortSnapshot, FabricSnapshot,
 };
 use crate::telemetry::{
-    FabricActivityMarker, FabricHopActivity, FabricHopTiming, FabricRouterActivity,
-    FabricRouterTiming, FabricTransfer, FabricWaitForMarker,
+    FabricActivityMarker, FabricHopActivity, FabricHopTiming, FabricRouterTiming, FabricTransfer,
+    FabricWaitForMarker,
 };
 use crate::types::{
     FabricError, FabricLinkId, FabricPacket, FabricPacketId, FabricRouterId, VirtualNetworkId,
@@ -62,103 +62,6 @@ impl FabricRouterOutputPortKey {
             router,
             output_port,
         }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct FabricLaneActivityRecord {
-    packet: FabricPacketId,
-    hop_index: usize,
-    link: FabricLinkId,
-    virtual_network: VirtualNetworkId,
-    router: Option<FabricRouterActivity>,
-    bytes: u64,
-    flits: u64,
-    occupied_ticks: Tick,
-    queue_delay_ticks: Tick,
-    credit_delay_ticks: Tick,
-    ready_tick: Tick,
-    lane_ready_tick: Tick,
-    start_tick: Tick,
-    depart_tick: Tick,
-    arrival_tick: Tick,
-}
-
-impl FabricLaneActivityRecord {
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        packet: FabricPacketId,
-        hop_index: usize,
-        link: FabricLinkId,
-        virtual_network: VirtualNetworkId,
-        router: Option<FabricRouterActivity>,
-        bytes: u64,
-        flits: u64,
-        occupied_ticks: Tick,
-        queue_delay_ticks: Tick,
-        credit_delay_ticks: Tick,
-        ready_tick: Tick,
-        lane_ready_tick: Tick,
-        start_tick: Tick,
-        depart_tick: Tick,
-        arrival_tick: Tick,
-    ) -> Self {
-        Self {
-            packet,
-            hop_index,
-            link,
-            virtual_network,
-            router,
-            bytes,
-            flits,
-            occupied_ticks,
-            queue_delay_ticks,
-            credit_delay_ticks,
-            ready_tick,
-            lane_ready_tick,
-            start_tick,
-            depart_tick,
-            arrival_tick,
-        }
-    }
-
-    fn key(&self) -> FabricLaneKey {
-        FabricLaneKey::new(self.link.clone(), self.virtual_network)
-    }
-
-    fn activity(&self) -> FabricLaneActivity {
-        FabricLaneActivity::new(
-            self.link.clone(),
-            self.virtual_network,
-            1,
-            self.bytes,
-            self.occupied_ticks,
-            self.queue_delay_ticks,
-            self.queue_delay_ticks,
-            self.lane_ready_tick,
-            self.arrival_tick,
-        )
-        .with_flit_count(self.flits)
-        .with_credit_delay(self.credit_delay_ticks, self.credit_delay_ticks)
-    }
-
-    fn hop_activity(&self) -> FabricHopActivity {
-        FabricHopActivity::new(
-            self.packet,
-            self.hop_index,
-            self.link.clone(),
-            self.virtual_network,
-            self.router.clone(),
-            self.bytes,
-            self.flits,
-            self.ready_tick,
-            self.start_tick,
-            self.occupied_ticks,
-            self.queue_delay_ticks,
-            self.credit_delay_ticks,
-            self.depart_tick,
-            self.arrival_tick,
-        )
     }
 }
 
@@ -279,7 +182,6 @@ impl FabricLaneState {
             }
         }
 
-        let ready_tick = start_tick;
         let depart_tick = start_tick
             .checked_add(serialization_ticks)
             .ok_or(FabricError::TickOverflow)?;
@@ -294,7 +196,6 @@ impl FabricLaneState {
         }
 
         Ok(FabricLaneReservation {
-            ready_tick,
             start_tick,
             depart_tick,
             arrival_tick: next_arrival_tick,
@@ -354,7 +255,6 @@ fn queue_wait_kind(
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct FabricLaneReservation {
-    ready_tick: Tick,
     start_tick: Tick,
     depart_tick: Tick,
     arrival_tick: Tick,
@@ -446,7 +346,7 @@ pub struct FabricModel {
     lanes: BTreeMap<FabricLaneKey, FabricLaneState>,
     router_input_vcs: BTreeMap<FabricRouterInputVcKey, FabricRouterResourceState>,
     router_output_ports: BTreeMap<FabricRouterOutputPortKey, FabricRouterResourceState>,
-    activity_log: Vec<FabricLaneActivityRecord>,
+    activity_log: Vec<FabricHopActivity>,
     wait_log: Vec<FabricWaitRecord>,
 }
 
@@ -657,14 +557,14 @@ impl FabricModel {
     }
 
     pub fn hop_activities(&self) -> Vec<FabricHopActivity> {
-        collect_hop_activities(&self.activity_log)
+        self.activity_log.clone()
     }
 
     pub fn hop_activities_since(&self, marker: FabricActivityMarker) -> Vec<FabricHopActivity> {
-        let Some(records) = self.activity_log.get(marker.offset()..) else {
+        let Some(activities) = self.activity_log.get(marker.offset()..) else {
             return Vec::new();
         };
-        collect_hop_activities(records)
+        activities.to_vec()
     }
 
     pub fn link_activities(&self) -> Vec<FabricLinkActivity> {
@@ -837,15 +737,15 @@ impl FabricModel {
         let mut timings = Vec::with_capacity(path.hops().len());
 
         for (hop_index, hop) in path.hops().iter().enumerate() {
-            let ready_tick = arrival_tick;
+            let ingress_tick = arrival_tick;
             let router_reservation = if let Some(stage) = hop.router_stage() {
-                Some(self.reserve_router_stage(stage, ready_tick)?)
+                Some(self.reserve_router_stage(stage, ingress_tick)?)
             } else {
                 None
             };
             let lane_ready_tick = router_reservation
                 .as_ref()
-                .map_or(ready_tick, |reservation| reservation.timing.depart_tick());
+                .map_or(ingress_tick, |reservation| reservation.timing.depart_tick());
             let virtual_network = hop.virtual_network().unwrap_or(packet.virtual_network());
             let lane = FabricLaneKey::new(hop.link().clone(), virtual_network);
             let serialization_ticks = hop.serialization_ticks(packet.bytes())?;
@@ -911,33 +811,27 @@ impl FabricModel {
                 }
             }
 
-            timings.push(FabricHopTiming::new(
+            let timing = FabricHopTiming::new(
                 hop.link().clone(),
                 virtual_network,
-                router_timing.clone(),
-                reservation.ready_tick,
+                router_timing,
+                ingress_tick,
                 reservation.start_tick,
                 serialization_ticks,
                 reservation.depart_tick,
                 reservation.arrival_tick,
-            ));
-            self.activity_log.push(FabricLaneActivityRecord::new(
+            );
+            let activity = FabricHopActivity::new(
                 packet.id(),
                 hop_index,
-                hop.link().clone(),
-                virtual_network,
-                router_timing.as_ref().map(FabricRouterActivity::from),
                 packet.bytes(),
                 flits,
-                serialization_ticks,
-                queue_delay_ticks,
                 credit_delay_ticks,
-                ready_tick,
-                lane_ready_tick,
-                reservation.start_tick,
-                reservation.depart_tick,
-                reservation.arrival_tick,
-            ));
+                timing.clone(),
+            );
+            debug_assert_eq!(activity.queue_delay_ticks(), queue_delay_ticks);
+            self.activity_log.push(activity);
+            timings.push(timing);
             arrival_tick = reservation.arrival_tick;
         }
 
@@ -950,22 +844,19 @@ impl FabricModel {
     }
 }
 
-fn collect_lane_activities(records: &[FabricLaneActivityRecord]) -> Vec<FabricLaneActivity> {
+fn collect_lane_activities(records: &[FabricHopActivity]) -> Vec<FabricLaneActivity> {
     let mut activities = BTreeMap::<FabricLaneKey, FabricLaneActivity>::new();
     for record in records {
+        let activity = record.lane_activity();
         activities
-            .entry(record.key())
-            .and_modify(|stored| *stored = stored.clone().merge_window(record.activity()))
-            .or_insert_with(|| record.activity());
+            .entry(FabricLaneKey::new(
+                record.link().clone(),
+                record.virtual_network(),
+            ))
+            .and_modify(|stored| *stored = stored.clone().merge_window(activity.clone()))
+            .or_insert(activity);
     }
     activities.into_values().collect()
-}
-
-fn collect_hop_activities(records: &[FabricLaneActivityRecord]) -> Vec<FabricHopActivity> {
-    records
-        .iter()
-        .map(FabricLaneActivityRecord::hop_activity)
-        .collect()
 }
 
 fn fabric_packet_node(packet: FabricPacketId) -> WaitForNode {

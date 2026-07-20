@@ -203,7 +203,7 @@ pub(crate) fn fabric_trace_records(fabric: &Rem6RunFabricSummary) -> Vec<Rem6Fab
                 virtual_network: u64::from(activity.virtual_network().get()),
                 bytes: activity.bytes(),
                 flits: activity.flits(),
-                ready_tick: activity.ready_tick(),
+                ready_tick: activity.ingress_tick(),
                 start_tick: activity.start_tick(),
                 occupied_ticks: activity.occupied_ticks(),
                 queue_delay_ticks: activity.queue_delay_ticks(),

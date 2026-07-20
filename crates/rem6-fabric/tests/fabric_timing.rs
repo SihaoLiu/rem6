@@ -313,9 +313,16 @@ fn fabric_credit_depth_limits_in_flight_packets_per_virtual_network() {
     assert_eq!(transfers[1].arrival_tick(), 12);
     assert_eq!(transfers[2].packet().id(), FabricPacketId::new(3));
     assert_eq!(transfers[2].hops()[0].start_tick(), 11);
-    assert_eq!(transfers[2].hops()[0].ready_tick(), 11);
+    assert_eq!(transfers[2].hops()[0].ingress_tick(), 0);
     assert_eq!(transfers[2].hops()[0].depart_tick(), 12);
     assert_eq!(transfers[2].arrival_tick(), 22);
+
+    let hop_activities = fabric.hop_activities_since(activity_start);
+    assert_eq!(hop_activities.len(), transfers.len());
+    for (activity, transfer) in hop_activities.iter().zip(&transfers) {
+        assert_eq!(activity.timing(), &transfer.hops()[0]);
+    }
+    assert_eq!(hop_activities[2].credit_delay_ticks(), 9);
 
     let activity = fabric
         .lane_activity(&link("mesh_credit"), VirtualNetworkId::new(1))
@@ -758,6 +765,13 @@ fn fabric_pipelines_multi_hop_paths_by_link_occupancy() {
 #[test]
 fn fabric_records_transfer_hop_activity_for_multihop_paths() {
     let mut fabric = FabricModel::new();
+    let warmup = fabric
+        .transmit(
+            1,
+            packet(6, 8, 9),
+            path([FabricPathHop::new(link("activity_warmup"), 1, 8).unwrap()]),
+        )
+        .unwrap();
     let activity_start = fabric.mark_activity();
     let route = path([
         FabricPathHop::new(link("cpu_to_router"), 2, 8).unwrap(),
@@ -766,16 +780,19 @@ fn fabric_records_transfer_hop_activity_for_multihop_paths() {
             .with_virtual_network(VirtualNetworkId::new(3)),
     ]);
 
-    fabric.transmit(5, packet(7, 16, 1), route).unwrap();
+    let transfer = fabric.transmit(5, packet(7, 16, 1), route).unwrap();
 
-    let activities = fabric.hop_activities();
-    assert_eq!(activities.len(), 2);
+    let activities = fabric.hop_activities_since(activity_start);
+    assert_eq!(activities.len(), transfer.hops().len());
+    for (activity, timing) in activities.iter().zip(transfer.hops()) {
+        assert_eq!(activity.timing(), timing);
+    }
     assert_eq!(activities[0].packet(), FabricPacketId::new(7));
     assert_eq!(activities[0].hop_index(), 0);
     assert_eq!(activities[0].link(), &link("cpu_to_router"));
     assert_eq!(activities[0].virtual_network(), VirtualNetworkId::new(1));
     assert_eq!(activities[0].bytes(), 16);
-    assert_eq!(activities[0].ready_tick(), 5);
+    assert_eq!(activities[0].ingress_tick(), 5);
     assert_eq!(activities[0].start_tick(), 5);
     assert_eq!(activities[0].occupied_ticks(), 2);
     assert_eq!(activities[0].depart_tick(), 7);
@@ -786,13 +803,20 @@ fn fabric_records_transfer_hop_activity_for_multihop_paths() {
     assert_eq!(activities[1].link(), &link("router_to_mem"));
     assert_eq!(activities[1].virtual_network(), VirtualNetworkId::new(3));
     assert_eq!(activities[1].bytes(), 16);
-    assert_eq!(activities[1].ready_tick(), 9);
+    assert_eq!(activities[1].ingress_tick(), 9);
     assert_eq!(activities[1].start_tick(), 9);
     assert_eq!(activities[1].occupied_ticks(), 4);
     assert_eq!(activities[1].depart_tick(), 13);
     assert_eq!(activities[1].arrival_tick(), 16);
     assert_eq!(activities[1].queue_delay_ticks(), 0);
+    assert!(activities
+        .iter()
+        .all(|activity| activity.router().is_none()));
     assert_eq!(fabric.hop_activities_since(activity_start), activities);
+    let retained = fabric.hop_activities();
+    assert_eq!(retained.len(), warmup.hops().len() + activities.len());
+    assert_eq!(retained[0].timing(), &warmup.hops()[0]);
+    assert_eq!(&retained[1..], activities.as_slice());
 
     fabric.clear_activity();
     assert!(fabric.hop_activities().is_empty());
@@ -879,6 +903,10 @@ fn fabric_router_stage_serializes_input_virtual_channel_before_link() {
 
     let activities = fabric.hop_activities();
     assert_eq!(activities.len(), 2);
+    assert_eq!(activities[0].timing(), &transfers[0].hops()[0]);
+    assert_eq!(activities[1].timing(), &transfers[1].hops()[0]);
+    assert_eq!(activities[0].ingress_tick(), 0);
+    assert_eq!(activities[1].ingress_tick(), 0);
     assert_eq!(activities[0].link(), &link("router0.out0"));
     assert_eq!(activities[0].start_tick(), 3);
     assert_eq!(activities[0].queue_delay_ticks(), 0);
@@ -954,6 +982,7 @@ fn failed_router_stage_transfer_does_not_consume_router_resources() {
     );
 
     assert_eq!(fabric.snapshot(), before);
+    assert!(fabric.hop_activities().is_empty());
     let transfer = fabric.transmit(0, packet(1, 1, 0), route).unwrap();
     let router = transfer.hops()[0].router().unwrap();
     assert_eq!(router.start_tick(), 0);
