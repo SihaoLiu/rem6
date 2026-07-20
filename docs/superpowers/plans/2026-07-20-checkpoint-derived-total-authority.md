@@ -20,6 +20,7 @@
 - `crates/rem6-system/tests/system_actions.rs`: public transfer projection behavior.
 - `crates/rem6-system/tests/source_policy.rs`: transfer authority shape.
 - `crates/rem6/src/host_actions.rs`: top-level checkpoint, transfer, and restore aggregate summaries.
+- `crates/rem6/src/host_actions/summary_totals.rs`: derived hierarchy and restore-total accessors.
 - `crates/rem6/src/host_actions/summary_projection_tests.rs`: focused top-level projection tests.
 - `crates/rem6/src/artifact_json/checkpoint.rs`: checkpoint JSON consumer.
 - `crates/rem6/src/artifact_json.rs`: host-action and transfer JSON consumers.
@@ -41,7 +42,7 @@
 - Modify: `crates/rem6-checkpoint/tests/checkpoint_registry.rs:70-160`
 - Create: `crates/rem6-checkpoint/tests/source_policy.rs`
 
-- [ ] **Step 1: Add the failing checkpoint source-policy test**
+- [x] **Step 1: Add the failing checkpoint source-policy test**
 
 Create `crates/rem6-checkpoint/tests/source_policy.rs` with a small struct-body
 extractor and this policy:
@@ -83,7 +84,7 @@ fn struct_body<'a>(source: &'a str, name: &str) -> &'a str {
 }
 ```
 
-- [ ] **Step 2: Run the policy test and observe RED**
+- [x] **Step 2: Run the policy test and observe RED**
 
 Run:
 
@@ -94,7 +95,7 @@ cargo test -p rem6-checkpoint --test source_policy checkpoint_summaries_derive_h
 Expected: FAIL because both summary structs still declare cached totals and the
 aggregate-only constructor still exists.
 
-- [ ] **Step 3: Strengthen the behavior test over the owned projection**
+- [x] **Step 3: Strengthen the behavior test over the owned projection**
 
 In `checkpoint_manifest_reports_component_chunk_and_payload_totals`, add:
 
@@ -128,7 +129,7 @@ for component in summary.component_summaries() {
 }
 ```
 
-- [ ] **Step 4: Remove cached checkpoint totals**
+- [x] **Step 4: Remove cached checkpoint totals**
 
 Change the two representations and accessors to:
 
@@ -191,7 +192,7 @@ impl CheckpointManifestSummary {
 Delete `CheckpointComponentSummary::new` entirely. Keep component lookup,
 component count, chunk lookup, and manifest construction behavior unchanged.
 
-- [ ] **Step 5: Run checkpoint GREEN verification**
+- [x] **Step 5: Run checkpoint GREEN verification**
 
 Run:
 
@@ -203,7 +204,7 @@ cargo test -p rem6-checkpoint --all-targets
 
 Expected: all tests PASS.
 
-- [ ] **Step 6: Commit the checkpoint layer**
+- [x] **Step 6: Commit the checkpoint layer**
 
 ```bash
 git add crates/rem6-checkpoint/src/lib.rs crates/rem6-checkpoint/tests/checkpoint_registry.rs crates/rem6-checkpoint/tests/source_policy.rs
@@ -219,7 +220,7 @@ git commit -m "refactor: derive checkpoint manifest totals"
 - Modify: `crates/rem6-system/tests/system_actions.rs:1947-2003`
 - Modify: `crates/rem6-system/tests/source_policy.rs`
 
-- [ ] **Step 1: Add the failing transfer source-policy row**
+- [x] **Step 1: Add the failing transfer source-policy row**
 
 Add a local `struct_body` helper to `crates/rem6-system/tests/source_policy.rs`
 if one is not already present, then add:
@@ -254,7 +255,7 @@ fn execution_mode_switch_transfers_derive_hierarchy_totals_from_components() {
 }
 ```
 
-- [ ] **Step 2: Run the policy test and observe RED**
+- [x] **Step 2: Run the policy test and observe RED**
 
 Run:
 
@@ -264,7 +265,7 @@ cargo test -p rem6-system --test source_policy execution_mode_switch_transfers_d
 
 Expected: FAIL because the transfer structs still cache hierarchy totals.
 
-- [ ] **Step 3: Add public behavior assertions**
+- [x] **Step 3: Add public behavior assertions**
 
 Extend `execution_mode_switch_transfer_can_be_scheduler_only` after obtaining
 `transfer`:
@@ -304,7 +305,7 @@ assert_eq!(
 );
 ```
 
-- [ ] **Step 4: Remove cached transfer totals**
+- [x] **Step 4: Remove cached transfer totals**
 
 In `host.rs`, remove the five cached hierarchy fields and implement:
 
@@ -343,7 +344,7 @@ The first three methods belong to `ExecutionModeSwitchStateTransfer`; the last
 two belong to `ExecutionModeSwitchStateTransferComponent`. Remove the now-dead
 precomputed component payload local from `from_state`.
 
-- [ ] **Step 5: Build the quiescence snapshot from the component projection**
+- [x] **Step 5: Build the quiescence snapshot from the component projection**
 
 In `execution_mode_transfer.rs`, remove `let summary = manifest.summary()` and
 compute before constructing `Self`:
@@ -363,7 +364,7 @@ let captured_payload_bytes = components
 Use those three locals only in `ExecutionModeSwitchQuiescenceGate`. Do not add
 them back to `ExecutionModeSwitchStateTransfer`.
 
-- [ ] **Step 6: Run system GREEN verification**
+- [x] **Step 6: Run system GREEN verification**
 
 Run:
 
@@ -375,7 +376,7 @@ cargo test -p rem6-system --all-targets
 
 Expected: all tests PASS.
 
-- [ ] **Step 7: Commit the system layer**
+- [x] **Step 7: Commit the system layer**
 
 ```bash
 git add crates/rem6-system/src/host.rs crates/rem6-system/src/host/execution_mode_transfer.rs crates/rem6-system/tests/system_actions.rs crates/rem6-system/tests/source_policy.rs
@@ -387,6 +388,7 @@ git commit -m "refactor: derive mode switch transfer totals"
 
 **Files:**
 - Modify: `crates/rem6/src/host_actions.rs`
+- Create: `crates/rem6/src/host_actions/summary_totals.rs`
 - Create: `crates/rem6/src/host_actions/summary_projection_tests.rs`
 - Modify: `crates/rem6/src/artifact_json/checkpoint.rs`
 - Modify: `crates/rem6/src/artifact_json.rs`
@@ -401,7 +403,7 @@ git commit -m "refactor: derive mode switch transfer totals"
 - Modify: `crates/rem6/tests/source_policy.rs`
 - Create: `crates/rem6/tests/source_policy/checkpoint_total_authority.rs`
 
-- [ ] **Step 1: Add the failing top-level source-policy module**
+- [x] **Step 1: Add the failing top-level source-policy module**
 
 Register this module in `crates/rem6/tests/source_policy.rs`:
 
@@ -421,6 +423,10 @@ use std::path::Path;
 fn checkpoint_output_summaries_derive_hierarchy_totals_from_projections() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let host = fs::read_to_string(crate_dir.join("src/host_actions.rs")).unwrap();
+    let totals = fs::read_to_string(
+        crate_dir.join("src/host_actions/summary_totals.rs"),
+    )
+    .unwrap();
 
     for (name, forbidden) in [
         ("Rem6HostCheckpointSummary", &["component_count:", "chunk_count:", "payload_bytes:"][..]),
@@ -440,13 +446,19 @@ fn checkpoint_output_summaries_derive_hierarchy_totals_from_projections() {
     }
 
     for authority in [
-        "pub(crate) fn checkpoint_restored_count(&self) -> u64",
-        "pub(crate) fn component_count(&self) -> u64",
+        "pub(crate) const fn checkpoint_restored_count(&self) -> u64",
+        "pub(crate) fn checkpoint_restored_component_count(&self) -> u64",
+        "pub(crate) fn checkpoint_restored_chunk_count(&self) -> u64",
+        "pub(crate) fn checkpoint_restored_payload_bytes(&self) -> u64",
+        "pub(crate) const fn component_count(&self) -> u64",
+        "pub(crate) const fn chunk_count(&self) -> u64",
         "pub(crate) fn chunk_count(&self) -> u64",
         "pub(crate) fn payload_bytes(&self) -> u64",
     ] {
-        assert!(host.contains(authority), "missing derived accessor {authority}");
+        assert!(totals.contains(authority), "missing derived accessor {authority}");
     }
+
+    assert!(host.contains("mod summary_totals;"));
 
     let checkpoint_json = fs::read_to_string(
         crate_dir.join("src/artifact_json/checkpoint.rs"),
@@ -467,7 +479,7 @@ fn struct_body<'a>(source: &'a str, name: &str) -> &'a str {
 }
 ```
 
-- [ ] **Step 2: Run the policy test and observe RED**
+- [x] **Step 2: Run the policy test and observe RED**
 
 Run:
 
@@ -477,7 +489,7 @@ cargo test -p rem6 --test source_policy checkpoint_output_summaries_derive_hiera
 
 Expected: FAIL because all four top-level summary types still cache totals.
 
-- [ ] **Step 3: Add a focused top-level projection test**
+- [x] **Step 3: Add a focused top-level projection test**
 
 Declare the test module near the existing `host_actions` submodules:
 
@@ -578,7 +590,7 @@ The optional O3 fields stay `None`, execution-mode vectors stay empty, and
 authority flags stay `false`; no production constructor is needed for this
 private test.
 
-- [ ] **Step 4: Remove top-level cached totals and add accessors**
+- [x] **Step 4: Remove top-level cached totals and add accessors**
 
 In `host_actions.rs`:
 
@@ -590,11 +602,15 @@ In `host_actions.rs`:
 3. Stop copying totals in `checkpoint_summary_from_manifest`,
    `from_checkpoint_state`, `from_execution_mode_transfer_component`, and
    `Rem6ExecutionModeStateTransferSummary::from_transfer`.
-4. Add these projection methods:
+4. Declare `mod summary_totals;` and add these projection methods in the
+   focused `host_actions/summary_totals.rs` module so `host_actions.rs` remains
+   under its enforced 1,200-line cap:
 
 ```rust
+use super::*;
+
 impl Rem6HostActionSummary {
-    pub(crate) fn checkpoint_restored_count(&self) -> u64 {
+    pub(crate) const fn checkpoint_restored_count(&self) -> u64 {
         self.checkpoint_restores.len() as u64
     }
 
@@ -621,7 +637,7 @@ impl Rem6HostActionSummary {
 }
 
 impl Rem6HostCheckpointSummary {
-    pub(crate) fn component_count(&self) -> u64 {
+    pub(crate) const fn component_count(&self) -> u64 {
         self.components.len() as u64
     }
 
@@ -641,7 +657,7 @@ impl Rem6HostCheckpointSummary {
 }
 
 impl Rem6HostCheckpointComponentSummary {
-    pub(crate) fn chunk_count(&self) -> u64 {
+    pub(crate) const fn chunk_count(&self) -> u64 {
         self.chunks.len() as u64
     }
 
@@ -655,10 +671,10 @@ impl Rem6HostCheckpointComponentSummary {
 ```
 
 Give `Rem6ExecutionModeStateTransferSummary` the same three accessors as
-`Rem6HostCheckpointSummary`, projected through
-`Rem6HostCheckpointComponentSummary`.
+`Rem6HostCheckpointSummary`, with a const component count and sums projected
+through `Rem6HostCheckpointComponentSummary`.
 
-- [ ] **Step 5: Migrate every output consumer and fixture**
+- [x] **Step 5: Migrate every output consumer and fixture**
 
 Replace direct hierarchy reads with method calls. The mechanical mapping is:
 
@@ -682,7 +698,7 @@ do not alter independent aggregation structs that intentionally store totals.
 Delete removed fields from all private test fixtures. Keep JSON format strings,
 field order, stats paths, units, and debug names byte-for-byte unchanged.
 
-- [ ] **Step 6: Run focused top-level GREEN verification**
+- [x] **Step 6: Run focused top-level GREEN verification**
 
 Run:
 
@@ -698,7 +714,7 @@ cargo test -p rem6 --lib
 Expected: all tests PASS. If the compiler reports a removed field, migrate that
 receiver only after confirming it is one of the changed projection summaries.
 
-- [ ] **Step 7: Commit the top-level layer**
+- [x] **Step 7: Commit the top-level layer**
 
 ```bash
 git add crates/rem6/src crates/rem6/tests/source_policy.rs crates/rem6/tests/source_policy/checkpoint_total_authority.rs
@@ -711,48 +727,48 @@ git commit -m "refactor: derive host checkpoint totals"
 **Files:**
 - Test only unless a regression is found.
 
-- [ ] **Step 1: Run the mode-switch stats row**
+- [x] **Step 1: Run the mode-switch stats row**
 
 ```bash
-TMPDIR=$PWD/temp cargo test -p rem6 --test cli_run rem6_run_scopes_multicore_o3_switch_transfer_stats_by_target -- --exact
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run m5_host_actions::o3::switch::rem6_run_scopes_multicore_o3_switch_transfer_stats_by_target -- --exact
 ```
 
 Expected: PASS with the existing target/component/chunk state-transfer stats.
 
-- [ ] **Step 2: Run the quiescence debug row**
+- [x] **Step 2: Run the quiescence debug row**
 
 ```bash
-TMPDIR=$PWD/temp cargo test -p rem6 --test cli_run rem6_run_host_action_debug_flag_emits_checker_quiescence_switch_scope -- --exact
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run debug_flags::host_action::rem6_run_host_action_debug_flag_emits_checker_quiescence_switch_scope -- --exact
 ```
 
 Expected: PASS, proving stored quiescence capture fields remain unchanged.
 
-- [ ] **Step 3: Run the checkpoint restore debug row**
+- [x] **Step 3: Run the checkpoint restore debug row**
 
 ```bash
-TMPDIR=$PWD/temp cargo test -p rem6 --test cli_run rem6_run_o3_debug_flag_marks_checkpoint_restore_replay_scope -- --exact
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run debug_flags::o3_checkpoint_restore::rem6_run_o3_debug_flag_marks_checkpoint_restore_replay_scope -- --exact
 ```
 
 Expected: PASS with existing restore totals and replay markers.
 
-- [ ] **Step 4: Run checkpoint aggregate JSON rows**
+- [x] **Step 4: Run checkpoint aggregate JSON rows**
 
 ```bash
-TMPDIR=$PWD/temp cargo test -p rem6 --test cli_run rem6_multi_run_reports_run_child_checkpoint_actions -- --exact
-TMPDIR=$PWD/temp cargo test -p rem6 --test cli_run rem6_multi_run_reports_trace_replay_child_checkpoint_actions -- --exact
-TMPDIR=$PWD/temp cargo test -p rem6 --test cli_run rem6_run_host_action_trace_restores_multicore_o3_checkpoint_components_by_active_hart -- --exact
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run multi_run::rem6_multi_run_reports_run_child_checkpoint_actions -- --exact
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run multi_run::rem6_multi_run_reports_trace_replay_child_checkpoint_actions -- --exact
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run m5_host_actions::o3::restore::rem6_run_host_action_trace_restores_multicore_o3_checkpoint_components_by_active_hart -- --exact
 ```
 
 Expected: PASS with unchanged JSON keys, values, and component/chunk evidence.
 
-- [ ] **Step 5: Run affected-crate and workspace verification**
+- [x] **Step 5: Run affected-crate and workspace verification**
 
 ```bash
 cargo fmt --all -- --check
-TMPDIR=$PWD/temp cargo test -p rem6-checkpoint --all-targets
-TMPDIR=$PWD/temp cargo test -p rem6-system --all-targets
-TMPDIR=$PWD/temp cargo test -p rem6 --all-targets
-TMPDIR=$PWD/temp cargo test --workspace --all-targets
+TMPDIR=$PWD/target/tmp cargo test -p rem6-checkpoint --all-targets
+TMPDIR=$PWD/target/tmp cargo test -p rem6-system --all-targets
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --all-targets
+TMPDIR=$PWD/target/tmp cargo test --workspace --all-targets
 git diff --check
 test "$(wc -l < docs/architecture/gem5-to-rem6-migration.md)" -eq 1200
 git status --short
@@ -766,7 +782,7 @@ status contains no protected `temp/` path.
 **Files:**
 - Modify: `docs/superpowers/plans/2026-07-20-checkpoint-derived-total-authority.md`
 
-- [ ] **Step 1: Dispatch a high-intensity read-only review**
+- [x] **Step 1: Dispatch a high-intensity read-only review**
 
 Give the reviewer the design, plan, implementation commit range, and these
 questions:
@@ -779,13 +795,13 @@ Report findings by severity with file and line references. Explicitly say when
 there are no findings and list residual risks.
 ```
 
-- [ ] **Step 2: Resolve every finding and rerun affected verification**
+- [x] **Step 2: Resolve every finding and rerun affected verification**
 
 For each finding, reproduce it locally, add or strengthen a failing test when
 appropriate, make the smallest fix, rerun the focused test, then rerun the
 workspace command from Task 4 Step 5. Commit fixes with a scoped message.
 
-- [ ] **Step 3: Mark this plan complete and commit the closeout**
+- [x] **Step 3: Mark this plan complete and commit the closeout**
 
 Change every checkbox in this file to `[x]`, then run:
 
@@ -795,7 +811,7 @@ git diff --cached --check
 git commit -m "docs: close checkpoint derived total plan"
 ```
 
-- [ ] **Step 4: Verify the final branch and push**
+- [x] **Step 4: Verify the final branch and push**
 
 ```bash
 git status --short --branch
