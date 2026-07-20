@@ -910,14 +910,15 @@ Detailed O3 commit JSON/text-stat and dump/reset coverage includes `system.cpu.c
 cache/bank/fabric runtime resource counters, remaining CSR register-cache
 families beyond GDB-written `medeleg` exception delivery, and broader cycle-visible ROB/LSQ-backed O3 execution beyond the current targeted bounded four-row scalar FU/ALU live ROB/rename staging window, core-to-observer retired-lifecycle/broader-FU-latency-opcode-classes-after-current-scalar-vector-integer-and-float-arithmetic-compare-misc/LSQ-forwarding/ordering/data-latency/op-class total/min/max/avg/branch-event/taken/link/squash/misprediction-kind debug, scheduled checkpoint restore/replay, and checkpoint state.
 
-### Configuration, Resources, Suites, GPU, and Accelerators - 59% single-axis
+### Configuration, Resources, Suites, GPU, and Accelerators - 74% representative
 
-**Score calculation:** 16 of 21 items have executable evidence, or 76% raw,
-capped to 59% by the single-axis bucket. The bucket cap is single-axis because GPU memory behavior now has narrow
-top-level cache/DRAM/fabric micro-runs but is not representative, manifest and suite
-acquisition have top-level local-artifact paths, narrow run and trace-replay
-resource handoffs exist, and benchmark orchestration has only narrow top-level
-mixed-command multi-run slices including GPU and accelerator micro-runs.
+**Score calculation:** 17 of 21 items have executable evidence, or 81% raw,
+capped to 74% by the representative bucket. The bucket cap is representative
+because top-level GPU evidence now spans
+queued multi-CU scheduling, cross-line coalescing, and direct/cache/DRAM/fabric rows with negative suppression, while manifest and suite
+acquisition have representative local/host/archive/HTTP paths but incomplete external breadth, run and trace-replay
+resource handoffs remain selected rather than broad, and benchmark orchestration has only bounded top-level
+mixed-command multi-run slices including GPU and accelerator runs.
 
 - [x] CLI `run`, `gups`, `trace-replay`, `gpu-run`, and `accelerator-run` plus TOML configuration have tests; repository `gups`, `gpu-run`, `accelerator-run`, and multi-run example configs run through the top-level CLI without recompilation, TOML-driven `run` output layouts create nested artifact directories for run JSON, stats JSON, and power analysis output, `gups` emits traffic profile summaries from the executed controller, TOML-driven `gpu-run` executes recorded GPU global memory traffic through cache/DRAM and writes activity-derived power-analysis and NoMali-compatible adapter output, and TOML-driven `accelerator-run` emits child JSON/stats artifacts.
 - [x] Workload manifests, resource identity, disk-image construction records, and suite planning exist.
@@ -937,7 +938,7 @@ mixed-command multi-run slices including GPU and accelerator micro-runs.
 - [x] CLI `gpu-run` reports per-compute-unit workgroup completion, queue-wait, busy-cycle, activity-window, and coalesced global-memory read/write stats from real scheduled completions and recorded memory accesses; GPU library tests cover queued-workgroup restore for the same queue-wait summary boundary.
 - [x] CLI `multi-run` sequentially orchestrates multiple real `run --config`, `gups --config`, `gpu-run --config`, `accelerator-run --config`, and `trace-replay --config` entries from TOML and command-qualified `--run` entries through the top-level binary, preserves and reports child-configured output and extra artifacts, rolls up run-child checkpoint/restore action counts, restored component/chunk/payload metadata, and accelerator command/completion counts into suite JSON/stats output, and emits aggregate JSON/stats artifacts plus explicit failure summaries when configured to continue after child errors.
 - [x] CLI `trace-replay` accepts planned direct-memory and data-cache line-synchronized, same-tick trace-overlap-guarded host checkpoint and restore events from TOML or flags, executes them through `RiscvWorkloadReplay` with a nonempty memory checkpoint payload captured and restored, exposes trace-replay checkpoint and restore counts plus checkpoint payload metadata in JSON and host-action counts in stats, and lets `multi-run` roll up trace-replay child checkpoint and restore counts plus restored payload metadata.
-- [ ] GPU CU scheduling, memory coalescing, and cache/DRAM interactions are representative.
+- [x] GPU CU scheduling, memory coalescing, and cache/DRAM interactions are representative across queued two-CU direct, MSI+DRAM, and explicit-fabric plus MSI/DRAM rows with cross-line load coalescing, per-CU transport attribution, inactive-CU suppression, and bounded max-tick failure evidence.
 - [ ] Multi-run simulator orchestration and artifact compatibility are complete.
 - [ ] PARSEC or comparable workload suites run end to end.
 
@@ -976,16 +977,15 @@ trace resource exposed in the JSON artifact, GPU/accelerator
 shells, DMA routing, top-level `accelerator-run` NPU/GPU command dispatch and completion stats with TOML artifact output, and a
 minimal GPU scalar ISA program execution path with completion, queued-workgroup
 snapshot evidence, visible compute-unit assignment, coalesced memory access
-records, top-level `gpu-run` cache/DRAM micro-run evidence routing recorded
-coalesced global memory requests through direct memory or MSI data-cache and
-DRAM-backed runtime stats after GPU workgroup completion, plus top-level
-`gpu-run` explicit fabric route execution with request/response virtual-network
-selection, shared-link queue contention, credit-depth validation, aggregate/per-VN/per-link/per-hop fabric stats, and link/lane/hop activity,
-TOML-driven `gpu-run` cache/DRAM/fabric execution and config-value validation,
+records, plus a top-level `gpu-run` three-row representative matrix routing the
+same queued three-workgroup/two-CU scalar program through direct memory, MSI data-cache plus DRAM, and
+explicit fabric plus MSI/DRAM after GPU workgroup completion, with one cross-line load and one coalesced store per workgroup,
+deterministic 2:1 CU assignment and queue wait, per-CU response counts, round-trip totals/maxima, and response windows derived from `MemoryTrace`,
+exact reconciliation to aggregate transport counters, cache/DRAM activity, request/response virtual networks, shared-link queue delay, and link/lane/hop activity,
+inactive-CU response-window stat suppression and bounded hierarchy max-tick rejection, TOML-driven `gpu-run` cache/DRAM/fabric execution and config-value validation,
 top-level
-`gpu-run` per-CU completion, busy-cycle, activity-window, and coalesced
-global-memory read/write stats derived from scheduled workgroup completions and
-recorded memory accesses, checked-in GUPS, GPU, accelerator, and multi-run
+`gpu-run` per-CU completion, busy-cycle, activity-window, coalesced global-memory read/write, and memory-transport stats derived from scheduled workgroup completions,
+recorded memory accesses, and final source response events without claiming memory-gated wave-slot completion, checked-in GUPS, GPU, accelerator, and multi-run
 example TOML files that run through the top-level CLI without recompilation,
 top-level `rem6 run --config` creation of nested run, stats, and power-analysis artifact directories from TOML-relative paths, top-level `rem6 trace-replay` planned direct-memory and data-cache line-synchronized, same-tick trace-overlap-guarded host checkpoint and restore execution through `RiscvWorkloadReplay` with nonempty memory checkpoint payload capture/restore, JSON checkpoint counts and payload metadata, and stats checkpoint counts, top-level `rem6 multi-run` sequential orchestration of real `run --config`, `gups --config`, `gpu-run --config`, `accelerator-run --config`, and `trace-replay --config` TOML and command-qualified `--run` entries with child-configured output and power/GPU extra-artifact path summaries, run-child checkpoint/restore payload roll-up, accelerator-child, and trace-replay-child count roll-up, aggregate JSON/stats artifacts, and explicit child-failure summaries, and top-level GUPS traffic profile JSON/stats output.
 
@@ -996,7 +996,7 @@ HTTP, chunked HTTP, and broader HTTP redirect slices, HTTPS, cache/policy contro
 runtime handoff of acquired suite resources beyond the
 unique run-kernel, `suite-resource:<workload>/<resource>` readfile/load-blob,
 RISC-V SE stdin/guest-file, and selected trace-resource replay slices, broad GPU
-ISA semantics, representative GPU cache/DRAM interaction, complete multi-run artifact compatibility, full cache-controller checkpoint payload/state preservation beyond trace-replay cache-line synchronization and same-tick trace-overlap guards, broader checkpoint restore orchestration beyond the current trace-replay host-event slices, and broad benchmark orchestration.
+ISA semantics, memory-response-gated wave-slot/workgroup completion, cache/DRAM backpressure into CU scheduling, broader GPU topology/protocol matrices, complete multi-run artifact compatibility, full cache-controller checkpoint payload/state preservation beyond trace-replay cache-line synchronization and same-tick trace-overlap guards, broader checkpoint restore orchestration beyond the current trace-replay host-event slices, and broad benchmark orchestration.
 
 **Evidence:** `Rem6RunConfig`, `run_config`, `WorkloadManifest`,
 `WorkloadResource`, `WorkloadSuiteReplayPlan`,
@@ -1019,19 +1019,19 @@ layout CLI test, `rem6 trace-replay` planned direct-memory and data-cache line-s
 cache/DRAM execution and config validation tests, GPU and
 accelerator topology tests, GPU compute tests covering scalar ISA execution,
 coalesced memory records, and snapshot restore of queued ISA programs, `rem6 accelerator-run` CLI/TOML smoke coverage plus multi-run child coverage for scheduled NPU inference and GPU kernel commands with command, completion, trace-event, scheduler, child-output, and child-stats evidence, and
-`rem6 gpu-run` CLI smoke coverage with TOML and flag-driven
-direct-memory store/dump evidence plus MSI cache-run, bank-level cache counter,
-DRAM read, explicit fabric route link/lane/hop activity and per-link/per-hop fabric stats, and
-transport stats from recorded coalesced GPU global memory requests, plus per-CU
-completion, queue-wait, busy-cycle, activity-window, and coalesced global-memory
-read/write JSON/stat evidence from the top-level scheduled GPU run.
+`rem6 gpu-run` CLI smoke coverage with TOML and flag-driven direct-memory store/dump evidence, MSI cache-run, bank-level cache counters,
+DRAM and explicit-fabric link/lane/hop activity, plus `gpu::representative_matrix::rem6_gpu_run_correlates_queued_cu_coalescing_across_memory_hierarchy_rows`
+for exact direct, MSI+DRAM, and fabric+MSI/DRAM scheduling/coalescing/cache/DRAM/fabric/transport rows, per-CU final-response attribution and aggregate reconciliation,
+`gpu::representative_matrix::rem6_gpu_run_omits_activity_window_stats_for_inactive_compute_units` for zero/null JSON plus response-window stat suppression,
+`gpu::representative_matrix::rem6_gpu_run_representative_hierarchy_rejects_response_after_max_tick` for bounded hierarchy completion failure, and per-CU completion,
+queue-wait, busy-cycle, activity-window, coalesced read/write, and memory-transport JSON/stat evidence from the top-level scheduled GPU run.
 
 **Next evidence:** Broader suite-level workload replay beyond selected run-kernel,
 `suite-resource:<workload>/<resource>` readfile/load-blob, RISC-V SE guest-file,
 and selected trace-resource handoffs, network-backed workload acquisition,
-broader archive and artifact kinds, data-driven
-full-system workload declarations, and representative GPU CU scheduling plus
-cache/DRAM interactions.
+broader archive and artifact kinds, data-driven full-system workload declarations,
+GPU memory-response-gated wave-slot/workgroup completion with cache/DRAM backpressure
+into CU scheduling, and broader GPU ISA/topology/protocol matrices.
 
 ## Test Migration Ledger
 
@@ -1054,7 +1054,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/fdp_tests` | `rem6-cache` | 45% single-axis | Fetch-directed prefetcher state, errors, and cache-local queue/translation counters have cache tests. | Add FDP execution through cache-bank and CPU/frontend consumers. |
 | `tests/gem5/fs` | `rem6-platform`, `rem6-system`, device crates | 15% scoped | Generic device and handoff slices exist, but the gem5 row is mainly full-system boot. | Add full-system Linux boot with SBI, console, storage, network, timer, and shutdown evidence. |
 | `tests/gem5/gem5_resources` | `rem6-workload`, `rem6` CLI | 58% single-axis | Resource declarations, identity, provenance, disk-image construction records, library-level in-memory acquisition executor records, manifest/suite-level `rem6 resource-acquire` execution with local-artifact, host-file, uncompressed/gzip tar-entry including USTAR prefix paths, standalone gzip payload, stored/deflated ZIP-entry, generated zero-fill artifact, and content-checked basic, chunked, and redirected HTTP remote inputs, explicit pre-simulation HTTP `remote-uri` acquisition through `rem6 resource-acquire`, while `run` and `trace-replay` reject `remote-uri` resources before artifact reads so simulation/replay entry points remain network-free, plus manifest run-kernel, unique/selected-suite run-kernel, `suite-resource:<workload>/<resource>` suite readfile/load-blob payloads, manifest and selected-suite RISC-V SE stdin handoff, suite-selected RISC-V SE guest-file handoff, generated zero-fill load-blob memory dump coverage, and manifest plus unique/selected-suite trace-replay resource-config handoff through TOML or CLI selector exist. | Add broader network-backed, broader archive/artifact acquisition, and suite runtime handoff beyond the current selector-based slices. |
-| `tests/gem5/gpu` | `rem6-gpu`, `rem6-accelerator`, `rem6-transport`, `rem6` CLI | 40% single-axis | GPU and accelerator topology, command, DMA route, scalar ISA, CU assignment, coalesced memory-record tests, flag/TOML top-level `gpu-run` recorded-memory cache/DRAM/fabric micro-runs with aggregate/per-VN/per-link/per-hop fabric counters, shared-link queue contention, and link/lane/hop activity, tagged next-line data-cache prefetch counters from GPU global loads, per-CU queue-wait and coalesced read/write stats, top-level `accelerator-run` scheduled NPU/GPU command/completion stats including TOML and multi-run child output, and top-level NoMali-compatible adapter artifacts with GPU/MMU/job-slot command-table, cycle-counter start/stop low/high register evidence, MMU AS0 config-register, ignored-command, IRQ-clear, shader/tiler/L2 low/high plus L3 zero-present power-domain, register-fault, dual job-slot next-register/start-next, and job/MMU interrupt-block PIO evidence exist. | Add representative CU scheduling, broader cache/DRAM interactions, and register-level GPU device modeling. |
+| `tests/gem5/gpu` | `rem6-gpu`, `rem6-accelerator`, `rem6-transport`, `rem6` CLI | 60% representative | GPU and accelerator topology, command, DMA route, scalar ISA, CU assignment, and coalesced-memory tests exist; a top-level `gpu-run` matrix executes one queued three-workgroup/two-CU cross-line-load plus store program through direct, MSI+DRAM, and explicit-fabric plus MSI/DRAM routes with exact per-CU queue/busy/read/write/response ownership, trace-derived round-trip totals/maxima/windows reconciled to aggregate transport, cache/DRAM/fabric/VN/queue-delay activity, inactive-CU timing-stat suppression, and max-tick failure. Tagged GPU prefetch counters, top-level scheduled NPU/GPU accelerator commands including TOML/multi-run children, and NoMali GPU/MMU/job-slot/cycle-counter/config/IRQ/power/fault/interrupt PIO slices also exist. | Add memory-response-gated wave-slot/workgroup completion, cache/DRAM backpressure into CU scheduling, broader GPU ISA/topology/protocol matrices, and broader register-level GPU device modeling. |
 | `tests/gem5/insttest_se` | future SPARC owner, ISA crates | 10% scoped | Current RISC-V evidence belongs under `asmtest`; this gem5 anchor is SPARC SE focused. | Add SPARC or explicitly retire the row as out of scope. |
 | `tests/gem5/kvm_fork_tests`, `tests/gem5/kvm_switch_tests` | future host adapters | 0% open | No KVM or host-assisted fast-forward adapter exists; the previous synthetic admission-only facade was retired because it did not execute, fork, or switch a host-backed CPU. | Add a real fast-forward adapter plus executable KVM-like switch/fork tests before claiming scoped coverage. |
 | `tests/gem5/m5_util`, `tests/test-progs/m5-exit` | `rem6-isa-riscv`, `rem6-system`, `rem6-workload` | 50% single-axis | RISC-V m5 exit, fail, stats, checkpoint, hypercall, switch_cpu, and work markers reach typed host actions; direct `rem6 run` JSON records repeated work-marker payloads, stats reset/dump id and tick metadata, periodic stats dump/reset and checkpoint tick repeats, scheduled checkpoint restore count plus restored component/chunk/payload stats and HostAction debug restore trace counters, nonempty RISC-V core checkpoint metadata including branch-predictor state plus store-backed and DRAM-backed memory checkpoint component/chunk metadata, checkpoint chunk checksum changes after guest stores, hypercall selector/argument/configured-response metadata plus argument/payload/response aggregate stats, m5 `sum` return-value execution, m5 `switch_cpu` execution-mode aggregate/per-component/per-chunk state-transfer stats, and `--riscv-se` ROI/stat hook counts in `sim.host_actions.*`. | Add broader payload breadth, other ISA entries, and calibrated clock-domain behavior. |
