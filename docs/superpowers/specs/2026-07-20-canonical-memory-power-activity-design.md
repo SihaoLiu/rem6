@@ -33,26 +33,27 @@ activity that selected those records.
 
 ## Ledger Boundary
 
-This increment adds representative calibration evidence without claiming
-physical-tool parity.
+This increment adds representative canonical target-selection evidence plus
+exact cache and DRAM calibration evidence without claiming physical-tool parity.
 
 For Stats, the existing power/thermal checklist item becomes complete and the
 component moves to `74% representative`: 24 of 26 checklist items, or 92% raw,
 capped at 74%. The representative cap is justified by a real route matrix that
 correlates canonical cache, transport, fabric, and DRAM resource activity with
-McPAT-shaped and DSENT-shaped records, plus inactive and low-power boundaries.
+McPAT-shaped and DSENT-shaped record selection, reconciles the same active fields
+with stats, and adds exact cache and DRAM numeric boundaries.
 
-For Power and Physical-Design Export Adapters, a new calibrated run-memory
-activity checklist item raises the raw score to 6 of 8, or 75%, capped at
-`74% representative`. Full McPAT/DSENT schema parity, external-tool breadth,
+For Power and Physical-Design Export Adapters, a new canonical run-memory
+selection and cache/DRAM calibration item raises the raw score to 6 of 8, or 75%,
+capped at `74% representative`. Full McPAT/DSENT schema parity, external-tool breadth,
 broader GPU/trace-replay calibration, and calibrated physical coefficients
 remain explicit gaps.
 
 The increment does not claim that the current coefficients match a fabricated
-implementation or a vendor power model. "Calibrated" here means that record
-selection, residency, bytes, operations, temperature, and dynamic power are
-deterministically derived from the same executed typed activity exposed by the
-run artifact and stats.
+implementation or a vendor power model. Canonical selection means target
+presence follows the executed typed activity exposed by the run artifact and
+stats. Exact calibration is narrower: cache and DRAM residency, events,
+operations, bytes, temperature, and dynamic power are deterministically checked.
 
 ## Approaches
 
@@ -107,11 +108,13 @@ Focused internal activity projections keep policy out of the output assembly:
 
 - cache activity uses canonical run, response, directory, bank, prefetch, and
   backing-DRAM counters;
-- transport activity uses requests, arrivals, responses, and latency;
+- transport target selection and its preserved formula use canonical aggregate
+  activity and active residency;
 - fabric activity keeps the existing transfer, lane, VN, link, hop, byte, flit,
   occupancy, queue-delay, credit-delay, and contention inputs; and
-- DRAM activity uses accesses, commands, refreshes, low-power entries/exits,
-  actual read/write bytes, active topology, and latency/residency counters.
+- DRAM events use the maximum of accesses, refreshes, low-power entries, and
+  low-power exits; operations include commands, refreshes, entries, and exits;
+  bytes use actual reads/writes; residency uses active topology and timing.
 
 The existing coefficients and target names are preserved. Cache target-specific
 temperature/static-power constants remain parameters. Run DRAM dynamic bytes
@@ -120,37 +123,40 @@ refresh-only and low-power-only summaries. These are intentional correctness
 changes because the resource summary already treats those states as real
 activity.
 
-GPU and trace-replay continue to adapt their existing raw summaries into the
-same focused projection where practical, but their record selection and
+GPU and trace-replay continue to use their existing raw-summary adapters. They
+do not share the new normal-run projection, and their record selection and
 external behavior are not expanded in this increment.
 
 ## Representative Matrix
 
 A table-driven top-level CLI test executes one load/store RISC-V program through
-representative memory routes and writes both a run artifact and a power artifact.
+representative memory routes and writes run, stats, and power artifacts.
 
 | Row | Memory route | Power format | Required active targets | Required suppressed targets |
 | --- | --- | --- | --- | --- |
 | direct | direct | McPAT XML | CPU core, transport | L1 caches, shared caches, fabric, DRAM |
 | dram | direct transport plus DRAM | DSENT CSV | CPU core, transport, DRAM | L1 caches, shared caches, fabric |
-| cache | MSI L1/L2/L3 | McPAT XML | CPU core, instruction/data L1, shared L2/L3, transport | fabric |
+| cache | MSI L1/L2/L3 | McPAT XML | CPU core, instruction/data L1, shared L2/L3, transport | fabric, DRAM |
 | hierarchy | cache-fabric-DRAM | DSENT CSV | CPU core, instruction/data L1, shared L2/L3, transport, fabric, DRAM | none of the modeled run-memory targets |
 
-Each row imports the emitted power artifact with `rem6-power`, parses the run
-artifact, and proves that target presence follows canonical
-`memory_resources.*.active` evidence. Active records require positive dynamic
-power, positive residency, and a temperature at or above the component base.
-Suppressed targets must be absent rather than emitted as zero-activity records.
+Each row imports the emitted power artifact with `rem6-power`, parses the run and
+stats artifacts, proves that each `memory_resources.*.active` field equals its
+`sim.memory.resources.*.active` stat, and proves that target presence follows
+that canonical evidence. Active records require positive dynamic power,
+positive residency, and a temperature at or above the component base. Suppressed
+targets must be absent rather than emitted as zero-activity records.
 
-The DRAM rows additionally reconcile the exported dynamic-power byte term with
-the artifact's `read_bytes + write_bytes`; this fails against the legacy
-fixed-64-byte estimate whenever executed byte counts differ.
+The DRAM rows additionally reconcile events from primitive access/refresh/low-
+power fields, operations from commands plus refresh and low-power transitions,
+and bytes from `read_bytes + write_bytes`. This fails against both aggregate
+activity-as-events and the legacy fixed-64-byte estimate.
 
 Focused unit tests cover boundaries that are awkward to create through a CPU
 run:
 
 - a refresh-only DRAM resource emits a DRAM power record;
 - a low-power-only DRAM resource emits a DRAM power record;
+- access-dominant residency and command-dominant operation counts remain distinct;
 - an all-zero memory resource suppresses every memory component; and
 - cache records use the canonical resource activity predicate.
 
@@ -181,7 +187,7 @@ The increment preserves:
 
 Expected output-value changes are limited to normal-run memory records that were
 previously derived from duplicate or estimated activity: canonical L1 selection,
-actual DRAM bytes, and refresh/low-power DRAM activity.
+actual DRAM bytes, primitive DRAM event counts, and refresh/low-power activity.
 
 ## Files
 

@@ -98,6 +98,49 @@ fn gem5_stats_score_ratchet_tracks_canonical_power_evidence() {
 }
 
 #[test]
+fn component_scores_track_scoped_canonical_power_evidence() {
+    const STATS_HEADING: &str =
+        "### Stats, Probes, Debug, Host Actions, and Checkpointing - 74% representative";
+    const POWER_HEADING: &str =
+        "### Power and Physical-Design Export Adapters - 74% representative";
+    const NEXT_HEADING: &str = "### Native Loader and Math Replacement - 50% single-axis";
+    let migration =
+        fs::read_to_string(repo_root().join("docs/architecture/gem5-to-rem6-migration.md"))
+            .unwrap();
+    let stats = source_section(&migration, STATS_HEADING, POWER_HEADING);
+    let power = source_section(&migration, POWER_HEADING, NEXT_HEADING);
+
+    assert!(stats.contains("24 of 26 items have executable evidence, or 92% raw"));
+    assert!(stats.contains(
+        "- [x] Normal-run power target selection follows canonical memory activity, with exact cache and DRAM calibration."
+    ));
+    assert!(stats.contains("`rem6_run_power_activity_matches_canonical_resource_matrix`"));
+    assert!(stats.contains("`run_dram_power_uses_accesses_when_they_dominate_residency`"));
+    assert!(stats.contains("`run_cache_power_preserves_legacy_target_calibrations`"));
+    assert!(stats.contains("physical fabrication/vendor coefficient calibration"));
+
+    assert!(power.contains("6 of 8 items have executable evidence, or 75% raw"));
+    assert!(power.contains(
+        "- [x] Canonical normal-run memory activity selects CPU L1/shared-cache, transport, fabric, and DRAM targets; cache and DRAM records have exact McPAT/DSENT calibration evidence."
+    ));
+    for evidence in [
+        "`rem6_run_power_activity_matches_canonical_resource_matrix`",
+        "`run_dram_power_uses_canonical_byte_total`",
+        "`run_dram_power_uses_accesses_when_they_dominate_residency`",
+        "`run_dram_power_keeps_commands_out_of_event_count`",
+        "`run_cache_power_preserves_legacy_target_calibrations`",
+    ] {
+        assert!(
+            power.contains(evidence),
+            "power evidence must retain {evidence}"
+        );
+    }
+    assert!(power.contains("full external McPAT/DSENT schema/tool parity"));
+    assert!(power.contains("GPU/trace-replay calibration breadth"));
+    assert!(power.contains("physical fabrication/vendor coefficient calibration"));
+}
+
+#[test]
 fn normal_run_power_builder_uses_only_canonical_memory_resources() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let power_source = fs::read_to_string(crate_dir.join(POWER_OUTPUT)).unwrap();

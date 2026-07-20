@@ -4,7 +4,7 @@
 
 **Goal:** Make the normal `rem6 run` power path derive every memory-component record from `Rem6MemoryResourceSummary`, remove duplicate raw cache/DRAM activity authority, and prove representative route/format/suppression behavior.
 
-**Architecture:** `build_run_execution_summary` will construct the existing canonical memory resource summary and pass it, with core summaries, to power assembly. Focused cache, transport, fabric, and DRAM activity projections in `power_output.rs` will select records and calculate deterministic values; GPU and trace-replay retain their current adapters. A focused CLI matrix will reconcile power targets with run-artifact resource activity across direct, DRAM, cache, and cache-fabric-DRAM routes.
+**Architecture:** `build_run_execution_summary` will construct the existing canonical memory resource summary and pass it, with core summaries, to power assembly. `power_output.rs` will use canonical cache, transport, fabric, and DRAM activity for target selection, with exact cache and DRAM value projections; GPU and trace-replay retain their current adapters. A focused CLI matrix will reconcile power targets with run-artifact and stats resource activity across direct, transport-plus-DRAM, cache, and cache-fabric-DRAM routes.
 
 **Tech Stack:** Rust, Cargo integration tests, `serde_json`, `rem6-power` McPAT/DSENT importers, source-policy syntax checks, Markdown migration ledger.
 
@@ -318,8 +318,8 @@ residency = max(final_tick, refresh_ticks, low_power_ticks, exit_latency_ticks, 
 
 Use saturating arithmetic. Keep the existing event/operation/byte scales,
 temperature base, cap, and static-bank term. Raw `Rem6DramSummary` adapters used
-by GPU and trace replay should populate the same projection without changing
-their target names or route selection.
+by GPU and trace replay remain separate and unchanged, including their target
+names and route selection.
 
 - [ ] **Step 4: Harden the ownership policy**
 
@@ -356,23 +356,24 @@ TMPDIR=$PWD/target/tmp git commit -m "refactor: unify run memory power activity"
 - [ ] **Step 1: Update the Stats component**
 
 Change the heading to `74% representative`. Record 24 of 26 checked items, 92%
-raw, capped at 74%. Check the calibrated power/thermal activity item and describe
-the canonical route/format/suppression matrix while retaining hierarchy-counter,
-GDB CSR, broad O3, and physical-coefficient gaps.
+raw, capped at 74%. Check canonical power target selection plus exact cache/DRAM
+calibration and describe the route/format/stats/suppression matrix while retaining
+hierarchy-counter, GDB CSR, broad O3, and physical-coefficient gaps.
 
 - [ ] **Step 2: Update the Power component**
 
 Add one checked checklist item for canonical normal-run CPU cache, transport,
-fabric, and DRAM activity calibration across McPAT/DSENT exports. Change the
-heading to `74% representative` and the score calculation to 6 of 8, 75% raw,
-capped at 74%. Preserve full external schema/tool parity and broader GPU,
-trace-replay, NoMali, and physical calibration as open.
+fabric, and DRAM target selection, with exact cache and DRAM calibration across
+McPAT/DSENT exports. Change the heading to `74% representative` and the score
+calculation to 6 of 8, 75% raw, capped at 74%. Preserve full external schema/tool
+parity and broader GPU, trace-replay, NoMali, and physical calibration as open.
 
 - [ ] **Step 3: Update the `tests/gem5/stats` crosswalk**
 
-Raise the row to `74% representative` and cite the canonical direct/DRAM/cache/
-hierarchy matrix, actual DRAM byte calibration, inactive target suppression, and
-refresh/low-power boundary tests. Keep its next-evidence cell explicit.
+Raise the row to `74% representative` and cite the canonical direct/transport-
+plus-DRAM/cache/hierarchy matrix, stats reconciliation, actual DRAM event/byte
+calibration, inactive target suppression, and refresh/low-power boundary tests.
+Keep its next-evidence cell explicit.
 
 - [ ] **Step 4: Preserve the exact ledger line count**
 
