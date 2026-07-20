@@ -3300,6 +3300,157 @@ fn o3_live_control_window_uses_one_typed_lineage_authority() {
     );
 }
 
+#[test]
+fn branch_predictor_legacy_checkpoints_use_frozen_payloads() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_path = crate_dir.join("tests/branch_predictor.rs");
+    let fixture_path = crate_dir.join("tests/branch_predictor/legacy_checkpoint_fixtures.rs");
+    assert!(
+        fixture_path.exists(),
+        "legacy branch-predictor checkpoint bytes belong in a focused fixture module"
+    );
+
+    let root = fs::read_to_string(&root_path).unwrap();
+    let code = rust_code_without_comments_and_literals(&root);
+    for forbidden in [
+        "fn current_payload_prefix_without_btb_kind_counters",
+        "const VERSION_OFFSET",
+        "const ACTIVE_SPECULATION_V2_BYTES",
+        "const ACTIVE_SPECULATION_V3_BYTES",
+        "const ACTIVE_SPECULATION_V4_BYTES",
+        "v1_encoded",
+        "v2_encoded",
+        "v3_encoded",
+        "v4_encoded",
+        "v5_encoded",
+    ] {
+        assert!(
+            !code.contains(forbidden),
+            "valid legacy branch-predictor compatibility must not regenerate retired schema code `{forbidden}`"
+        );
+    }
+
+    assert!(
+        root.contains("mod legacy_checkpoint_fixtures;"),
+        "branch_predictor.rs must import the focused legacy fixture module"
+    );
+    let fixtures = fs::read_to_string(&fixture_path).unwrap();
+    let fixtures_code = rust_code_without_comments_and_literals(&fixtures);
+    for forbidden in [
+        "fn ",
+        "include!",
+        "include_bytes!",
+        "concat!",
+        "Vec::",
+        ".encode(",
+        ".decode(",
+        ".to_vec(",
+    ] {
+        assert!(
+            !fixtures_code.contains(forbidden),
+            "legacy branch-predictor fixture module must contain literal constants, not `{forbidden}`"
+        );
+    }
+    for required in [
+        "LEGACY_V1_DEFAULT_PAYLOAD",
+        "LEGACY_V2_ACTIVE_MAPPING_PAYLOAD",
+        "LEGACY_V3_TARGET_PREDICTION_PAYLOAD",
+        "LEGACY_V4_RAS_PAYLOAD",
+        "LEGACY_V5_BRANCH_KIND_PAYLOAD",
+    ] {
+        assert!(
+            fixtures_code.contains(&format!("pub(super) const {required}: &[u8] = &[")),
+            "legacy branch-predictor fixture module is missing `{required}`"
+        );
+        assert!(
+            root.contains(required),
+            "branch predictor compatibility tests must consume `{required}`"
+        );
+    }
+
+    for (test, next_test, fixture) in [
+        (
+            "checkpoint_payload_decodes_v4_active_mapping_with_ras_without_branch_kinds",
+            "checkpoint_payload_decodes_v2_active_mapping_without_branch_target_predictions",
+            "LEGACY_V4_RAS_PAYLOAD",
+        ),
+        (
+            "checkpoint_payload_decodes_v2_active_mapping_without_branch_target_predictions",
+            "checkpoint_payload_decodes_v3_active_mapping_with_branch_target_predictions_without_ras",
+            "LEGACY_V2_ACTIVE_MAPPING_PAYLOAD",
+        ),
+        (
+            "checkpoint_payload_decodes_v3_active_mapping_with_branch_target_predictions_without_ras",
+            "checkpoint_payload_decodes_legacy_v1_with_default_btb_snapshot",
+            "LEGACY_V3_TARGET_PREDICTION_PAYLOAD",
+        ),
+        (
+            "checkpoint_payload_decodes_legacy_v1_with_default_btb_snapshot",
+            "checkpoint_payload_decodes_v5_active_mapping_with_branch_kinds_without_btb_kind_counters",
+            "LEGACY_V1_DEFAULT_PAYLOAD",
+        ),
+        (
+            "checkpoint_payload_decodes_v5_active_mapping_with_branch_kinds_without_btb_kind_counters",
+            "checkpoint_payload_rejects_btb_config_outside_decode_limits",
+            "LEGACY_V5_BRANCH_KIND_PAYLOAD",
+        ),
+    ] {
+        let body = source_section(
+            &root,
+            &format!("fn {test}()"),
+            &format!("fn {next_test}()"),
+        );
+        let body_code = rust_code_without_comments_and_literals(body);
+        let decode = format!("BranchPredictorCheckpointPayload::decode({fixture})");
+        assert!(
+            body_code.contains(&decode),
+            "legacy branch-predictor test `{test}` must decode `{fixture}` directly"
+        );
+        assert_eq!(
+            body_code
+                .matches("BranchPredictorCheckpointPayload::decode(")
+                .count(),
+            1,
+            "legacy branch-predictor test `{test}` must have exactly one payload decode"
+        );
+        assert_eq!(
+            body_code.matches(fixture).count(),
+            2,
+            "legacy branch-predictor test `{test}` may use `{fixture}` only for direct decode and migration verification"
+        );
+        for forbidden in [
+            ".encode()",
+            ".truncate(",
+            ".extend_from_slice(",
+            ".to_vec()",
+            "Vec::from(",
+            "Vec::new(",
+            "Vec::with_capacity(",
+            "vec![",
+            ".push(",
+            ".resize(",
+            ".resize_with(",
+            ".copy_from_slice(",
+            ".clone_from_slice(",
+            ".copy_within(",
+            ".fill(",
+            ".splice(",
+            ".insert(",
+            ".append(",
+            ".as_mut_slice(",
+            ".get_mut(",
+            ".iter_mut(",
+            "] =",
+            "]=",
+        ] {
+            assert!(
+                !body_code.contains(forbidden),
+                "legacy branch-predictor test `{test}` must not synthesize valid retired bytes with `{forbidden}`"
+            );
+        }
+    }
+}
+
 fn production_defines_exact_function(source: &str, name: &str) -> bool {
     let chars = source.chars().collect::<Vec<_>>();
     let mut index = 0;

@@ -1,10 +1,18 @@
+#[path = "branch_predictor/legacy_checkpoint_fixtures.rs"]
+mod legacy_checkpoint_fixtures;
+
+use legacy_checkpoint_fixtures::{
+    LEGACY_V1_DEFAULT_PAYLOAD, LEGACY_V2_ACTIVE_MAPPING_PAYLOAD,
+    LEGACY_V3_TARGET_PREDICTION_PAYLOAD, LEGACY_V4_RAS_PAYLOAD, LEGACY_V5_BRANCH_KIND_PAYLOAD,
+};
 use rem6_cpu::{
     BranchPredictor, BranchPredictorCheckpointPayload, BranchPredictorConfig, BranchPredictorError,
     BranchSpeculationId, BranchTargetBuffer, BranchTargetBufferConfig, BranchTargetBufferError,
-    BranchTargetKind, BranchTargetPrediction, BranchTargetSafetyConfig, BranchTargetSafetyProfile,
-    ReturnAddressStack, ReturnAddressStackConfig, ReturnAddressStackError,
-    ReturnAddressStackOperationId, ReturnAddressStackOperationKind,
+    BranchTargetKind, BranchTargetKindCounts, BranchTargetPrediction, BranchTargetSafetyConfig,
+    BranchTargetSafetyProfile, ReturnAddressStack, ReturnAddressStackConfig,
+    ReturnAddressStackError, ReturnAddressStackOperationId, ReturnAddressStackOperationKind,
     DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ASSOCIATIVITY, DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ENTRIES,
+    DEFAULT_RISCV_RETURN_ADDRESS_STACK_ENTRIES,
 };
 use rem6_memory::Address;
 
@@ -16,7 +24,6 @@ const BTB_KIND_COUNTER_BYTES: usize = 8 * 8 * 4;
 const BTB_HEADER_BYTES: usize = BTB_LEGACY_HEADER_BYTES + BTB_KIND_COUNTER_BYTES;
 const BTB_ENTRY_BYTES: usize = 1 + 8 + 8 + 1 + 8;
 const RAS_HEADER_BYTES: usize = 4 * 3 + 8;
-const ACTIVE_SPECULATION_CURRENT_BYTES: usize = 38;
 
 fn predictor(entries: usize) -> BranchPredictor {
     BranchPredictor::new(BranchPredictorConfig::new(entries).unwrap())
@@ -56,21 +63,17 @@ fn single_pending_ras_checkpoint_payload() -> (Vec<u8>, ReturnAddressStackOperat
     (payload, operation.id(), operation_start)
 }
 
-fn current_payload_prefix_without_btb_kind_counters(
-    encoded: &[u8],
-    table_entries: usize,
-    pending_count: usize,
-    end: usize,
-) -> Vec<u8> {
-    let btb_kind_counter_start = CHECKPOINT_HEADER_BYTES
-        + table_entries
-        + table_entries * CHECKPOINT_TARGET_BYTES
-        + pending_count * PENDING_SPECULATION_BYTES
-        + BTB_LEGACY_HEADER_BYTES;
-    let mut stripped = Vec::with_capacity(end - BTB_KIND_COUNTER_BYTES);
-    stripped.extend_from_slice(&encoded[..btb_kind_counter_start]);
-    stripped.extend_from_slice(&encoded[btb_kind_counter_start + BTB_KIND_COUNTER_BYTES..end]);
-    stripped
+fn assert_legacy_checkpoint_migrates_to_current(
+    legacy: &[u8],
+    decoded: &BranchPredictorCheckpointPayload,
+) {
+    let current = decoded.encode();
+    assert_eq!(current[4], 6);
+    assert_ne!(current.as_slice(), legacy);
+    assert_eq!(
+        BranchPredictorCheckpointPayload::decode(&current),
+        Ok(decoded.clone())
+    );
 }
 
 #[test]
@@ -562,8 +565,6 @@ fn checkpoint_payload_round_trips_return_address_stack_operation_id_gaps_after_s
 
 #[test]
 fn checkpoint_payload_decodes_v4_active_mapping_with_ras_without_branch_kinds() {
-    const VERSION_OFFSET: usize = 4;
-    const ACTIVE_SPECULATION_V4_BYTES: usize = 36;
     let mut predictor =
         BranchPredictor::new(BranchPredictorConfig::with_history_bits(8, 3).unwrap());
     let first = predictor.predict_speculative(Address::new(0x1000));
@@ -586,19 +587,14 @@ fn checkpoint_payload_decodes_v4_active_mapping_with_ras_without_branch_kinds() 
         [(21, first_ras.id()), (22, second_ras.id())],
     )
     .unwrap();
-    let encoded = payload.encode();
-    let active_start = encoded.len() - ACTIVE_SPECULATION_CURRENT_BYTES * 2;
-    let mut v4_encoded =
-        current_payload_prefix_without_btb_kind_counters(&encoded, 8, 2, active_start);
-    v4_encoded[VERSION_OFFSET] = 4;
-    for active_index in 0..2 {
-        let entry_start = active_start + active_index * ACTIVE_SPECULATION_CURRENT_BYTES;
-        v4_encoded
-            .extend_from_slice(&encoded[entry_start..entry_start + ACTIVE_SPECULATION_V4_BYTES]);
-    }
 
-    let decoded = BranchPredictorCheckpointPayload::decode(&v4_encoded).unwrap();
+    let decoded = BranchPredictorCheckpointPayload::decode(LEGACY_V4_RAS_PAYLOAD).unwrap();
 
+    assert_eq!(decoded.snapshot(), payload.snapshot());
+    assert_eq!(
+        decoded.branch_target_buffer_snapshot(),
+        payload.branch_target_buffer_snapshot()
+    );
     assert_eq!(decoded.active_speculations(), payload.active_speculations());
     assert_eq!(
         decoded.active_branch_target_predictions(),
@@ -613,46 +609,43 @@ fn checkpoint_payload_decodes_v4_active_mapping_with_ras_without_branch_kinds() 
         payload.active_return_address_stack_operations()
     );
     assert_eq!(decoded.active_branch_kinds(), &[]);
+    assert_legacy_checkpoint_migrates_to_current(LEGACY_V4_RAS_PAYLOAD, &decoded);
 }
 
 #[test]
 fn checkpoint_payload_decodes_v2_active_mapping_without_branch_target_predictions() {
-    const VERSION_OFFSET: usize = 4;
-    const ACTIVE_SPECULATION_V2_BYTES: usize = 16;
     let mut predictor =
         BranchPredictor::new(BranchPredictorConfig::with_history_bits(8, 3).unwrap());
     let first = predictor.predict_speculative(Address::new(0x1000));
     let second = predictor.predict_speculative(Address::new(0x1004));
-    let payload = BranchPredictorCheckpointPayload::from_snapshot(
+    let payload = BranchPredictorCheckpointPayload::from_snapshots(
         predictor.snapshot(),
+        btb(8, 2).snapshot(),
         [(21, first.id()), (22, second.id())],
     )
     .unwrap();
-    let encoded = payload.encode();
-    let active_start = encoded.len() - ACTIVE_SPECULATION_CURRENT_BYTES * 2;
-    let mut v2_encoded = current_payload_prefix_without_btb_kind_counters(
-        &encoded,
-        8,
-        2,
-        active_start - RAS_HEADER_BYTES,
+
+    let decoded =
+        BranchPredictorCheckpointPayload::decode(LEGACY_V2_ACTIVE_MAPPING_PAYLOAD).unwrap();
+
+    assert_eq!(decoded.snapshot(), payload.snapshot());
+    assert_eq!(
+        decoded.branch_target_buffer_snapshot(),
+        payload.branch_target_buffer_snapshot()
     );
-    v2_encoded[VERSION_OFFSET] = 2;
-    for active_index in 0..2 {
-        let entry_start = active_start + active_index * ACTIVE_SPECULATION_CURRENT_BYTES;
-        v2_encoded
-            .extend_from_slice(&encoded[entry_start..entry_start + ACTIVE_SPECULATION_V2_BYTES]);
-    }
-
-    let decoded = BranchPredictorCheckpointPayload::decode(&v2_encoded).unwrap();
-
     assert_eq!(decoded.active_speculations(), payload.active_speculations());
     assert_eq!(decoded.active_branch_target_predictions(), &[]);
+    assert_eq!(
+        decoded.return_address_stack_snapshot(),
+        &ras(DEFAULT_RISCV_RETURN_ADDRESS_STACK_ENTRIES).snapshot()
+    );
+    assert_eq!(decoded.active_return_address_stack_operations(), &[]);
+    assert_eq!(decoded.active_branch_kinds(), &[]);
+    assert_legacy_checkpoint_migrates_to_current(LEGACY_V2_ACTIVE_MAPPING_PAYLOAD, &decoded);
 }
 
 #[test]
 fn checkpoint_payload_decodes_v3_active_mapping_with_branch_target_predictions_without_ras() {
-    const VERSION_OFFSET: usize = 4;
-    const ACTIVE_SPECULATION_V3_BYTES: usize = 27;
     let mut predictor =
         BranchPredictor::new(BranchPredictorConfig::with_history_bits(8, 3).unwrap());
     let first = predictor.predict_speculative(Address::new(0x1000));
@@ -670,73 +663,138 @@ fn checkpoint_payload_decodes_v3_active_mapping_with_branch_target_predictions_w
         ],
     )
     .unwrap();
-    let encoded = payload.encode();
-    let active_start = encoded.len() - ACTIVE_SPECULATION_CURRENT_BYTES * 2;
-    let mut v3_encoded = current_payload_prefix_without_btb_kind_counters(
-        &encoded,
-        8,
-        2,
-        active_start - RAS_HEADER_BYTES,
+
+    let decoded =
+        BranchPredictorCheckpointPayload::decode(LEGACY_V3_TARGET_PREDICTION_PAYLOAD).unwrap();
+
+    assert_eq!(decoded.snapshot(), payload.snapshot());
+    assert_eq!(
+        decoded.branch_target_buffer_snapshot(),
+        payload.branch_target_buffer_snapshot()
     );
-    v3_encoded[VERSION_OFFSET] = 3;
-    for active_index in 0..2 {
-        let entry_start = active_start + active_index * ACTIVE_SPECULATION_CURRENT_BYTES;
-        v3_encoded
-            .extend_from_slice(&encoded[entry_start..entry_start + ACTIVE_SPECULATION_V3_BYTES]);
-    }
-
-    let decoded = BranchPredictorCheckpointPayload::decode(&v3_encoded).unwrap();
-
     assert_eq!(decoded.active_speculations(), payload.active_speculations());
     assert_eq!(
         decoded.active_branch_target_predictions(),
         payload.active_branch_target_predictions()
     );
+    assert_eq!(
+        decoded.return_address_stack_snapshot(),
+        &ras(DEFAULT_RISCV_RETURN_ADDRESS_STACK_ENTRIES).snapshot()
+    );
     assert_eq!(decoded.active_return_address_stack_operations(), &[]);
-    assert!(decoded
-        .return_address_stack_snapshot()
-        .pending_operations()
-        .is_empty());
+    assert_eq!(decoded.active_branch_kinds(), &[]);
+    assert_legacy_checkpoint_migrates_to_current(LEGACY_V3_TARGET_PREDICTION_PAYLOAD, &decoded);
 }
 
 #[test]
 fn checkpoint_payload_decodes_legacy_v1_with_default_btb_snapshot() {
-    const VERSION_OFFSET: usize = 4;
-    const HEADER_BYTES: usize = 4 + 1 + 4 + 1 + 8 * 4 + 4 * 2;
-    const LEGACY_COUNTER_BYTES: usize = 8;
-    const LEGACY_TARGET_BYTES: usize = 8 * (1 + 8);
     let snapshot = predictor(8).snapshot();
-    let payload = BranchPredictorCheckpointPayload::from_snapshot(
-        snapshot.clone(),
-        std::iter::empty::<(u64, BranchSpeculationId)>(),
-    )
-    .unwrap();
-    let mut encoded = payload.encode();
-    encoded[VERSION_OFFSET] = 1;
-    encoded.truncate(HEADER_BYTES + LEGACY_COUNTER_BYTES + LEGACY_TARGET_BYTES);
 
-    let decoded = BranchPredictorCheckpointPayload::decode(&encoded).unwrap();
+    let decoded = BranchPredictorCheckpointPayload::decode(LEGACY_V1_DEFAULT_PAYLOAD).unwrap();
 
     assert_eq!(decoded.snapshot(), &snapshot);
     assert_eq!(decoded.active_speculations(), &[]);
+    assert_eq!(decoded.active_branch_target_predictions(), &[]);
     assert_eq!(
-        decoded.branch_target_buffer_snapshot().config().entries(),
-        DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ENTRIES
+        decoded.branch_target_buffer_snapshot(),
+        &btb(
+            DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ENTRIES,
+            DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ASSOCIATIVITY,
+        )
+        .snapshot()
     );
     assert_eq!(
-        decoded
-            .branch_target_buffer_snapshot()
-            .config()
-            .associativity(),
-        DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ASSOCIATIVITY
+        decoded.return_address_stack_snapshot(),
+        &ras(DEFAULT_RISCV_RETURN_ADDRESS_STACK_ENTRIES).snapshot()
     );
-    assert_eq!(decoded.branch_target_buffer_snapshot().lookup_count(), 0);
-    assert_eq!(decoded.branch_target_buffer_snapshot().hit_count(), 0);
-    assert!(decoded
-        .branch_target_buffer_snapshot()
-        .entries()
-        .iter()
-        .all(Option::is_none));
+    assert_eq!(decoded.active_return_address_stack_operations(), &[]);
+    assert_eq!(decoded.active_branch_kinds(), &[]);
+    assert_legacy_checkpoint_migrates_to_current(LEGACY_V1_DEFAULT_PAYLOAD, &decoded);
+}
+
+#[test]
+fn checkpoint_payload_decodes_v5_active_mapping_with_branch_kinds_without_btb_kind_counters() {
+    let mut predictor =
+        BranchPredictor::new(BranchPredictorConfig::with_history_bits(8, 3).unwrap());
+    let taken_pc = Address::new(0x1000);
+    let skipped_pc = Address::new(0x1004);
+
+    predictor.update(taken_pc, true, Some(Address::new(0x1080)));
+    let first = predictor.predict_speculative(taken_pc);
+    let second = predictor.predict_speculative(skipped_pc);
+    let snapshot = predictor.snapshot();
+    let mut branch_target_buffer = btb(8, 2);
+    branch_target_buffer.lookup(taken_pc, BranchTargetKind::DirectConditional);
+    branch_target_buffer.update(
+        taken_pc,
+        Address::new(0x1080),
+        BranchTargetKind::DirectConditional,
+    );
+    branch_target_buffer.lookup(taken_pc, BranchTargetKind::DirectConditional);
+    let branch_target_buffer_snapshot = branch_target_buffer.snapshot();
+    let mut return_address_stack = ras(4);
+    let call_operation = return_address_stack.push_speculative(Address::new(0x1004));
+    let return_operation = return_address_stack.pop_speculative();
+    let return_address_stack_snapshot = return_address_stack.snapshot();
+
+    let payload = BranchPredictorCheckpointPayload::from_snapshots_with_branch_target_predictions_and_return_address_stack_and_branch_kinds(
+        snapshot,
+        branch_target_buffer_snapshot,
+        [(22, second.id()), (21, first.id())],
+        [
+            (22, BranchTargetPrediction::new(false, None)),
+            (
+                21,
+                BranchTargetPrediction::new(true, Some(Address::new(0x1080))),
+            ),
+        ],
+        return_address_stack_snapshot,
+        [
+            (22, return_operation.id()),
+            (21, call_operation.id()),
+        ],
+        [
+            (22, BranchTargetKind::DirectUnconditional),
+            (21, BranchTargetKind::DirectConditional),
+        ],
+    )
+    .unwrap();
+
+    let decoded = BranchPredictorCheckpointPayload::decode(LEGACY_V5_BRANCH_KIND_PAYLOAD).unwrap();
+    assert_eq!(decoded.snapshot(), payload.snapshot());
+    let decoded_btb = decoded.branch_target_buffer_snapshot();
+    let expected_btb = payload.branch_target_buffer_snapshot();
+    assert_eq!(decoded_btb.config(), expected_btb.config());
+    assert_eq!(decoded_btb.entries(), expected_btb.entries());
+    assert_eq!(
+        decoded_btb.access_sequence(),
+        expected_btb.access_sequence()
+    );
+    assert_eq!(decoded_btb.lookup_count(), expected_btb.lookup_count());
+    assert_eq!(decoded_btb.hit_count(), expected_btb.hit_count());
+    assert_eq!(decoded_btb.miss_count(), expected_btb.miss_count());
+    assert_eq!(decoded_btb.update_count(), expected_btb.update_count());
+    assert_eq!(decoded_btb.eviction_count(), expected_btb.eviction_count());
+    let zero_kind_counts = BranchTargetKindCounts::default();
+    assert_eq!(decoded_btb.lookup_kind_counts(), zero_kind_counts);
+    assert_eq!(decoded_btb.hit_kind_counts(), zero_kind_counts);
+    assert_eq!(decoded_btb.miss_kind_counts(), zero_kind_counts);
+    assert_eq!(decoded_btb.update_kind_counts(), zero_kind_counts);
+    assert_eq!(decoded.active_speculations(), payload.active_speculations());
+    assert_eq!(
+        decoded.active_branch_target_predictions(),
+        payload.active_branch_target_predictions()
+    );
+    assert_eq!(
+        decoded.return_address_stack_snapshot(),
+        payload.return_address_stack_snapshot()
+    );
+    assert_eq!(
+        decoded.active_return_address_stack_operations(),
+        payload.active_return_address_stack_operations()
+    );
+    assert_eq!(decoded.active_branch_kinds(), payload.active_branch_kinds());
+    assert_legacy_checkpoint_migrates_to_current(LEGACY_V5_BRANCH_KIND_PAYLOAD, &decoded);
 }
 
 #[test]

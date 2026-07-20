@@ -16,7 +16,7 @@
 - Modify: `crates/rem6-cpu/tests/source_policy.rs`
 - Test: `crates/rem6-cpu/tests/source_policy.rs`
 
-- [ ] **Step 1: Add the focused source-policy test**
+- [x] **Step 1: Add the focused source-policy test**
 
 Add this test before the helper section near the end of the file:
 
@@ -57,6 +57,22 @@ fn branch_predictor_legacy_checkpoints_use_frozen_payloads() {
         "branch_predictor.rs must import the focused legacy fixture module"
     );
     let fixtures = fs::read_to_string(&fixture_path).unwrap();
+    let fixtures_code = rust_code_without_comments_and_literals(&fixtures);
+    for forbidden in [
+        "fn ",
+        "include!",
+        "include_bytes!",
+        "concat!",
+        "Vec::",
+        ".encode(",
+        ".decode(",
+        ".to_vec(",
+    ] {
+        assert!(
+            !fixtures_code.contains(forbidden),
+            "legacy branch-predictor fixture module must contain literal constants, not `{forbidden}`"
+        );
+    }
     for required in [
         "LEGACY_V1_DEFAULT_PAYLOAD",
         "LEGACY_V2_ACTIVE_MAPPING_PAYLOAD",
@@ -65,7 +81,7 @@ fn branch_predictor_legacy_checkpoints_use_frozen_payloads() {
         "LEGACY_V5_BRANCH_KIND_PAYLOAD",
     ] {
         assert!(
-            fixtures.contains(&format!("pub(super) const {required}: &[u8] = &[")),
+            fixtures_code.contains(&format!("pub(super) const {required}: &[u8] = &[")),
             "legacy branch-predictor fixture module is missing `{required}`"
         );
         assert!(
@@ -73,10 +89,92 @@ fn branch_predictor_legacy_checkpoints_use_frozen_payloads() {
             "branch predictor compatibility tests must consume `{required}`"
         );
     }
+
+    for (test, next_test, fixture) in [
+        (
+            "checkpoint_payload_decodes_v4_active_mapping_with_ras_without_branch_kinds",
+            "checkpoint_payload_decodes_v2_active_mapping_without_branch_target_predictions",
+            "LEGACY_V4_RAS_PAYLOAD",
+        ),
+        (
+            "checkpoint_payload_decodes_v2_active_mapping_without_branch_target_predictions",
+            "checkpoint_payload_decodes_v3_active_mapping_with_branch_target_predictions_without_ras",
+            "LEGACY_V2_ACTIVE_MAPPING_PAYLOAD",
+        ),
+        (
+            "checkpoint_payload_decodes_v3_active_mapping_with_branch_target_predictions_without_ras",
+            "checkpoint_payload_decodes_legacy_v1_with_default_btb_snapshot",
+            "LEGACY_V3_TARGET_PREDICTION_PAYLOAD",
+        ),
+        (
+            "checkpoint_payload_decodes_legacy_v1_with_default_btb_snapshot",
+            "checkpoint_payload_decodes_v5_active_mapping_with_branch_kinds_without_btb_kind_counters",
+            "LEGACY_V1_DEFAULT_PAYLOAD",
+        ),
+        (
+            "checkpoint_payload_decodes_v5_active_mapping_with_branch_kinds_without_btb_kind_counters",
+            "checkpoint_payload_rejects_btb_config_outside_decode_limits",
+            "LEGACY_V5_BRANCH_KIND_PAYLOAD",
+        ),
+    ] {
+        let body = source_section(
+            &root,
+            &format!("fn {test}()"),
+            &format!("fn {next_test}()"),
+        );
+        let body_code = rust_code_without_comments_and_literals(body);
+        let decode = format!("BranchPredictorCheckpointPayload::decode({fixture})");
+        assert!(
+            body_code.contains(&decode),
+            "legacy branch-predictor test `{test}` must decode `{fixture}` directly"
+        );
+        assert_eq!(
+            body_code
+                .matches("BranchPredictorCheckpointPayload::decode(")
+                .count(),
+            1,
+            "legacy branch-predictor test `{test}` must have exactly one payload decode"
+        );
+        assert_eq!(
+            body_code.matches(fixture).count(),
+            2,
+            "legacy branch-predictor test `{test}` may use `{fixture}` only for direct decode and migration verification"
+        );
+        for forbidden in [
+            ".encode()",
+            ".truncate(",
+            ".extend_from_slice(",
+            ".to_vec()",
+            "Vec::from(",
+            "Vec::new(",
+            "Vec::with_capacity(",
+            "vec![",
+            ".push(",
+            ".resize(",
+            ".resize_with(",
+            ".copy_from_slice(",
+            ".clone_from_slice(",
+            ".copy_within(",
+            ".fill(",
+            ".splice(",
+            ".insert(",
+            ".append(",
+            ".as_mut_slice(",
+            ".get_mut(",
+            ".iter_mut(",
+            "] =",
+            "]=",
+        ] {
+            assert!(
+                !body_code.contains(forbidden),
+                "legacy branch-predictor test `{test}` must not synthesize valid retired bytes with `{forbidden}`"
+            );
+        }
+    }
 }
 ```
 
-- [ ] **Step 2: Run the exact policy test and confirm RED**
+- [x] **Step 2: Run the exact policy test and confirm RED**
 
 Run:
 
@@ -94,7 +192,7 @@ still contains `current_payload_prefix_without_btb_kind_counters`.
 - Temporarily modify: `crates/rem6-cpu/tests/branch_predictor.rs`
 - Test: `crates/rem6-cpu/tests/branch_predictor.rs`
 
-- [ ] **Step 1: Add a transient Rust-array printer**
+- [x] **Step 1: Add a transient Rust-array printer**
 
 Temporarily add this helper after `current_payload_prefix_without_btb_kind_counters`:
 
@@ -112,7 +210,7 @@ fn print_legacy_checkpoint_fixture(name: &str, payload: &[u8]) {
 }
 ```
 
-- [ ] **Step 2: Print the existing v1-v4 valid payloads**
+- [x] **Step 2: Print the existing v1-v4 valid payloads**
 
 Before printing v2, replace its `from_snapshot` call with the equivalent
 compact explicit-BTB constructor:
@@ -144,7 +242,7 @@ cargo test -p rem6-cpu --test branch_predictor checkpoint_payload_decodes_ -- --
 
 Expected: the four tests pass and print complete Rust byte arrays.
 
-- [ ] **Step 3: Add and print a transient v5 compatibility row**
+- [x] **Step 3: Add and print a transient v5 compatibility row**
 
 Add a temporary test that constructs the same nontrivial predictor, BTB, RAS,
 active predictions, RAS operations, and branch kinds used by
@@ -175,14 +273,14 @@ cargo test -p rem6-cpu --test branch_predictor checkpoint_payload_decodes_v5_act
 
 Expected: PASS and print `LEGACY_V5_BRANCH_KIND_PAYLOAD`.
 
-- [ ] **Step 4: Create the literal fixture module**
+- [x] **Step 4: Create the literal fixture module**
 
 Create `legacy_checkpoint_fixtures.rs` from the five printed arrays. The final
 file contains only the five `pub(super) const ...: &[u8]` declarations and a
 short module comment; it contains no functions, encoders, offsets, or payload
 mutation.
 
-- [ ] **Step 5: Cross-check literals before deleting the transient writer**
+- [x] **Step 5: Cross-check literals before deleting the transient writer**
 
 Import the fixture module temporarily and add equality assertions beside the
 printed rows:
@@ -205,7 +303,7 @@ retired shape before the synthetic writer is removed.
 - Verify: `crates/rem6-cpu/tests/branch_predictor/legacy_checkpoint_fixtures.rs`
 - Test: `crates/rem6-cpu/tests/branch_predictor.rs`
 
-- [ ] **Step 1: Import the frozen fixture owner**
+- [x] **Step 1: Import the frozen fixture owner**
 
 At the top of `branch_predictor.rs`, add:
 
@@ -219,7 +317,7 @@ use legacy_checkpoint_fixtures::{
 };
 ```
 
-- [ ] **Step 2: Add one current-migration assertion helper**
+- [x] **Step 2: Add one current-migration assertion helper**
 
 Add:
 
@@ -238,12 +336,13 @@ fn assert_legacy_checkpoint_migrates_to_current(
 }
 ```
 
-- [ ] **Step 3: Convert the v1-v4 tests**
+- [x] **Step 3: Convert the v1-v4 tests**
 
 For each existing v1-v4 test, retain the typed predictor/BTB/RAS setup used to
 construct expected state, but delete all current `encode`, offset, truncation,
 version rewrite, and record-splicing code. Decode the matching fixture constant
-directly and keep the schema-specific assertions.
+directly and assert every absent schema field defaults explicitly: target
+predictions, RAS snapshot/operations, and branch kinds as applicable.
 
 End each row with:
 
@@ -254,7 +353,7 @@ assert_legacy_checkpoint_migrates_to_current(LEGACY_V3_TARGET_PREDICTION_PAYLOAD
 assert_legacy_checkpoint_migrates_to_current(LEGACY_V4_RAS_PAYLOAD, &decoded);
 ```
 
-- [ ] **Step 4: Finalize the v5 test**
+- [x] **Step 4: Finalize the v5 test**
 
 Delete its transient encoding path and decode
 `LEGACY_V5_BRANCH_KIND_PAYLOAD` directly. Assert all v5-owned state equals the
@@ -265,7 +364,7 @@ counter families to equal their default zero snapshots. End with:
 assert_legacy_checkpoint_migrates_to_current(LEGACY_V5_BRANCH_KIND_PAYLOAD, &decoded);
 ```
 
-- [ ] **Step 5: Delete the retired test writer**
+- [x] **Step 5: Delete the retired test writer**
 
 Delete:
 
@@ -278,7 +377,7 @@ Delete:
 Keep layout constants and byte mutation used exclusively by malformed-payload
 rejection tests.
 
-- [ ] **Step 6: Run focused compatibility and policy tests**
+- [x] **Step 6: Run focused compatibility and policy tests**
 
 Run:
 
@@ -298,7 +397,7 @@ writer round trips.
 - Verify only: `crates/rem6-cpu/tests/branch_predictor.rs`
 - Verify only: `crates/rem6/tests/cli_run/stats_compat/selected_branch_predictor_matrix.rs`
 
-- [ ] **Step 1: Run the full branch predictor integration suite**
+- [x] **Step 1: Run the full branch predictor integration suite**
 
 Run:
 
@@ -308,7 +407,7 @@ cargo test -p rem6-cpu --test branch_predictor
 
 Expected: all current, legacy, and malformed-payload rows pass.
 
-- [ ] **Step 2: Run the real CLI branch-predictor row**
+- [x] **Step 2: Run the real CLI branch-predictor row**
 
 Run:
 
@@ -325,7 +424,7 @@ fetch steering and runtime stats.
 - Verify only: `docs/architecture/gem5-to-rem6-migration.md`
 - Verify only: `temp/improve-rem6-0.md`
 
-- [ ] **Step 1: Run package and workspace verification**
+- [x] **Step 1: Run package and workspace verification**
 
 Run:
 
@@ -337,7 +436,7 @@ cargo test --workspace --all-targets -q
 
 Expected: all commands exit 0.
 
-- [ ] **Step 2: Run hygiene checks**
+- [x] **Step 2: Run hygiene checks**
 
 Run:
 
@@ -351,7 +450,7 @@ git status --short -- temp docs/architecture/gem5-to-rem6-migration.md
 Expected: no retired valid-writer matches, the ledger remains exactly 1,200
 lines, and protected paths are untouched.
 
-- [ ] **Step 3: Request independent read-only review**
+- [x] **Step 3: Request independent read-only review**
 
 Reviewers must check fixture literal ownership, v1-v5 schema coverage, v5 BTB
 counter defaults, current-v6 migration, malformed-test preservation, source
