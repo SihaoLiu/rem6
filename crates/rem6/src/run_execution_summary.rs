@@ -562,10 +562,7 @@ pub(super) fn execution_summary(
     let power_records = crate::power_output::run_power_analysis_records_from_parts(
         final_tick,
         &cores,
-        &inputs.instruction_cache,
-        &inputs.data_cache,
         &memory_resources,
-        &dram,
     );
     let debug = Rem6DebugSummary::from_run(
         inputs.config,

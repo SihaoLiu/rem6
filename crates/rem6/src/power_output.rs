@@ -12,8 +12,9 @@ use crate::gpu_cli::{
     Rem6GpuComputeUnitActivity, Rem6GpuFabricSummary, Rem6GpuRunExecutionSummary,
 };
 use crate::{
-    PowerAnalysisFormat, Rem6CacheResourceSummary, Rem6CliError, Rem6CoreSummary, Rem6DramSummary,
-    Rem6FabricResourceSummary, Rem6MemoryResourceSummary, Rem6TraceReplayExecutionSummary,
+    PowerAnalysisFormat, Rem6CacheResourceSummary, Rem6CliError, Rem6CoreSummary,
+    Rem6DramResourceSummary, Rem6DramSummary, Rem6FabricResourceSummary, Rem6MemoryResourceSummary,
+    Rem6TraceReplayExecutionSummary, Rem6TransportResourceSummary,
 };
 
 #[cfg(test)]
@@ -120,51 +121,66 @@ pub(crate) fn run_power_analysis_records(
     run_power_analysis_records_from_parts(
         execution.final_tick,
         &execution.cores,
-        &execution.instruction_cache,
-        &execution.data_cache,
         &execution.memory_resources,
-        &execution.dram,
     )
 }
 
 pub(crate) fn run_power_analysis_records_from_parts(
     final_tick: u64,
     cores: &[Rem6CoreSummary],
-    instruction_cache: &CliDataCacheSummary,
-    data_cache: &CliDataCacheSummary,
     memory_resources: &Rem6MemoryResourceSummary,
-    dram: &Rem6DramSummary,
 ) -> Vec<PowerAnalysisRecord> {
     let mut records = cores
         .iter()
         .map(|core| cpu_power_record(core, final_tick))
         .collect::<Vec<_>>();
-    if let Some(record) = cpu_instruction_cache_power_record(instruction_cache, final_tick) {
-        records.push(record);
-    }
-    if let Some(record) = cpu_data_cache_power_record(data_cache, final_tick) {
-        records.push(record);
-    }
-    if let Some(record) =
-        shared_cache_power_record("memory.cache.l2", &memory_resources.cache_l2, final_tick)
-    {
-        records.push(record);
-    }
-    if let Some(record) =
-        shared_cache_power_record("memory.cache.l3", &memory_resources.cache_l3, final_tick)
-    {
-        records.push(record);
-    }
-    if let Some(record) = fabric_power_record(&memory_resources.fabric, final_tick) {
-        records.push(record);
-    }
-    if let Some(record) = memory_transport_power_record(memory_resources, final_tick) {
-        records.push(record);
-    }
-    if let Some(record) = dram_power_record(dram, final_tick) {
-        records.push(record);
-    }
+    records.extend(run_memory_power_records(final_tick, memory_resources));
     records.sort_by(|left, right| left.target().cmp(right.target()));
+    records
+}
+
+fn run_memory_power_records(
+    final_tick: u64,
+    resources: &Rem6MemoryResourceSummary,
+) -> Vec<PowerAnalysisRecord> {
+    let mut records = Vec::new();
+    if let Some(record) = cache_resource_power_record(
+        &resources.cache_instruction.l1,
+        final_tick,
+        CachePowerCalibration::CPU_INSTRUCTION_L1,
+    ) {
+        records.push(record);
+    }
+    if let Some(record) = cache_resource_power_record(
+        &resources.cache_data.l1,
+        final_tick,
+        CachePowerCalibration::CPU_DATA_L1,
+    ) {
+        records.push(record);
+    }
+    if let Some(record) = cache_resource_power_record(
+        &resources.cache_l2,
+        final_tick,
+        CachePowerCalibration::SHARED_L2,
+    ) {
+        records.push(record);
+    }
+    if let Some(record) = cache_resource_power_record(
+        &resources.cache_l3,
+        final_tick,
+        CachePowerCalibration::SHARED_L3,
+    ) {
+        records.push(record);
+    }
+    if let Some(record) = memory_transport_power_record(&resources.transport, final_tick) {
+        records.push(record);
+    }
+    if let Some(record) = fabric_power_record(&resources.fabric, final_tick) {
+        records.push(record);
+    }
+    if let Some(record) = dram_resource_power_record(&resources.dram, final_tick) {
+        records.push(record);
+    }
     records
 }
 
@@ -298,20 +314,6 @@ fn gpu_data_cache_power_record(
     cache_power_record("gpu.data_cache", data_cache, final_tick, 39.0, 0.012)
 }
 
-fn cpu_instruction_cache_power_record(
-    cache: &CliDataCacheSummary,
-    final_tick: u64,
-) -> Option<PowerAnalysisRecord> {
-    cache_power_record("cpu.instruction_cache", cache, final_tick, 39.0, 0.010)
-}
-
-fn cpu_data_cache_power_record(
-    cache: &CliDataCacheSummary,
-    final_tick: u64,
-) -> Option<PowerAnalysisRecord> {
-    cache_power_record("cpu.data_cache", cache, final_tick, 39.0, 0.012)
-}
-
 fn cache_power_record(
     component: &str,
     cache: &CliDataCacheSummary,
@@ -359,47 +361,103 @@ fn cache_power_summary_is_active(cache: &CliDataCacheSummary) -> bool {
         || cache.prefetch_issued != 0
 }
 
-fn shared_cache_power_record(
-    component: &str,
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CachePowerCalibration {
+    target: &'static str,
+    include_cpu_responses: bool,
+    event_scale: f64,
+    operation_scale: f64,
+    byte_scale: f64,
+    base_temperature_celsius: f64,
+    temperature_cap_celsius: f64,
+    static_watts: f64,
+}
+
+impl CachePowerCalibration {
+    const CPU_INSTRUCTION_L1: Self = Self {
+        target: "cpu.instruction_cache",
+        include_cpu_responses: false,
+        event_scale: 0.000_006,
+        operation_scale: 0.000_004,
+        byte_scale: 0.000_000_5,
+        base_temperature_celsius: 39.0,
+        temperature_cap_celsius: 6.0,
+        static_watts: 0.010,
+    };
+    const CPU_DATA_L1: Self = Self {
+        target: "cpu.data_cache",
+        include_cpu_responses: false,
+        event_scale: 0.000_006,
+        operation_scale: 0.000_004,
+        byte_scale: 0.000_000_5,
+        base_temperature_celsius: 39.0,
+        temperature_cap_celsius: 6.0,
+        static_watts: 0.012,
+    };
+    const SHARED_L2: Self = Self {
+        target: "memory.cache.l2",
+        include_cpu_responses: true,
+        event_scale: 0.000_005,
+        operation_scale: 0.000_003,
+        byte_scale: 0.000_000_5,
+        base_temperature_celsius: 38.5,
+        temperature_cap_celsius: 5.0,
+        static_watts: 0.016,
+    };
+    const SHARED_L3: Self = Self {
+        target: "memory.cache.l3",
+        ..Self::SHARED_L2
+    };
+}
+
+fn cache_resource_power_record(
     cache: &Rem6CacheResourceSummary,
     final_tick: u64,
+    calibration: CachePowerCalibration,
 ) -> Option<PowerAnalysisRecord> {
-    if !cache_resource_summary_is_active(cache) {
+    if !cache_resource_summary_is_active(cache, calibration.include_cpu_responses) {
         return None;
     }
-    let operations = cache
-        .cpu_responses
-        .saturating_add(cache.directory_decisions)
-        .saturating_add(cache.bank_accepted)
-        .saturating_add(cache.bank_scheduled_misses)
-        .saturating_add(cache.bank_coalesced_misses)
-        .saturating_add(cache.prefetch_issued);
+    let operations = if calibration.include_cpu_responses {
+        cache.cpu_responses
+    } else {
+        0
+    }
+    .saturating_add(cache.directory_decisions)
+    .saturating_add(cache.bank_accepted)
+    .saturating_add(cache.bank_scheduled_misses)
+    .saturating_add(cache.bank_coalesced_misses)
+    .saturating_add(cache.prefetch_issued);
     let dynamic_watts = watts_from_activity(
         cache.activity,
         operations,
         cache.dram_accesses.saturating_mul(64),
-        0.000_005,
-        0.000_003,
-        0.000_000_5,
+        calibration.event_scale,
+        calibration.operation_scale,
+        calibration.byte_scale,
     );
     Some(
         PowerAnalysisRecord::new(
-            component,
+            calibration.target,
             PowerStateKind::On,
             PowerResidency::new(vec![(
                 PowerStateKind::On,
                 final_tick.max(cache.activity).max(1),
             )]),
-            38.5 + dynamic_watts.min(5.0),
-            PowerEstimate::new(dynamic_watts, 0.016),
+            calibration.base_temperature_celsius
+                + dynamic_watts.min(calibration.temperature_cap_celsius),
+            PowerEstimate::new(dynamic_watts, calibration.static_watts),
         )
-        .expect("shared-cache power records use valid residency and finite watts"),
+        .expect("run cache power records use valid residency and finite watts"),
     )
 }
 
-fn cache_resource_summary_is_active(cache: &Rem6CacheResourceSummary) -> bool {
+fn cache_resource_summary_is_active(
+    cache: &Rem6CacheResourceSummary,
+    include_cpu_responses: bool,
+) -> bool {
     cache.activity != 0
-        || cache.cpu_responses != 0
+        || (include_cpu_responses && cache.cpu_responses != 0)
         || cache.directory_decisions != 0
         || cache.dram_accesses != 0
         || cache.bank_accepted != 0
@@ -588,10 +646,9 @@ fn fabric_activity_power_record(
 }
 
 fn memory_transport_power_record(
-    resources: &Rem6MemoryResourceSummary,
+    transport: &Rem6TransportResourceSummary,
     final_tick: u64,
 ) -> Option<PowerAnalysisRecord> {
-    let transport = &resources.transport;
     if transport.activity == 0 && transport.active == 0 {
         return None;
     }
@@ -615,6 +672,52 @@ fn memory_transport_power_record(
             PowerEstimate::new(dynamic_watts, 0.006),
         )
         .expect("memory transport power records use valid residency and finite watts"),
+    )
+}
+
+fn dram_resource_power_record(
+    dram: &Rem6DramResourceSummary,
+    final_tick: u64,
+) -> Option<PowerAnalysisRecord> {
+    if dram.activity == 0 {
+        return None;
+    }
+    let low_power_entries = dram
+        .low_power_active_powerdown_entries
+        .saturating_add(dram.low_power_precharge_powerdown_entries)
+        .saturating_add(dram.low_power_self_refresh_entries);
+    let operations = dram
+        .commands
+        .saturating_add(dram.refreshes)
+        .saturating_add(low_power_entries)
+        .saturating_add(dram.low_power_exits);
+    let bytes = dram.read_bytes.saturating_add(dram.write_bytes);
+    let residency_ticks = final_tick
+        .max(dram.refresh_ticks)
+        .max(dram.low_power_active_powerdown_ticks)
+        .max(dram.low_power_precharge_powerdown_ticks)
+        .max(dram.low_power_self_refresh_ticks)
+        .max(dram.low_power_exit_latency_ticks)
+        .max(dram.accesses)
+        .max(1);
+    let dynamic_watts = watts_from_activity(
+        dram.activity,
+        operations,
+        bytes,
+        0.000_004,
+        0.000_003,
+        0.000_000_5,
+    );
+    let static_watts = 0.010 + (dram.active_banks.max(1) as f64 * 0.000_500);
+    Some(
+        PowerAnalysisRecord::new(
+            "memory.dram",
+            PowerStateKind::On,
+            PowerResidency::new(vec![(PowerStateKind::On, residency_ticks)]),
+            38.0 + dynamic_watts.min(8.0),
+            PowerEstimate::new(dynamic_watts, static_watts),
+        )
+        .expect("run DRAM power records use valid residency and finite watts"),
     )
 }
 

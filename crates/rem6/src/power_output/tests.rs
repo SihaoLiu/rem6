@@ -1,14 +1,15 @@
 use super::*;
+use crate::Rem6DramResourceSummary;
 
-fn run_records_with_dram(final_tick: u64, dram: &Rem6DramSummary) -> Vec<PowerAnalysisRecord> {
-    run_power_analysis_records_from_parts(
-        final_tick,
-        &[],
-        &CliDataCacheSummary::default(),
-        &CliDataCacheSummary::default(),
-        &Rem6MemoryResourceSummary::default(),
+fn run_records_with_dram(
+    final_tick: u64,
+    dram: Rem6DramResourceSummary,
+) -> Vec<PowerAnalysisRecord> {
+    let resources = Rem6MemoryResourceSummary {
         dram,
-    )
+        ..Rem6MemoryResourceSummary::default()
+    };
+    run_memory_power_records(final_tick, &resources)
 }
 
 fn record_for_target<'a>(
@@ -20,12 +21,14 @@ fn record_for_target<'a>(
 
 #[test]
 fn run_power_emits_refresh_only_dram_resource() {
-    let dram = Rem6DramSummary {
+    let dram = Rem6DramResourceSummary {
+        activity: 1,
+        active: 1,
         refreshes: 1,
         refresh_ticks: 9,
-        ..Rem6DramSummary::default()
+        ..Rem6DramResourceSummary::default()
     };
-    let records = run_records_with_dram(0, &dram);
+    let records = run_records_with_dram(0, dram);
     let record = record_for_target(&records, "memory.dram").expect("refresh is DRAM activity");
 
     assert_eq!(record.residency_ticks(PowerStateKind::On), 9);
@@ -100,7 +103,14 @@ fn run_power_emits_low_power_only_dram_resource() {
     let mut failures = Vec::new();
 
     for case in cases {
-        let dram = Rem6DramSummary {
+        let low_power_entries = case
+            .active_powerdown_entries
+            .saturating_add(case.precharge_powerdown_entries)
+            .saturating_add(case.self_refresh_entries);
+        let events = low_power_entries.max(case.exits);
+        let dram = Rem6DramResourceSummary {
+            activity: events,
+            active: u64::from(events != 0),
             low_power_active_powerdown_entries: case.active_powerdown_entries,
             low_power_active_powerdown_ticks: case.active_powerdown_ticks,
             low_power_precharge_powerdown_entries: case.precharge_powerdown_entries,
@@ -109,15 +119,10 @@ fn run_power_emits_low_power_only_dram_resource() {
             low_power_self_refresh_ticks: case.self_refresh_ticks,
             low_power_exits: case.exits,
             low_power_exit_latency_ticks: case.exit_latency_ticks,
-            ..Rem6DramSummary::default()
+            ..Rem6DramResourceSummary::default()
         };
-        let records = run_records_with_dram(0, &dram);
-        let low_power_entries = dram
-            .low_power_active_powerdown_entries
-            .saturating_add(dram.low_power_precharge_powerdown_entries)
-            .saturating_add(dram.low_power_self_refresh_entries);
-        let events = low_power_entries.max(dram.low_power_exits);
-        let operations = low_power_entries.saturating_add(dram.low_power_exits);
+        let records = run_records_with_dram(0, dram);
+        let operations = low_power_entries.saturating_add(case.exits);
         let expected =
             watts_from_activity(events, operations, 0, 0.000_004, 0.000_003, 0.000_000_5);
         let Some(record) = record_for_target(&records, "memory.dram") else {
@@ -153,14 +158,16 @@ fn run_power_emits_low_power_only_dram_resource() {
 
 #[test]
 fn run_power_suppresses_zero_memory_resources() {
-    let records = run_records_with_dram(20, &Rem6DramSummary::default());
+    let records = run_memory_power_records(20, &Rem6MemoryResourceSummary::default());
 
     assert!(records.is_empty(), "zero memory inputs emitted {records:?}");
 }
 
 #[test]
 fn run_dram_power_uses_canonical_byte_total() {
-    let dram = Rem6DramSummary {
+    let dram = Rem6DramResourceSummary {
+        activity: 2,
+        active: 1,
         active_banks: 1,
         accesses: 2,
         reads: 1,
@@ -168,9 +175,9 @@ fn run_dram_power_uses_canonical_byte_total() {
         read_bytes: 8,
         write_bytes: 4,
         commands: 3,
-        ..Rem6DramSummary::default()
+        ..Rem6DramResourceSummary::default()
     };
-    let records = run_records_with_dram(20, &dram);
+    let records = run_records_with_dram(20, dram);
     let record = record_for_target(&records, "memory.dram").unwrap();
     let expected = watts_from_activity(2, 3, 12, 0.000_004, 0.000_003, 0.000_000_5);
 
