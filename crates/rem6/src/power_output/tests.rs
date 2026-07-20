@@ -33,33 +33,109 @@ fn run_power_emits_refresh_only_dram_resource() {
 
 #[test]
 fn run_power_emits_low_power_only_dram_resource() {
-    let dram = Rem6DramSummary {
-        low_power_active_powerdown_entries: 2,
-        low_power_active_powerdown_ticks: 7,
-        low_power_precharge_powerdown_entries: 3,
-        low_power_precharge_powerdown_ticks: 9,
-        low_power_self_refresh_entries: 5,
-        low_power_self_refresh_ticks: 11,
-        low_power_exits: 4,
-        ..Rem6DramSummary::default()
-    };
-    let records = run_records_with_dram(0, &dram);
-    let low_power_entries = dram
-        .low_power_active_powerdown_entries
-        .saturating_add(dram.low_power_precharge_powerdown_entries)
-        .saturating_add(dram.low_power_self_refresh_entries);
-    let events = low_power_entries.max(dram.low_power_exits);
-    let operations = low_power_entries.saturating_add(dram.low_power_exits);
-    let expected = watts_from_activity(events, operations, 0, 0.000_004, 0.000_003, 0.000_000_5);
-    let record = record_for_target(&records, "memory.dram").unwrap_or_else(|| {
-        panic!("low-power activity must emit memory.dram with dynamic watts {expected:.12}")
-    });
+    #[derive(Clone, Copy)]
+    struct LowPowerCase {
+        name: &'static str,
+        active_powerdown_entries: u64,
+        active_powerdown_ticks: u64,
+        precharge_powerdown_entries: u64,
+        precharge_powerdown_ticks: u64,
+        self_refresh_entries: u64,
+        self_refresh_ticks: u64,
+        exits: u64,
+        exit_latency_ticks: u64,
+        expected_residency: u64,
+    }
 
-    assert_eq!(record.residency_ticks(PowerStateKind::On), 11);
+    let cases = [
+        LowPowerCase {
+            name: "entries-dominate-self-refresh-residency",
+            active_powerdown_entries: 2,
+            active_powerdown_ticks: 7,
+            precharge_powerdown_entries: 3,
+            precharge_powerdown_ticks: 9,
+            self_refresh_entries: 5,
+            self_refresh_ticks: 11,
+            exits: 4,
+            exit_latency_ticks: 8,
+            expected_residency: 11,
+        },
+        LowPowerCase {
+            name: "exits-dominate-active-powerdown-residency",
+            active_powerdown_entries: 1,
+            active_powerdown_ticks: 17,
+            precharge_powerdown_entries: 2,
+            precharge_powerdown_ticks: 5,
+            self_refresh_entries: 1,
+            self_refresh_ticks: 7,
+            exits: 9,
+            exit_latency_ticks: 13,
+            expected_residency: 17,
+        },
+        LowPowerCase {
+            name: "precharge-powerdown-residency",
+            active_powerdown_entries: 2,
+            active_powerdown_ticks: 5,
+            precharge_powerdown_entries: 4,
+            precharge_powerdown_ticks: 19,
+            self_refresh_entries: 1,
+            self_refresh_ticks: 11,
+            exits: 3,
+            exit_latency_ticks: 13,
+            expected_residency: 19,
+        },
+    ];
+    let mut failures = Vec::new();
+
+    for case in cases {
+        let dram = Rem6DramSummary {
+            low_power_active_powerdown_entries: case.active_powerdown_entries,
+            low_power_active_powerdown_ticks: case.active_powerdown_ticks,
+            low_power_precharge_powerdown_entries: case.precharge_powerdown_entries,
+            low_power_precharge_powerdown_ticks: case.precharge_powerdown_ticks,
+            low_power_self_refresh_entries: case.self_refresh_entries,
+            low_power_self_refresh_ticks: case.self_refresh_ticks,
+            low_power_exits: case.exits,
+            low_power_exit_latency_ticks: case.exit_latency_ticks,
+            ..Rem6DramSummary::default()
+        };
+        let records = run_records_with_dram(0, &dram);
+        let low_power_entries = dram
+            .low_power_active_powerdown_entries
+            .saturating_add(dram.low_power_precharge_powerdown_entries)
+            .saturating_add(dram.low_power_self_refresh_entries);
+        let events = low_power_entries.max(dram.low_power_exits);
+        let operations = low_power_entries.saturating_add(dram.low_power_exits);
+        let expected =
+            watts_from_activity(events, operations, 0, 0.000_004, 0.000_003, 0.000_000_5);
+        let Some(record) = record_for_target(&records, "memory.dram") else {
+            failures.push(format!(
+                "{}: missing memory.dram; expected dynamic watts {expected:.12}, residency {}",
+                case.name, case.expected_residency
+            ));
+            continue;
+        };
+        let residency = record.residency_ticks(PowerStateKind::On);
+
+        if residency != case.expected_residency {
+            failures.push(format!(
+                "{}: memory.dram residency {residency} != {}",
+                case.name, case.expected_residency
+            ));
+        }
+        if (record.dynamic_watts() - expected).abs() >= 1e-12 {
+            failures.push(format!(
+                "{}: memory.dram dynamic watts {} != canonical {expected:.12} from events={events}, operations={operations}, bytes=0",
+                case.name,
+                record.dynamic_watts()
+            ));
+        }
+    }
+
     assert!(
-        (record.dynamic_watts() - expected).abs() < 1e-12,
-        "memory.dram dynamic watts {} != canonical {expected:.12} from events={events}, operations={operations}, bytes=0",
-        record.dynamic_watts()
+        failures.is_empty(),
+        "low-power DRAM boundary failures:\n{}",
+        failures.join("\n")
     );
 }
 

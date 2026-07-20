@@ -1,6 +1,6 @@
 use std::{fs, process::Command};
 
-use rem6_power::{PowerAnalysisRecord, PowerStateKind};
+use rem6_power::{PowerAnalysisExport, PowerAnalysisRecord, PowerStateKind};
 use serde_json::Value;
 
 use super::*;
