@@ -6,6 +6,8 @@ struct GpuHierarchyRow {
     extra_args: &'static [&'static str],
     expected_final_tick: u64,
     expected_cache_runs: u64,
+    expected_cache_immediate_hits: u64,
+    expected_cache_scheduled_misses: u64,
     expected_dram_accesses: u64,
     expected_round_trip_ticks: u64,
     expected_max_round_trip_ticks: u64,
@@ -19,6 +21,8 @@ const GPU_HIERARCHY_ROWS: &[GpuHierarchyRow] = &[
         extra_args: &[],
         expected_final_tick: 11,
         expected_cache_runs: 0,
+        expected_cache_immediate_hits: 0,
+        expected_cache_scheduled_misses: 0,
         expected_dram_accesses: 0,
         expected_round_trip_ticks: 18,
         expected_max_round_trip_ticks: 2,
@@ -30,6 +34,8 @@ const GPU_HIERARCHY_ROWS: &[GpuHierarchyRow] = &[
         extra_args: &["--data-cache-protocol", "msi", "--dram-memory"],
         expected_final_tick: 24,
         expected_cache_runs: 9,
+        expected_cache_immediate_hits: 2,
+        expected_cache_scheduled_misses: 7,
         expected_dram_accesses: 6,
         expected_round_trip_ticks: 105,
         expected_max_round_trip_ticks: 15,
@@ -55,6 +61,8 @@ const GPU_HIERARCHY_ROWS: &[GpuHierarchyRow] = &[
         ],
         expected_final_tick: 29,
         expected_cache_runs: 9,
+        expected_cache_immediate_hits: 3,
+        expected_cache_scheduled_misses: 6,
         expected_dram_accesses: 6,
         expected_round_trip_ticks: 144,
         expected_max_round_trip_ticks: 20,
@@ -288,10 +296,43 @@ fn rem6_gpu_run_correlates_queued_cu_coalescing_across_memory_hierarchy_rows() {
             "row {} cache runs",
             row.name
         );
+        let cache_active = row.expected_cache_runs != 0;
+        for (key, expected) in [
+            ("data_cache_msi_runs", u64::from(cache_active) * 9),
+            ("data_cache_cpu_responses", u64::from(cache_active) * 9),
+            ("data_cache_dram_accesses", u64::from(cache_active) * 3),
+            (
+                "data_cache_bank_immediate_hits",
+                row.expected_cache_immediate_hits,
+            ),
+            (
+                "data_cache_bank_scheduled_misses",
+                row.expected_cache_scheduled_misses,
+            ),
+        ] {
+            assert_eq!(
+                artifact["data_cache"][key].as_u64(),
+                Some(expected),
+                "row {} cache field {key}",
+                row.name
+            );
+        }
         assert_eq!(
             artifact["dram"]["accesses"].as_u64(),
             Some(row.expected_dram_accesses),
             "row {} DRAM accesses",
+            row.name
+        );
+        assert_eq!(
+            artifact["dram"]["reads"].as_u64(),
+            Some(row.expected_dram_accesses / 2),
+            "row {} DRAM reads",
+            row.name
+        );
+        assert_eq!(
+            artifact["dram"]["writes"].as_u64(),
+            Some(row.expected_dram_accesses / 2),
+            "row {} DRAM writes",
             row.name
         );
         match row.expected_fabric_transfers {
@@ -315,6 +356,13 @@ fn rem6_gpu_run_correlates_queued_cu_coalescing_across_memory_hierarchy_rows() {
                     "row {} fabric queue delay",
                     row.name
                 );
+                let lanes = artifact["fabric"]["lane_activities"]
+                    .as_array()
+                    .expect("representative fabric lanes");
+                assert_gpu_fabric_lane(lanes, "gpu_mem", 7, 9, 144, 9);
+                assert_gpu_fabric_lane(lanes, "gpu_mem", 8, 9, 99, 9);
+                assert_gpu_fabric_virtual_network_stats(&stdout, lanes, "gpu_mem", 7);
+                assert_gpu_fabric_virtual_network_stats(&stdout, lanes, "gpu_mem", 8);
             }
             None => assert!(
                 artifact["fabric"].is_null(),
