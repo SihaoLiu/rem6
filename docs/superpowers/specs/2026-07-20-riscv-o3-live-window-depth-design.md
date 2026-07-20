@@ -125,12 +125,20 @@ capacity and total-row capacity cannot be confused.
 runtime state in which only one member of the pair is explicit. Their use is
 fixed by owner:
 
+`O3DataAccessWindowPolicy` distinguishes `ScalarMemoryPrefix` from
+`UntranslatedScalarMemoryPrefix`. Data issue selects the untranslated variant
+only when no RISC-V data-translation owner is configured. Translated scalar
+loads retain `ScalarMemoryPrefix` and its four-row behavior. Shared predicate
+helpers treat both variants as scalar-memory policies for memory ordering,
+while only the untranslated variant may consume scalar live depth above four.
+
 | Owner/path | Scalar memory depth | Scalar live depth |
 | --- | --- | --- |
 | `has_scalar_memory_window_capacity` and `stage_live_data_access_issue` | Limits live scalar memory operations to four. | Also prevents total rows from exceeding the scalar live bound. |
 | `can_consider_scalar_memory_younger` and scalar-memory-prefix admission | Limits an additional load/store. | Limits total ROB rows. |
 | `scalar_memory_window_candidate` | Limits the memory-prefix row count. | Limits memory plus scalar rows after the prefix. |
-| `data_access_integer_window` for `ScalarMemoryPrefix` | Supplies existing occupied memory rows. | Supplies the total scalar-row limit up to eight. |
+| `data_access_integer_window` for `UntranslatedScalarMemoryPrefix` | Supplies existing occupied memory rows. | Supplies the total scalar-row limit up to eight. |
+| `data_access_integer_window` for translated `ScalarMemoryPrefix` | Supplies existing occupied memory rows. | Retains the fixed four-row limit. |
 | `stage_o3_data_access_younger_window` | Does not widen memory capacity. | Stages untranslated scalar successors up to the selected total depth. |
 | fixed-FU, translated-load, memory-result, control, and producer-forwarded paths | Existing behavior. | Uses a fixed four-row bound, not the new setting. |
 
@@ -310,7 +318,8 @@ Top-level CLI tests must invoke `env!("CARGO_BIN_EXE_rem6")` and prove:
 - final register and memory witnesses;
 - direct versus cache/fabric/DRAM activity;
 - JSON, text, and `m5_dump_stats` issue counters;
-- rollback, checkpoint, and mode-switch boundaries; and
+- checkpoint and mode-switch boundaries, with focused CPU tests owning
+  retry/failure rollback cleanup; and
 - timing-mode architectural equivalence without O3 surfaces.
 
 Config parsing, range validation, pair resolution, and flag dispatch belong in
