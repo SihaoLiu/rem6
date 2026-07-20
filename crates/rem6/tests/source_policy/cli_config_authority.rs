@@ -184,6 +184,19 @@ fn auxiliary_commands_consume_cli_config_authority() {
         !production_sources.contains(&cli_config_tests_path),
         "src/cli_config/tests.rs must not enter the production helper inventory"
     );
+    let data_cache_runtime_path = crate_dir.join("src/data_cache_runtime.rs");
+    let data_cache_runtime = fs::read_to_string(&data_cache_runtime_path).unwrap();
+    let data_cache_runtime_syntax = parse_rust(&data_cache_runtime, &data_cache_runtime_path);
+    let data_cache_runtime_tests_path = crate_dir.join("src/data_cache_runtime_tests.rs");
+    assert!(
+        test_gated_external_module_paths(&data_cache_runtime_path, &data_cache_runtime_syntax)
+            .contains(&data_cache_runtime_tests_path),
+        "src/data_cache_runtime_tests.rs exclusion must honor its #[path] declaration"
+    );
+    assert!(
+        !production_sources.contains(&data_cache_runtime_tests_path),
+        "src/data_cache_runtime_tests.rs must not enter the production helper inventory"
+    );
     for path in production_sources {
         let source = fs::read_to_string(&path).unwrap();
         let syntax = parse_rust(&source, &path);
@@ -330,10 +343,15 @@ fn synthetic_production_facts_exclude_test_gated_items_and_modules() {
         use crate::cli_config::read_toml_config;
 
         #[cfg(any(test, feature = "synthetic"))]
-        pub(crate) fn required_value() {
+        pub(crate) fn production_reachable() {
             let _ = Rem6CliError::ReadConfig { path, error };
-            let _ = Rem6CliError::ParseConfig { path, error };
             path.is_relative();
+            reachable_call();
+        }
+
+        #[cfg(all(test, feature = "synthetic"))]
+        pub(crate) fn required_value() {
+            let _ = Rem6CliError::ParseConfig { path, error };
             hidden_call();
         }
 
@@ -351,22 +369,47 @@ fn synthetic_production_facts_exclude_test_gated_items_and_modules() {
 
     assert_eq!(
         function_definition_names(&syntax),
-        BTreeSet::from(["production_helper".to_string()])
+        BTreeSet::from([
+            "production_helper".to_string(),
+            "production_reachable".to_string(),
+        ])
     );
     assert_eq!(
         cli_config_imports(&syntax),
         BTreeSet::from(["required_value".to_string()])
     );
     assert!(calls_function(&syntax, "required_value"));
+    assert!(calls_function(&syntax, "reachable_call"));
     assert!(!calls_function(&syntax, "hidden_call"));
     assert!(!has_pub_crate_function(&syntax, "required_value"));
-    assert_eq!(syntax_usage(&syntax), SyntaxUsage::default());
+    assert!(has_pub_crate_function(&syntax, "production_reachable"));
+    assert_eq!(
+        syntax_usage(&syntax),
+        SyntaxUsage {
+            read_config_error: true,
+            parse_config_error: false,
+            is_relative_call: true,
+        }
+    );
 
     let owner = Path::new("/repo/src/cli_config.rs");
-    let module_syntax = syn::parse_file("#[cfg(test)] mod tests;").unwrap();
+    let module_syntax = syn::parse_file(
+        r#"
+        #[cfg(test)]
+        mod tests;
+
+        #[cfg(test)]
+        #[path = "custom_tests.rs"]
+        mod custom_tests;
+        "#,
+    )
+    .unwrap();
     assert_eq!(
         test_gated_external_module_paths(owner, &module_syntax),
-        BTreeSet::from([Path::new("/repo/src/cli_config/tests.rs").to_path_buf()])
+        BTreeSet::from([
+            Path::new("/repo/src/cli_config/tests.rs").to_path_buf(),
+            Path::new("/repo/src/custom_tests.rs").to_path_buf(),
+        ])
     );
 }
 
@@ -490,21 +533,29 @@ fn is_test_gated(attributes: &[Attribute]) -> bool {
             let meta = attribute
                 .parse_args::<Meta>()
                 .unwrap_or_else(|error| panic!("failed to parse cfg attribute: {error}"));
-            cfg_enables_test(&meta)
+            cfg_requires_test(&meta)
         })
 }
 
-fn cfg_enables_test(meta: &Meta) -> bool {
+fn cfg_requires_test(meta: &Meta) -> bool {
     match meta {
         Meta::Path(path) => path.is_ident("test"),
         Meta::List(list) if list.path.is_ident("not") => false,
-        Meta::List(list) => list
-            .parse_args_with(syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated)
-            .unwrap_or_else(|error| panic!("failed to parse nested cfg attribute: {error}"))
-            .iter()
-            .any(cfg_enables_test),
+        Meta::List(list) if list.path.is_ident("all") => {
+            cfg_predicates(list).iter().any(cfg_requires_test)
+        }
+        Meta::List(list) if list.path.is_ident("any") => {
+            let predicates = cfg_predicates(list);
+            !predicates.is_empty() && predicates.iter().all(cfg_requires_test)
+        }
+        Meta::List(_) => false,
         Meta::NameValue(_) => false,
     }
+}
+
+fn cfg_predicates(list: &syn::MetaList) -> syn::punctuated::Punctuated<Meta, syn::Token![,]> {
+    list.parse_args_with(syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated)
+        .unwrap_or_else(|error| panic!("failed to parse nested cfg attribute: {error}"))
 }
 
 fn item_attributes(item: &Item) -> &[Attribute] {
@@ -557,24 +608,46 @@ fn test_gated_external_module_paths(owner: &Path, syntax: &syn::File) -> BTreeSe
                 return None;
             };
             (module.content.is_none() && is_test_gated(&module.attrs))
-                .then(|| external_module_path(owner, &module.ident.to_string()))
+                .then(|| external_module_path(owner, module))
         })
         .collect()
 }
 
-fn external_module_path(owner: &Path, module_name: &str) -> PathBuf {
+fn external_module_path(owner: &Path, module: &syn::ItemMod) -> PathBuf {
     let parent = owner.parent().unwrap_or_else(|| Path::new(""));
+    if let Some(path) = module_path_override(&module.attrs) {
+        return parent.join(path);
+    }
     let module_dir = match owner.file_name().and_then(|name| name.to_str()) {
         Some("lib.rs" | "main.rs" | "mod.rs") => parent.to_path_buf(),
         _ => parent.join(owner.file_stem().unwrap()),
     };
+    let module_name = module.ident.to_string();
     let flat = module_dir.join(format!("{module_name}.rs"));
-    let nested = module_dir.join(module_name).join("mod.rs");
+    let nested = module_dir.join(&module_name).join("mod.rs");
     if flat.is_file() || !nested.is_file() {
         flat
     } else {
         nested
     }
+}
+
+fn module_path_override(attributes: &[Attribute]) -> Option<PathBuf> {
+    attributes
+        .iter()
+        .find(|attribute| attribute.path().is_ident("path"))
+        .map(|attribute| {
+            let Meta::NameValue(path) = &attribute.meta else {
+                panic!("module #[path] must be a name-value attribute");
+            };
+            let Expr::Lit(literal) = &path.value else {
+                panic!("module #[path] must use a string literal");
+            };
+            let Lit::Str(path) = &literal.lit else {
+                panic!("module #[path] must use a string literal");
+            };
+            PathBuf::from(path.value())
+        })
 }
 
 fn production_rust_source_files(root: &Path) -> Vec<PathBuf> {
