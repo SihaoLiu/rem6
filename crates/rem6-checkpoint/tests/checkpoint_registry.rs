@@ -97,9 +97,35 @@ fn checkpoint_manifest_reports_component_chunk_and_payload_totals() {
 
     let summary = manifest.summary();
 
+    let component_chunk_total: usize = summary
+        .component_summaries()
+        .iter()
+        .map(CheckpointComponentSummary::chunk_count)
+        .sum();
+    let component_payload_total: usize = summary
+        .component_summaries()
+        .iter()
+        .map(CheckpointComponentSummary::payload_bytes)
+        .sum();
+
     assert_eq!(summary.component_count(), 2);
     assert_eq!(summary.chunk_count(), 3);
+    assert_eq!(summary.chunk_count(), component_chunk_total);
     assert_eq!(summary.payload_bytes(), 9);
+    assert_eq!(summary.payload_bytes(), component_payload_total);
+    for component_summary in summary.component_summaries() {
+        let chunk_payload_total: usize = component_summary
+            .chunk_summaries()
+            .iter()
+            .map(CheckpointChunkSummary::payload_bytes)
+            .sum();
+
+        assert_eq!(
+            component_summary.chunk_count(),
+            component_summary.chunk_summaries().len()
+        );
+        assert_eq!(component_summary.payload_bytes(), chunk_payload_total);
+    }
     assert_eq!(
         summary.component_summaries(),
         &[

@@ -90,34 +90,16 @@ impl CheckpointChunkSummary {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckpointComponentSummary {
     component: CheckpointComponentId,
-    chunk_count: usize,
-    payload_bytes: usize,
     chunk_summaries: Vec<CheckpointChunkSummary>,
 }
 
 impl CheckpointComponentSummary {
-    pub fn new(component: CheckpointComponentId, chunk_count: usize, payload_bytes: usize) -> Self {
-        Self {
-            component,
-            chunk_count,
-            payload_bytes,
-            chunk_summaries: Vec::new(),
-        }
-    }
-
     pub fn with_chunk_summaries(
         component: CheckpointComponentId,
         chunk_summaries: Vec<CheckpointChunkSummary>,
     ) -> Self {
-        let chunk_count = chunk_summaries.len();
-        let payload_bytes = chunk_summaries
-            .iter()
-            .map(CheckpointChunkSummary::payload_bytes)
-            .sum();
         Self {
             component,
-            chunk_count,
-            payload_bytes,
             chunk_summaries,
         }
     }
@@ -126,12 +108,15 @@ impl CheckpointComponentSummary {
         &self.component
     }
 
-    pub const fn chunk_count(&self) -> usize {
-        self.chunk_count
+    pub fn chunk_count(&self) -> usize {
+        self.chunk_summaries.len()
     }
 
-    pub const fn payload_bytes(&self) -> usize {
-        self.payload_bytes
+    pub fn payload_bytes(&self) -> usize {
+        self.chunk_summaries
+            .iter()
+            .map(CheckpointChunkSummary::payload_bytes)
+            .sum()
     }
 
     pub fn chunk_summaries(&self) -> &[CheckpointChunkSummary] {
@@ -148,24 +133,12 @@ impl CheckpointComponentSummary {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckpointManifestSummary {
     component_summaries: Vec<CheckpointComponentSummary>,
-    chunk_count: usize,
-    payload_bytes: usize,
 }
 
 impl CheckpointManifestSummary {
     pub fn new(component_summaries: Vec<CheckpointComponentSummary>) -> Self {
-        let chunk_count = component_summaries
-            .iter()
-            .map(CheckpointComponentSummary::chunk_count)
-            .sum();
-        let payload_bytes = component_summaries
-            .iter()
-            .map(CheckpointComponentSummary::payload_bytes)
-            .sum();
         Self {
             component_summaries,
-            chunk_count,
-            payload_bytes,
         }
     }
 
@@ -186,12 +159,18 @@ impl CheckpointManifestSummary {
         self.component_summaries.len()
     }
 
-    pub const fn chunk_count(&self) -> usize {
-        self.chunk_count
+    pub fn chunk_count(&self) -> usize {
+        self.component_summaries
+            .iter()
+            .map(CheckpointComponentSummary::chunk_count)
+            .sum()
     }
 
-    pub const fn payload_bytes(&self) -> usize {
-        self.payload_bytes
+    pub fn payload_bytes(&self) -> usize {
+        self.component_summaries
+            .iter()
+            .map(CheckpointComponentSummary::payload_bytes)
+            .sum()
     }
 }
 
