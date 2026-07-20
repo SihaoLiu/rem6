@@ -71,36 +71,7 @@ fn normal_run_power_builder_uses_only_canonical_memory_resources() {
     let power_source = fs::read_to_string(crate_dir.join(POWER_OUTPUT)).unwrap();
     let power_syntax = syn::parse_file(&power_source).unwrap();
     let builder = function_named(&power_syntax, "run_power_analysis_records_from_parts");
-    let parameter_names = builder
-        .sig
-        .inputs
-        .iter()
-        .map(function_parameter_name)
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        parameter_names,
-        vec!["final_tick", "cores", "memory_resources"],
-        "normal-run power assembly must accept only tick, cores, and canonical memory resources"
-    );
-    assert!(
-        builder
-            .sig
-            .inputs
-            .iter()
-            .any(|input| function_parameter_type_mentions(input, "Rem6MemoryResourceSummary")),
-        "normal-run power assembly must receive Rem6MemoryResourceSummary"
-    );
-    for forbidden in ["CliDataCacheSummary", "Rem6DramSummary"] {
-        assert!(
-            builder
-                .sig
-                .inputs
-                .iter()
-                .all(|input| !function_parameter_type_mentions(input, forbidden)),
-            "normal-run power assembly must not receive raw {forbidden} inputs"
-        );
-    }
+    assert_normal_run_power_builder_signature(builder);
 
     let summary_source = fs::read_to_string(crate_dir.join(RUN_EXECUTION_SUMMARY)).unwrap();
     let summary_syntax = syn::parse_file(&summary_source).unwrap();
@@ -111,18 +82,105 @@ fn normal_run_power_builder_uses_only_canonical_memory_resources() {
         1,
         "{RUN_EXECUTION_SUMMARY} must contain exactly one normal-run power builder call"
     );
-    let call = calls.calls[0];
+    assert_normal_run_power_builder_call(calls.calls[0]);
+}
+
+#[test]
+fn normal_run_power_policy_allows_harmless_binding_and_call_renames() {
+    let power_syntax = syn::parse_file(
+        r#"
+            fn run_power_analysis_records_from_parts(
+                tick_count: u64,
+                cpu_summaries: &[crate::Rem6CoreSummary],
+                resources: &crate::Rem6MemoryResourceSummary,
+            ) {}
+        "#,
+    )
+    .unwrap();
+    assert_normal_run_power_builder_signature(function_named(
+        &power_syntax,
+        "run_power_analysis_records_from_parts",
+    ));
+
+    let call_syntax = syn::parse_file(
+        r#"
+            fn build(
+                tick_count: u64,
+                cpu_summaries: &[crate::Rem6CoreSummary],
+                summary: &RunSummary,
+            ) {
+                run_power_analysis_records_from_parts(
+                    tick_count,
+                    cpu_summaries,
+                    &summary.canonical_memory,
+                );
+            }
+        "#,
+    )
+    .unwrap();
+    let mut calls = NamedCallVisitor::new("run_power_analysis_records_from_parts");
+    calls.visit_file(&call_syntax);
+    assert_eq!(
+        calls.calls.len(),
+        1,
+        "renamed fixture must contain one normal-run power builder call"
+    );
+    assert_normal_run_power_builder_call(calls.calls[0]);
+}
+
+#[test]
+fn normal_run_power_policy_type_scan_handles_nested_generics() {
+    let ty = syn::parse_str::<syn::Type>("&Option<Vec<CliDataCacheSummary>>").unwrap();
+
+    assert!(type_mentions(&ty, "CliDataCacheSummary"));
+}
+
+fn assert_normal_run_power_builder_signature(builder: &syn::ItemFn) {
+    assert_eq!(
+        builder.sig.inputs.len(),
+        3,
+        "normal-run power assembly must accept exactly three typed parameters"
+    );
+    let parameter_types = builder
+        .sig
+        .inputs
+        .iter()
+        .map(|input| {
+            let syn::FnArg::Typed(parameter) = input else {
+                panic!("normal-run power assembly parameters must all be typed");
+            };
+            parameter.ty.as_ref()
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        type_is_named_path(parameter_types[0], "u64"),
+        "normal-run power assembly parameter 1 must be the final tick"
+    );
+    assert!(
+        type_is_reference_to_slice_of(parameter_types[1], "Rem6CoreSummary"),
+        "normal-run power assembly parameter 2 must reference a Rem6CoreSummary slice"
+    );
+    assert!(
+        type_is_reference_to_named_path(parameter_types[2], "Rem6MemoryResourceSummary"),
+        "normal-run power assembly parameter 3 must reference Rem6MemoryResourceSummary"
+    );
+    for forbidden in ["CliDataCacheSummary", "Rem6DramSummary"] {
+        assert!(
+            parameter_types
+                .iter()
+                .all(|ty| !type_mentions(ty, forbidden)),
+            "normal-run power assembly must not receive raw {forbidden} inputs"
+        );
+    }
+}
+
+fn assert_normal_run_power_builder_call(call: &syn::ExprCall) {
     assert_eq!(
         call.args.len(),
         3,
         "run execution summary must pass only final_tick, cores, and memory_resources"
     );
-    assert!(expression_is_ident(&call.args[0], "final_tick"));
-    assert!(expression_is_reference_to_ident(&call.args[1], "cores"));
-    assert!(expression_is_reference_to_ident(
-        &call.args[2],
-        "memory_resources"
-    ));
     for forbidden in ["instruction_cache", "data_cache", "dram"] {
         assert!(
             call.args
@@ -193,40 +251,61 @@ fn function_named<'a>(syntax: &'a syn::File, name: &str) -> &'a syn::ItemFn {
         .unwrap_or_else(|| panic!("missing function `{name}`"))
 }
 
-fn function_parameter_name(input: &syn::FnArg) -> String {
-    let syn::FnArg::Typed(parameter) = input else {
-        panic!("normal-run power builder must not have a receiver");
-    };
-    let syn::Pat::Ident(ident) = parameter.pat.as_ref() else {
-        panic!("normal-run power builder parameters must use identifier patterns");
-    };
-    ident.ident.to_string()
+fn transparent_type(ty: &syn::Type) -> &syn::Type {
+    match ty {
+        syn::Type::Group(group) => transparent_type(&group.elem),
+        syn::Type::Paren(paren) => transparent_type(&paren.elem),
+        _ => ty,
+    }
 }
 
-fn function_parameter_type_mentions(input: &syn::FnArg, expected: &str) -> bool {
-    let syn::FnArg::Typed(parameter) = input else {
+fn type_is_named_path(ty: &syn::Type, expected: &str) -> bool {
+    let syn::Type::Path(path) = transparent_type(ty) else {
         return false;
     };
-    type_mentions(parameter.ty.as_ref(), expected)
+    path.qself.is_none()
+        && path
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == expected)
+}
+
+fn type_is_reference_to_slice_of(ty: &syn::Type, expected: &str) -> bool {
+    let syn::Type::Reference(reference) = transparent_type(ty) else {
+        return false;
+    };
+    let syn::Type::Slice(slice) = transparent_type(&reference.elem) else {
+        return false;
+    };
+    type_is_named_path(&slice.elem, expected)
+}
+
+fn type_is_reference_to_named_path(ty: &syn::Type, expected: &str) -> bool {
+    let syn::Type::Reference(reference) = transparent_type(ty) else {
+        return false;
+    };
+    type_is_named_path(&reference.elem, expected)
+}
+
+struct IdentifierVisitor<'a> {
+    expected: &'a str,
+    found: bool,
+}
+
+impl<'ast> Visit<'ast> for IdentifierVisitor<'_> {
+    fn visit_ident(&mut self, ident: &'ast syn::Ident) {
+        self.found |= ident == self.expected;
+    }
 }
 
 fn type_mentions(ty: &syn::Type, expected: &str) -> bool {
-    match ty {
-        syn::Type::Group(group) => type_mentions(&group.elem, expected),
-        syn::Type::Paren(paren) => type_mentions(&paren.elem, expected),
-        syn::Type::Path(path) => path
-            .path
-            .segments
-            .iter()
-            .any(|segment| segment.ident == expected),
-        syn::Type::Reference(reference) => type_mentions(&reference.elem, expected),
-        syn::Type::Slice(slice) => type_mentions(&slice.elem, expected),
-        syn::Type::Tuple(tuple) => tuple
-            .elems
-            .iter()
-            .any(|element| type_mentions(element, expected)),
-        _ => false,
-    }
+    let mut visitor = IdentifierVisitor {
+        expected,
+        found: false,
+    };
+    visitor.visit_type(ty);
+    visitor.found
 }
 
 struct NamedCallVisitor<'ast> {
@@ -259,32 +338,7 @@ impl<'ast> Visit<'ast> for NamedCallVisitor<'ast> {
     }
 }
 
-fn expression_is_ident(expression: &syn::Expr, expected: &str) -> bool {
-    matches!(
-        expression,
-        syn::Expr::Path(path) if path.qself.is_none() && path.path.is_ident(expected)
-    )
-}
-
-fn expression_is_reference_to_ident(expression: &syn::Expr, expected: &str) -> bool {
-    matches!(
-        expression,
-        syn::Expr::Reference(reference) if expression_is_ident(&reference.expr, expected)
-    )
-}
-
 fn expression_mentions_ident(expression: &syn::Expr, expected: &str) -> bool {
-    struct IdentifierVisitor<'a> {
-        expected: &'a str,
-        found: bool,
-    }
-
-    impl<'ast> Visit<'ast> for IdentifierVisitor<'_> {
-        fn visit_ident(&mut self, ident: &'ast syn::Ident) {
-            self.found |= ident == self.expected;
-        }
-    }
-
     let mut visitor = IdentifierVisitor {
         expected,
         found: false,

@@ -113,6 +113,7 @@ pub(crate) struct Rem6DramResourceSummary {
     pub(crate) active_targets: u64,
     pub(crate) active_ports: u64,
     pub(crate) active_banks: u64,
+    pub(crate) profiled_targets: u64,
     pub(crate) accesses: u64,
     pub(crate) reads: u64,
     pub(crate) writes: u64,
@@ -406,6 +407,7 @@ impl Rem6DramResourceSummary {
             active_targets: summary.active_targets,
             active_ports: summary.active_ports,
             active_banks: summary.active_banks,
+            profiled_targets: summary.profiled_targets,
             accesses: summary.accesses,
             reads: summary.reads,
             writes: summary.writes,
@@ -526,5 +528,17 @@ mod tests {
         assert_eq!(resource.low_power_precharge_powerdown_entries, 3);
         assert_eq!(resource.low_power_self_refresh_entries, 5);
         assert_eq!(resource.low_power_exits, 4);
+    }
+
+    #[test]
+    fn dram_resource_preserves_profiled_targets_for_internal_consumers() {
+        let summary = Rem6DramSummary {
+            profiled_targets: 3,
+            ..Rem6DramSummary::default()
+        };
+
+        let resource = Rem6DramResourceSummary::from_dram(&summary);
+
+        assert_eq!(resource.profiled_targets, 3);
     }
 }

@@ -461,6 +461,8 @@ fn cache_resource_summary_is_active(
         || cache.directory_decisions != 0
         || cache.dram_accesses != 0
         || cache.bank_accepted != 0
+        || cache.bank_scheduled_misses != 0
+        || cache.bank_coalesced_misses != 0
         || cache.prefetch_issued != 0
 }
 
@@ -679,7 +681,13 @@ fn dram_resource_power_record(
     dram: &Rem6DramResourceSummary,
     final_tick: u64,
 ) -> Option<PowerAnalysisRecord> {
-    if dram.activity == 0 {
+    if dram.activity == 0
+        && dram.active == 0
+        && dram.active_targets == 0
+        && dram.active_ports == 0
+        && dram.active_banks == 0
+        && dram.profiled_targets == 0
+    {
         return None;
     }
     let low_power_entries = dram

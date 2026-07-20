@@ -19,6 +19,174 @@ fn record_for_target<'a>(
     records.iter().find(|record| record.target() == target)
 }
 
+fn assert_close(actual: f64, expected: f64, label: &str) {
+    assert!(
+        (actual - expected).abs() < 1e-12,
+        "{label}: {actual} != {expected}"
+    );
+}
+
+fn assert_record_values(
+    record: &PowerAnalysisRecord,
+    target: &str,
+    dynamic_watts: f64,
+    static_watts: f64,
+    temperature_c: f64,
+    residency_ticks: u64,
+) {
+    assert_eq!(record.target(), target);
+    assert_close(record.dynamic_watts(), dynamic_watts, "dynamic watts");
+    assert_close(record.static_watts(), static_watts, "static watts");
+    assert_close(record.temperature_c(), temperature_c, "temperature");
+    assert_eq!(record.residency_ticks(PowerStateKind::On), residency_ticks);
+}
+
+#[test]
+fn run_power_emits_profile_only_dram_resource_with_legacy_baseline() {
+    let records = run_records_with_dram(
+        17,
+        Rem6DramResourceSummary {
+            profiled_targets: 2,
+            ..Rem6DramResourceSummary::default()
+        },
+    );
+    let record = record_for_target(&records, "memory.dram")
+        .expect("configured DRAM profile retains a static power record");
+
+    assert_record_values(record, "memory.dram", 0.001, 0.010_500, 38.001, 17);
+}
+
+#[test]
+fn run_power_emits_active_only_dram_resource() {
+    let records = run_records_with_dram(
+        0,
+        Rem6DramResourceSummary {
+            active: 2,
+            active_targets: 2,
+            ..Rem6DramResourceSummary::default()
+        },
+    );
+    let record = record_for_target(&records, "memory.dram")
+        .expect("active DRAM topology retains a static power record");
+
+    assert_record_values(record, "memory.dram", 0.001, 0.010_500, 38.001, 1);
+}
+
+#[test]
+fn run_cache_power_emits_operation_only_resource() {
+    for (name, scheduled_misses, coalesced_misses, expected_dynamic) in [
+        ("scheduled", 2, 0, 0.001_008),
+        ("coalesced", 0, 3, 0.001_012),
+    ] {
+        let mut resources = Rem6MemoryResourceSummary::default();
+        resources.cache_instruction.l1 = Rem6CacheResourceSummary {
+            bank_scheduled_misses: scheduled_misses,
+            bank_coalesced_misses: coalesced_misses,
+            ..Rem6CacheResourceSummary::default()
+        };
+        let records = run_memory_power_records(0, &resources);
+        let record = record_for_target(&records, "cpu.instruction_cache")
+            .unwrap_or_else(|| panic!("{name}-miss-only cache activity must emit a record"));
+
+        assert_record_values(
+            record,
+            "cpu.instruction_cache",
+            expected_dynamic,
+            0.010,
+            39.0 + expected_dynamic,
+            1,
+        );
+    }
+}
+
+#[test]
+fn run_cache_power_preserves_legacy_target_calibrations() {
+    let mut resources = Rem6MemoryResourceSummary::default();
+    resources.cache_instruction.l1 = Rem6CacheResourceSummary {
+        activity: 5,
+        cpu_responses: 1_000,
+        directory_decisions: 2,
+        dram_accesses: 1,
+        bank_accepted: 3,
+        bank_scheduled_misses: 4,
+        bank_coalesced_misses: 5,
+        prefetch_issued: 6,
+        ..Rem6CacheResourceSummary::default()
+    };
+    resources.cache_data.l1 = Rem6CacheResourceSummary {
+        activity: 7,
+        cpu_responses: 2_000,
+        directory_decisions: 1,
+        dram_accesses: 2,
+        bank_accepted: 2,
+        bank_scheduled_misses: 3,
+        bank_coalesced_misses: 4,
+        prefetch_issued: 5,
+        ..Rem6CacheResourceSummary::default()
+    };
+    resources.cache_l2 = Rem6CacheResourceSummary {
+        activity: 4,
+        cpu_responses: 7,
+        directory_decisions: 2,
+        dram_accesses: 2,
+        bank_accepted: 3,
+        bank_scheduled_misses: 5,
+        bank_coalesced_misses: 11,
+        prefetch_issued: 13,
+        ..Rem6CacheResourceSummary::default()
+    };
+    resources.cache_l3 = Rem6CacheResourceSummary {
+        activity: 6,
+        cpu_responses: 17,
+        directory_decisions: 1,
+        dram_accesses: 3,
+        bank_accepted: 2,
+        bank_scheduled_misses: 3,
+        bank_coalesced_misses: 5,
+        prefetch_issued: 7,
+        ..Rem6CacheResourceSummary::default()
+    };
+
+    let records = run_memory_power_records(11, &resources);
+    let instruction_dynamic = 0.001_142;
+    let data_dynamic = 0.001_166;
+    let l2_dynamic = 0.001_207;
+    let l3_dynamic = 0.001_231;
+
+    assert_record_values(
+        record_for_target(&records, "cpu.instruction_cache").unwrap(),
+        "cpu.instruction_cache",
+        instruction_dynamic,
+        0.010,
+        39.0 + instruction_dynamic,
+        11,
+    );
+    assert_record_values(
+        record_for_target(&records, "cpu.data_cache").unwrap(),
+        "cpu.data_cache",
+        data_dynamic,
+        0.012,
+        39.0 + data_dynamic,
+        11,
+    );
+    assert_record_values(
+        record_for_target(&records, "memory.cache.l2").unwrap(),
+        "memory.cache.l2",
+        l2_dynamic,
+        0.016,
+        38.5 + l2_dynamic,
+        11,
+    );
+    assert_record_values(
+        record_for_target(&records, "memory.cache.l3").unwrap(),
+        "memory.cache.l3",
+        l3_dynamic,
+        0.016,
+        38.5 + l3_dynamic,
+        11,
+    );
+}
+
 #[test]
 fn run_power_emits_refresh_only_dram_resource() {
     let dram = Rem6DramResourceSummary {
