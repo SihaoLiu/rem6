@@ -171,10 +171,6 @@ fn host_action_checkpoint_restore_stats_merge_normalized_path_collisions() {
     let mut stats = StatsRegistry::new();
     let summary = Rem6HostActionSummary {
         total_action_count: 2,
-        checkpoint_restored_count: 2,
-        checkpoint_restored_component_count: 2,
-        checkpoint_restored_chunk_count: 2,
-        checkpoint_restored_payload_bytes: 24,
         checkpoint_restores: vec![
             restore_with_component_chunk("cpu-0", "pipe-0", 11, u64::MAX),
             restore_with_component_chunk("cpu_0", "pipe_0", 13, 2),
@@ -302,10 +298,6 @@ fn host_action_checkpoint_restore_stats_count_authority_decode_errors() {
     failed_restore.execution_modes.clear();
     let summary = Rem6HostActionSummary {
         total_action_count: 2,
-        checkpoint_restored_count: 2,
-        checkpoint_restored_component_count: 2,
-        checkpoint_restored_chunk_count: 2,
-        checkpoint_restored_payload_bytes: 64,
         checkpoint_restores: vec![decoded_restore, failed_restore],
         ..Rem6HostActionSummary::default()
     };
@@ -474,9 +466,6 @@ fn restore_with_component_chunk(
         source: 0,
         label: format!("restore-{component}-{chunk}"),
         manifest_tick: 0,
-        component_count: 1,
-        chunk_count: 1,
-        payload_bytes,
         execution_mode_authority_present: false,
         execution_mode_authority_cleared: false,
         execution_mode_authority_decode_error: false,
@@ -486,8 +475,6 @@ fn restore_with_component_chunk(
         }],
         components: vec![Rem6HostCheckpointComponentSummary {
             component: component.to_string(),
-            chunk_count: 1,
-            payload_bytes,
             chunks: vec![Rem6HostCheckpointChunkSummary {
                 name: chunk.to_string(),
                 payload_bytes,
@@ -517,9 +504,6 @@ fn switch_with_transfer_component_chunk(
         state_transfer: Some(Rem6ExecutionModeStateTransferSummary {
             manifest_label: format!("switch-{component}-{chunk}"),
             manifest_tick: 0,
-            component_count: 1,
-            chunk_count: 1,
-            payload_bytes,
             restorable: true,
             live_data_handoff: false,
             writeback_width: None,
@@ -535,8 +519,6 @@ fn switch_with_transfer_component_chunk(
             },
             components: vec![Rem6HostCheckpointComponentSummary {
                 component: component.to_string(),
-                chunk_count: 1,
-                payload_bytes,
                 chunks: vec![Rem6HostCheckpointChunkSummary {
                     name: chunk.to_string(),
                     payload_bytes,
@@ -562,9 +544,6 @@ fn switch_with_colliding_latest_transfer() -> Rem6HostExecutionModeSwitchSummary
         state_transfer: Some(Rem6ExecutionModeStateTransferSummary {
             manifest_label: "switch-colliding-latest".to_string(),
             manifest_tick: 0,
-            component_count: 2,
-            chunk_count: 2,
-            payload_bytes: 24,
             restorable: true,
             live_data_handoff: false,
             writeback_width: None,
@@ -583,8 +562,6 @@ fn switch_with_colliding_latest_transfer() -> Rem6HostExecutionModeSwitchSummary
                 .map(|(component, chunk, payload_bytes, payload_checksum)| {
                     Rem6HostCheckpointComponentSummary {
                         component: component.to_string(),
-                        chunk_count: 1,
-                        payload_bytes,
                         chunks: vec![Rem6HostCheckpointChunkSummary {
                             name: chunk.to_string(),
                             payload_bytes,
@@ -612,9 +589,6 @@ fn switch_with_uncaptured_quiescence(target: &str) -> Rem6HostExecutionModeSwitc
         state_transfer: Some(Rem6ExecutionModeStateTransferSummary {
             manifest_label: format!("switch-{target}-uncaptured"),
             manifest_tick: 0,
-            component_count: 0,
-            chunk_count: 0,
-            payload_bytes: 0,
             restorable: true,
             live_data_handoff: false,
             writeback_width: None,

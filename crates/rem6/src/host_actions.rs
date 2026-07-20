@@ -1,7 +1,12 @@
 mod live_data_handoff;
 mod o3_checkpoint_decode;
 mod o3_stats_dump_aliases;
+mod summary_totals;
 pub(crate) mod transfer_stats;
+
+#[cfg(test)]
+#[path = "host_actions/summary_projection_tests.rs"]
+mod summary_projection_tests;
 
 use rem6_stats::{StatDumpRecord, StatSample, StatsResetRecord};
 use rem6_system::{
@@ -28,10 +33,6 @@ pub(crate) struct Rem6HostActionSummary {
     pub(crate) stats_dumps: Vec<Rem6HostStatsDumpSummary>,
     pub(crate) checkpoints: Vec<Rem6HostCheckpointSummary>,
     pub(crate) checkpoint_restores: Vec<Rem6HostCheckpointSummary>,
-    pub(crate) checkpoint_restored_count: u64,
-    pub(crate) checkpoint_restored_component_count: u64,
-    pub(crate) checkpoint_restored_chunk_count: u64,
-    pub(crate) checkpoint_restored_payload_bytes: u64,
     pub(crate) execution_modes: Vec<Rem6HostExecutionModeSummary>,
     pub(crate) execution_mode_switch_count: u64,
     pub(crate) execution_mode_switches: Vec<Rem6HostExecutionModeSwitchSummary>,
@@ -150,18 +151,15 @@ impl Rem6HostActionSummary {
                     source,
                     manifest,
                 } => {
-                    let restored = checkpoint_summary_from_manifest(
-                        *tick,
-                        event.get(),
-                        source.get(),
-                        manifest,
-                        true,
-                    );
-                    summary.checkpoint_restored_count += 1;
-                    summary.checkpoint_restored_component_count += restored.component_count;
-                    summary.checkpoint_restored_chunk_count += restored.chunk_count;
-                    summary.checkpoint_restored_payload_bytes += restored.payload_bytes;
-                    summary.checkpoint_restores.push(restored);
+                    summary
+                        .checkpoint_restores
+                        .push(checkpoint_summary_from_manifest(
+                            *tick,
+                            event.get(),
+                            source.get(),
+                            manifest,
+                            true,
+                        ));
                 }
                 SystemActionOutcome::ExecutionModeSwitched {
                     tick,
@@ -212,7 +210,6 @@ fn checkpoint_summary_from_manifest(
     manifest: &rem6_checkpoint::CheckpointManifest,
     is_restore: bool,
 ) -> Rem6HostCheckpointSummary {
-    let manifest_summary = manifest.summary();
     let (execution_mode_authority_present, execution_mode_authority_decode_error, execution_modes) =
         execution_mode_authority_from_manifest(manifest);
     let components = manifest
@@ -226,9 +223,6 @@ fn checkpoint_summary_from_manifest(
         source,
         label: manifest.label().to_string(),
         manifest_tick: manifest.tick(),
-        component_count: manifest_summary.component_count() as u64,
-        chunk_count: manifest_summary.chunk_count() as u64,
-        payload_bytes: manifest_summary.payload_bytes() as u64,
         execution_mode_authority_present,
         execution_mode_authority_cleared: is_restore
             && !execution_mode_authority_present
@@ -282,9 +276,6 @@ pub(crate) struct Rem6HostExecutionModeSummary {
 pub(crate) struct Rem6ExecutionModeStateTransferSummary {
     pub(crate) manifest_label: String,
     pub(crate) manifest_tick: u64,
-    pub(crate) component_count: u64,
-    pub(crate) chunk_count: u64,
-    pub(crate) payload_bytes: u64,
     pub(crate) restorable: bool,
     pub(crate) live_data_handoff: bool,
     pub(crate) writeback_width: Option<u64>,
@@ -321,9 +312,6 @@ impl Rem6ExecutionModeStateTransferSummary {
         Self {
             manifest_label: transfer.manifest_label().to_string(),
             manifest_tick: transfer.manifest_tick(),
-            component_count: transfer.component_count(),
-            chunk_count: transfer.chunk_count(),
-            payload_bytes: transfer.payload_bytes(),
             restorable: transfer.restorable(),
             live_data_handoff: transfer.live_data_handoff(),
             writeback_width: o3_writeback
@@ -622,9 +610,6 @@ pub(crate) struct Rem6HostCheckpointSummary {
     pub(crate) source: u32,
     pub(crate) label: String,
     pub(crate) manifest_tick: u64,
-    pub(crate) component_count: u64,
-    pub(crate) chunk_count: u64,
-    pub(crate) payload_bytes: u64,
     pub(crate) execution_mode_authority_present: bool,
     pub(crate) execution_mode_authority_cleared: bool,
     pub(crate) execution_mode_authority_decode_error: bool,
@@ -635,8 +620,6 @@ pub(crate) struct Rem6HostCheckpointSummary {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Rem6HostCheckpointComponentSummary {
     pub(crate) component: String,
-    pub(crate) chunk_count: u64,
-    pub(crate) payload_bytes: u64,
     pub(crate) chunks: Vec<Rem6HostCheckpointChunkSummary>,
 }
 
@@ -657,11 +640,8 @@ impl Rem6HostCheckpointComponentSummary {
             })
             .collect::<Vec<_>>();
         chunks.sort_by(|left, right| left.name.cmp(&right.name));
-        let payload_bytes = chunks.iter().map(|chunk| chunk.payload_bytes).sum();
         Self {
             component: state.component().as_str().to_string(),
-            chunk_count: chunks.len() as u64,
-            payload_bytes,
             chunks,
         }
     }
@@ -671,8 +651,6 @@ impl Rem6HostCheckpointComponentSummary {
     ) -> Self {
         Self {
             component: component.component().to_string(),
-            chunk_count: component.chunk_count(),
-            payload_bytes: component.payload_bytes(),
             chunks: component
                 .chunks()
                 .iter()

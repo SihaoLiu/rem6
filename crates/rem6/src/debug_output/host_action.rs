@@ -680,9 +680,9 @@ fn checkpoint_record(action: &Rem6HostCheckpointSummary) -> Rem6HostActionTraceR
         vec![
             field_string("label", action.label.as_str()),
             field_u64("manifest_tick", action.manifest_tick),
-            field_u64("component_count", action.component_count),
-            field_u64("chunk_count", action.chunk_count),
-            field_u64("payload_bytes", action.payload_bytes),
+            field_u64("component_count", action.component_count()),
+            field_u64("chunk_count", action.chunk_count()),
+            field_u64("payload_bytes", action.payload_bytes()),
         ],
     )
 }
@@ -691,9 +691,9 @@ fn checkpoint_restore_record(action: &Rem6HostCheckpointSummary) -> Rem6HostActi
     let fields = vec![
         field_string("label", action.label.as_str()),
         field_u64("manifest_tick", action.manifest_tick),
-        field_u64("component_count", action.component_count),
-        field_u64("chunk_count", action.chunk_count),
-        field_u64("payload_bytes", action.payload_bytes),
+        field_u64("component_count", action.component_count()),
+        field_u64("chunk_count", action.chunk_count()),
+        field_u64("payload_bytes", action.payload_bytes()),
         field_json(
             "execution_mode_authority",
             checkpoint_restore_authority_json(action),
@@ -799,9 +799,9 @@ fn execution_mode_switch_record(
     }
     if let Some(transfer) = &action.state_transfer {
         fields.extend([
-            field_u64("state_transfer_components", transfer.component_count),
-            field_u64("state_transfer_chunks", transfer.chunk_count),
-            field_u64("state_transfer_payload_bytes", transfer.payload_bytes),
+            field_u64("state_transfer_components", transfer.component_count()),
+            field_u64("state_transfer_chunks", transfer.chunk_count()),
+            field_u64("state_transfer_payload_bytes", transfer.payload_bytes()),
             field_json("state_transfer", state_transfer_json(transfer)),
         ]);
         if let Some(checker) = transfer.quiescence_gate.checker {
@@ -830,9 +830,9 @@ fn state_transfer_json(transfer: &Rem6ExecutionModeStateTransferSummary) -> Stri
         "{{\"captured\":true,\"manifest_label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{},\"restorable\":{},\"live_data_handoff\":{},\"writeback_width\":{},\"reserved_future_completions\":{},\"earliest_unpublished_writeback_tick\":{},\"quiescence_gate\":{},\"components\":{}}}",
         json_escape(&transfer.manifest_label),
         transfer.manifest_tick,
-        transfer.component_count,
-        transfer.chunk_count,
-        transfer.payload_bytes,
+        transfer.component_count(),
+        transfer.chunk_count(),
+        transfer.payload_bytes(),
         transfer.restorable,
         transfer.live_data_handoff,
         writeback_width,
@@ -942,6 +942,21 @@ mod tests {
                 "Tick",
                 29,
             ),
+            (
+                "execution_mode_switch.state_transfer.target.cpu0.components",
+                "Count",
+                1,
+            ),
+            (
+                "execution_mode_switch.state_transfer.target.cpu0.chunks",
+                "Count",
+                1,
+            ),
+            (
+                "execution_mode_switch.state_transfer.target.cpu0.payload_bytes",
+                "Byte",
+                1,
+            ),
         ] {
             let stat = stats
                 .iter()
@@ -1012,9 +1027,6 @@ mod tests {
             source: 0,
             label: format!("restore-{target}"),
             manifest_tick: 0,
-            component_count: 1,
-            chunk_count: 1,
-            payload_bytes: 1,
             execution_mode_authority_present: true,
             execution_mode_authority_cleared: false,
             execution_mode_authority_decode_error: false,
@@ -1024,8 +1036,6 @@ mod tests {
             }],
             components: vec![Rem6HostCheckpointComponentSummary {
                 component: target.to_string(),
-                chunk_count: 1,
-                payload_bytes: 1,
                 chunks: vec![Rem6HostCheckpointChunkSummary {
                     name: "state".to_string(),
                     payload_bytes: 1,
@@ -1056,9 +1066,6 @@ mod tests {
             state_transfer: Some(Rem6ExecutionModeStateTransferSummary {
                 manifest_label: "switch-cpu0-29".to_string(),
                 manifest_tick: 29,
-                component_count: 1,
-                chunk_count: 1,
-                payload_bytes: 1,
                 restorable: false,
                 live_data_handoff: true,
                 writeback_width,
@@ -1072,7 +1079,16 @@ mod tests {
                     captured_payload_bytes: 1,
                     checker: None,
                 },
-                components: Vec::new(),
+                components: vec![Rem6HostCheckpointComponentSummary {
+                    component: "cpu0".to_string(),
+                    chunks: vec![Rem6HostCheckpointChunkSummary {
+                        name: "state".to_string(),
+                        payload_bytes: 1,
+                        payload_checksum: 1,
+                        o3_runtime: None,
+                        o3_live_data_handoff: None,
+                    }],
+                }],
             }),
         }
     }

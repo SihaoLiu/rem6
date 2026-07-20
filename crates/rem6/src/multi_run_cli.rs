@@ -461,25 +461,25 @@ impl Rem6MultiRunCheckpointTotals {
     fn from_run_host_actions(host_actions: &Rem6HostActionSummary) -> Self {
         Self {
             checkpoints: host_actions.checkpoints.len() as u64,
-            checkpoint_restores: host_actions.checkpoint_restored_count,
+            checkpoint_restores: host_actions.checkpoint_restored_count(),
             components: host_actions
                 .checkpoints
                 .iter()
-                .map(|checkpoint| checkpoint.component_count)
+                .map(|checkpoint| checkpoint.component_count())
                 .sum(),
             chunks: host_actions
                 .checkpoints
                 .iter()
-                .map(|checkpoint| checkpoint.chunk_count)
+                .map(|checkpoint| checkpoint.chunk_count())
                 .sum(),
             payload_bytes: host_actions
                 .checkpoints
                 .iter()
-                .map(|checkpoint| checkpoint.payload_bytes)
+                .map(|checkpoint| checkpoint.payload_bytes())
                 .sum(),
-            restored_components: host_actions.checkpoint_restored_component_count,
-            restored_chunks: host_actions.checkpoint_restored_chunk_count,
-            restored_payload_bytes: host_actions.checkpoint_restored_payload_bytes,
+            restored_components: host_actions.checkpoint_restored_component_count(),
+            restored_chunks: host_actions.checkpoint_restored_chunk_count(),
+            restored_payload_bytes: host_actions.checkpoint_restored_payload_bytes(),
         }
     }
 

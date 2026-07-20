@@ -76,7 +76,7 @@ impl Rem6O3CheckpointRestoreScope {
             latest_label: summary.label.clone(),
             latest_tick: summary.tick,
             latest_manifest_tick: summary.manifest_tick,
-            latest_payload_bytes: summary.payload_bytes,
+            latest_payload_bytes: summary.payload_bytes(),
             execution_mode_authority_present_manifests: summaries
                 .iter()
                 .filter(|summary| summary.execution_mode_authority_present)
@@ -118,8 +118,8 @@ impl Rem6O3CheckpointRestoreScope {
 impl Rem6O3CheckpointRestoreComponentTotals {
     fn add_component(&mut self, component: &Rem6HostCheckpointComponentSummary) {
         self.components = self.components.saturating_add(1);
-        self.chunks = self.chunks.saturating_add(component.chunk_count);
-        self.payload_bytes = self.payload_bytes.saturating_add(component.payload_bytes);
+        self.chunks = self.chunks.saturating_add(component.chunk_count());
+        self.payload_bytes = self.payload_bytes.saturating_add(component.payload_bytes());
     }
 
     fn merge_max(&mut self, other: Self) {
@@ -643,17 +643,12 @@ mod tests {
             source: 0,
             label: label.to_string(),
             manifest_tick: 13,
-            component_count: 1,
-            chunk_count: 1,
-            payload_bytes: 8,
             execution_mode_authority_present,
             execution_mode_authority_cleared,
             execution_mode_authority_decode_error: false,
             execution_modes,
             components: vec![Rem6HostCheckpointComponentSummary {
                 component: "cpu0".to_string(),
-                chunk_count: 1,
-                payload_bytes: 8,
                 chunks: vec![Rem6HostCheckpointChunkSummary {
                     name: "o3-runtime-state".to_string(),
                     payload_bytes: 8,

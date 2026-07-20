@@ -2,6 +2,8 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "source_policy/checkpoint_total_authority.rs"]
+mod checkpoint_total_authority;
 #[path = "source_policy/coroutine_ownership.rs"]
 mod coroutine_ownership;
 #[path = "source_policy/data_cache_protocol_authority.rs"]
@@ -28,6 +30,11 @@ mod producer_forwarded_return_ownership;
 mod stats_compat_ownership;
 #[path = "source_policy/writeback_ownership.rs"]
 mod writeback_ownership;
+
+#[test]
+fn checkpoint_output_summaries_derive_hierarchy_totals_from_projections() {
+    checkpoint_total_authority::checkpoint_output_summaries_derive_hierarchy_totals_from_projections();
+}
 
 const MAX_FACADE_LINES: usize = 1250;
 const MAX_RUN_FAILURE_DIAGNOSTICS_LINES: usize = 400;

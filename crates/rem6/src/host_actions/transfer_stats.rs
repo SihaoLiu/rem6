@@ -55,8 +55,8 @@ impl HostActionComponentStats {
         add_transfer(
             self.components.entry(component_path.clone()).or_default(),
             1,
-            component.chunk_count,
-            component.payload_bytes,
+            component.chunk_count(),
+            component.payload_bytes(),
         );
         for chunk in &component.chunks {
             let chunk_path = stat_path_segment(&chunk.name);
@@ -89,8 +89,8 @@ impl HostActionTargetStats {
             add_transfer(
                 self.transfers.entry(component_path.clone()).or_default(),
                 1,
-                component.chunk_count,
-                component.payload_bytes,
+                component.chunk_count(),
+                component.payload_bytes(),
             );
             self.add_component(
                 component_path.clone(),
@@ -109,9 +109,9 @@ impl HostActionTargetStats {
     ) {
         add_transfer(
             self.transfers.entry(target.clone()).or_default(),
-            transfer.component_count,
-            transfer.chunk_count,
-            transfer.payload_bytes,
+            transfer.component_count(),
+            transfer.chunk_count(),
+            transfer.payload_bytes(),
         );
         for component in &transfer.components {
             self.add_component(
@@ -135,8 +135,8 @@ impl HostActionTargetStats {
                 .entry((target.clone(), component_path.clone()))
                 .or_default(),
             1,
-            component.chunk_count,
-            component.payload_bytes,
+            component.chunk_count(),
+            component.payload_bytes(),
         );
         for chunk in &component.chunks {
             let chunk_path = stat_path_segment(&chunk.name);

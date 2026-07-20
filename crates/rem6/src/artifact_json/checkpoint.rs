@@ -25,9 +25,9 @@ impl Rem6HostCheckpointSummary {
             self.source,
             json_escape(&self.label),
             self.manifest_tick,
-            self.component_count,
-            self.chunk_count,
-            self.payload_bytes,
+            self.component_count(),
+            self.chunk_count(),
+            self.payload_bytes(),
             self.execution_mode_authority_present,
             self.execution_mode_authority_cleared,
             self.execution_mode_authority_decode_error,
@@ -48,8 +48,8 @@ impl Rem6HostCheckpointComponentSummary {
         format!(
             "{{\"component\":\"{}\",\"chunk_count\":{},\"payload_bytes\":{},\"chunks\":[{}]}}",
             json_escape(&self.component),
-            self.chunk_count,
-            self.payload_bytes,
+            self.chunk_count(),
+            self.payload_bytes(),
             chunks,
         )
     }

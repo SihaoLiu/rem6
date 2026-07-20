@@ -846,7 +846,7 @@ impl Rem6CoreSummary {
                 .map(|restore| restore.manifest_tick.to_string())
                 .unwrap_or_else(|| "null".to_string());
             let checkpoint_restore_payload_bytes = checkpoint_restore_summary
-                .map(|restore| restore.payload_bytes.to_string())
+                .map(|restore| restore.payload_bytes().to_string())
                 .unwrap_or_else(|| "null".to_string());
             let fu_latency_classes = o3_runtime_fu_latency_class_json(self);
             let lsq_data_latency = o3_runtime_lsq_data_latency_json(self);

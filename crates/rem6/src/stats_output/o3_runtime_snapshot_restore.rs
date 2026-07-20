@@ -185,9 +185,9 @@ pub(super) fn emit_o3_runtime_checkpoint_restore_stats(
         ("count", "Count", 1),
         ("tick", "Tick", restore.tick),
         ("manifest_tick", "Tick", restore.manifest_tick),
-        ("component_count", "Count", restore.component_count),
-        ("chunk_count", "Count", restore.chunk_count),
-        ("payload_bytes", "Byte", restore.payload_bytes),
+        ("component_count", "Count", restore.component_count()),
+        ("chunk_count", "Count", restore.chunk_count()),
+        ("payload_bytes", "Byte", restore.payload_bytes()),
     ] {
         increment_stat(
             stats,
@@ -289,30 +289,32 @@ pub(super) fn emit_o3_runtime_checkpoint_restore_stats(
         let component_path = stat_path_segment(&component.component);
         let component_entry = component_stats.entry(component_path.clone()).or_default();
         component_entry.components = component_entry.components.saturating_add(1);
-        component_entry.chunks = component_entry.chunks.saturating_add(component.chunk_count);
+        component_entry.chunks = component_entry
+            .chunks
+            .saturating_add(component.chunk_count());
         component_entry.payload_bytes = component_entry
             .payload_bytes
-            .saturating_add(component.payload_bytes);
+            .saturating_add(component.payload_bytes());
         let is_target_component = restore_targets
             .iter()
             .any(|target| target.as_str() == component_path.as_str());
         if is_target_component {
             let target_entry = target_stats.entry(component_path.clone()).or_default();
             target_entry.components = target_entry.components.saturating_add(1);
-            target_entry.chunks = target_entry.chunks.saturating_add(component.chunk_count);
+            target_entry.chunks = target_entry.chunks.saturating_add(component.chunk_count());
             target_entry.payload_bytes = target_entry
                 .payload_bytes
-                .saturating_add(component.payload_bytes);
+                .saturating_add(component.payload_bytes());
             let target_component_entry = target_component_stats
                 .entry((component_path.clone(), component_path.clone()))
                 .or_default();
             target_component_entry.components = target_component_entry.components.saturating_add(1);
             target_component_entry.chunks = target_component_entry
                 .chunks
-                .saturating_add(component.chunk_count);
+                .saturating_add(component.chunk_count());
             target_component_entry.payload_bytes = target_component_entry
                 .payload_bytes
-                .saturating_add(component.payload_bytes);
+                .saturating_add(component.payload_bytes());
         }
         for chunk in &component.chunks {
             let chunk_path = stat_path_segment(&chunk.name);

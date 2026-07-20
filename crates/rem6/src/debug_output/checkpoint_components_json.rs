@@ -24,8 +24,8 @@ fn component_to_json(component: &Rem6HostCheckpointComponentSummary) -> String {
     format!(
         "{{\"component\":\"{}\",\"chunk_count\":{},\"payload_bytes\":{},\"chunks\":[{}]}}",
         json_escape(&component.component),
-        component.chunk_count,
-        component.payload_bytes,
+        component.chunk_count(),
+        component.payload_bytes(),
         chunks,
     )
 }

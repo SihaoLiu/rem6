@@ -149,9 +149,9 @@ pub(super) fn emit_run_host_action_stats(
         };
         let target_path = stat_path_segment(&switch.target);
         switch_state_transfer_count += 1;
-        switch_state_transfer_components += transfer.component_count;
-        switch_state_transfer_chunks += transfer.chunk_count;
-        switch_state_transfer_payload_bytes += transfer.payload_bytes;
+        switch_state_transfer_components += transfer.component_count();
+        switch_state_transfer_chunks += transfer.chunk_count();
+        switch_state_transfer_payload_bytes += transfer.payload_bytes();
         if transfer.restorable {
             switch_state_transfer_restorable += 1;
         } else {
@@ -207,14 +207,14 @@ pub(super) fn emit_run_host_action_stats(
         ("stats_resets", summary.stats_resets.len() as u64),
         ("stats_dumps", summary.stats_dumps.len() as u64),
         ("checkpoints", summary.checkpoints.len() as u64),
-        ("checkpoint_restores", summary.checkpoint_restored_count),
+        ("checkpoint_restores", summary.checkpoint_restored_count()),
         (
             "checkpoint_restored_components",
-            summary.checkpoint_restored_component_count,
+            summary.checkpoint_restored_component_count(),
         ),
         (
             "checkpoint_restored_chunks",
-            summary.checkpoint_restored_chunk_count,
+            summary.checkpoint_restored_chunk_count(),
         ),
         (
             "checkpoint_restore.execution_mode_authority.manifests",
@@ -330,10 +330,10 @@ pub(super) fn emit_run_host_action_stats(
             (
                 "latest_component_count",
                 "Count",
-                checkpoint.component_count,
+                checkpoint.component_count(),
             ),
-            ("latest_chunk_count", "Count", checkpoint.chunk_count),
-            ("latest_payload_bytes", "Byte", checkpoint.payload_bytes),
+            ("latest_chunk_count", "Count", checkpoint.chunk_count()),
+            ("latest_payload_bytes", "Byte", checkpoint.payload_bytes()),
         ] {
             increment_stat(
                 stats,
@@ -401,9 +401,9 @@ pub(super) fn emit_run_host_action_stats(
         for (name, unit, value) in [
             ("latest_tick", "Tick", restore.tick),
             ("latest_manifest_tick", "Tick", restore.manifest_tick),
-            ("latest_component_count", "Count", restore.component_count),
-            ("latest_chunk_count", "Count", restore.chunk_count),
-            ("latest_payload_bytes", "Byte", restore.payload_bytes),
+            ("latest_component_count", "Count", restore.component_count()),
+            ("latest_chunk_count", "Count", restore.chunk_count()),
+            ("latest_payload_bytes", "Byte", restore.payload_bytes()),
         ] {
             increment_stat(
                 stats,
@@ -616,9 +616,13 @@ pub(super) fn emit_run_host_action_stats(
     {
         for (name, unit, value) in [
             ("latest_manifest_tick", "Tick", transfer.manifest_tick),
-            ("latest_component_count", "Count", transfer.component_count),
-            ("latest_chunk_count", "Count", transfer.chunk_count),
-            ("latest_payload_bytes", "Byte", transfer.payload_bytes),
+            (
+                "latest_component_count",
+                "Count",
+                transfer.component_count(),
+            ),
+            ("latest_chunk_count", "Count", transfer.chunk_count()),
+            ("latest_payload_bytes", "Byte", transfer.payload_bytes()),
             ("latest_restorable", "Count", u64::from(transfer.restorable)),
             (
                 "latest_live_data_handoff",
@@ -691,7 +695,7 @@ pub(super) fn emit_run_host_action_stats(
                     "components",
                     "Count",
                     if is_latest {
-                        transfer.component_count
+                        transfer.component_count()
                     } else {
                         0
                     },
@@ -699,12 +703,16 @@ pub(super) fn emit_run_host_action_stats(
                 (
                     "chunks",
                     "Count",
-                    if is_latest { transfer.chunk_count } else { 0 },
+                    if is_latest { transfer.chunk_count() } else { 0 },
                 ),
                 (
                     "payload_bytes",
                     "Byte",
-                    if is_latest { transfer.payload_bytes } else { 0 },
+                    if is_latest {
+                        transfer.payload_bytes()
+                    } else {
+                        0
+                    },
                 ),
             ] {
                 increment_stat(
@@ -986,7 +994,7 @@ pub(super) fn emit_run_host_action_stats(
         "sim.host_actions.checkpoint_restored_payload_bytes",
         "Byte",
         StatResetPolicy::Monotonic,
-        summary.checkpoint_restored_payload_bytes,
+        summary.checkpoint_restored_payload_bytes(),
     )?;
     increment_stat(
         stats,
