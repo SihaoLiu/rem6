@@ -84,6 +84,18 @@ fn run_power_emits_low_power_only_dram_resource() {
             exit_latency_ticks: 13,
             expected_residency: 19,
         },
+        LowPowerCase {
+            name: "exit-latency-residency",
+            active_powerdown_entries: 1,
+            active_powerdown_ticks: 7,
+            precharge_powerdown_entries: 2,
+            precharge_powerdown_ticks: 9,
+            self_refresh_entries: 1,
+            self_refresh_ticks: 11,
+            exits: 6,
+            exit_latency_ticks: 23,
+            expected_residency: 23,
+        },
     ];
     let mut failures = Vec::new();
 
