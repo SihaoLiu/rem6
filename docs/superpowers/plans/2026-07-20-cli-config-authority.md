@@ -38,7 +38,7 @@
 - Modify: `crates/rem6/tests/source_policy.rs`
 - Create: `crates/rem6/tests/source_policy/cli_config_authority.rs`
 
-- [ ] **Step 1: Add the failing core source-policy row**
+- [x] **Step 1: Add the failing core source-policy row**
 
 Register the focused module in `crates/rem6/tests/source_policy.rs`:
 
@@ -87,7 +87,7 @@ fn core_cli_config_mechanics_have_one_authority() {
 
 Set a focused `cli_config.rs` source budget of 500 lines in the policy module.
 
-- [ ] **Step 2: Run the policy test and observe RED**
+- [x] **Step 2: Run the policy test and observe RED**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy cli_config_authority::core_cli_config_mechanics_have_one_authority -- --exact
@@ -96,7 +96,7 @@ TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy cli_config_author
 Expected: FAIL because `cli_config.rs` does not exist and `config/file_scan.rs`
 still owns the scanner.
 
-- [ ] **Step 3: Add failing core scanner and helper unit tests**
+- [x] **Step 3: Add failing core scanner and helper unit tests**
 
 Create `cli_config.rs` with imports, type declarations, and a `#[cfg(test)]`
 module first. Add tests for:
@@ -164,7 +164,7 @@ fn required_value_and_path_resolution_preserve_existing_contracts() {
 Also add one temporary-directory test using a local `Deserialize` fixture that
 proves `read_toml_config` success plus `ReadConfig` and `ParseConfig` variants.
 
-- [ ] **Step 4: Run the focused unit tests and observe RED**
+- [x] **Step 4: Run the focused unit tests and observe RED**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6 cli_config::tests -- --nocapture
@@ -173,7 +173,7 @@ TMPDIR=$PWD/target/tmp cargo test -p rem6 cli_config::tests -- --nocapture
 Expected: compile failure or failing tests because the shared implementations
 are not present yet.
 
-- [ ] **Step 5: Implement the shared primitives and core profiles**
+- [x] **Step 5: Implement the shared primitives and core profiles**
 
 Implement private scanner machinery:
 
@@ -256,7 +256,7 @@ pub(crate) fn trace_replay_file_config_from_args(
 Implement `read_toml_config`, `required_value`, and `resolve_config_path`
 exactly as specified in the design.
 
-- [ ] **Step 6: Migrate the core config family**
+- [x] **Step 6: Migrate the core config family**
 
 1. Add `mod cli_config;` in `lib.rs`.
 2. Delete `config/file_scan.rs` and its module declaration/import.
@@ -277,7 +277,7 @@ pub(super) use crate::cli_config::required_value;
 8. Import `trace_replay_file_config_from_args` directly in
    `config/trace_replay.rs`.
 
-- [ ] **Step 7: Run core GREEN verification**
+- [x] **Step 7: Run core GREEN verification**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo fmt --all -- --check
@@ -293,7 +293,7 @@ git diff --check
 Expected: all tests PASS, `config.rs` has meaningful line headroom, and no
 auxiliary command behavior has changed yet.
 
-- [ ] **Step 8: Commit the core authority slice**
+- [x] **Step 8: Commit the core authority slice**
 
 ```bash
 git add crates/rem6/src/cli_config.rs crates/rem6/src/lib.rs crates/rem6/src/config.rs crates/rem6/src/config/trace_replay.rs crates/rem6/src/config/parse.rs crates/rem6/src/config/file_scan.rs crates/rem6/tests/source_policy.rs crates/rem6/tests/source_policy/cli_config_authority.rs
@@ -312,7 +312,7 @@ TMPDIR=$PWD/target/tmp git commit -m "refactor: centralize core cli config mecha
 - Modify: `crates/rem6/src/power_import_cli.rs`
 - Modify: `crates/rem6/tests/source_policy/cli_config_authority.rs`
 
-- [ ] **Step 1: Add the failing auxiliary source-policy row**
+- [x] **Step 1: Add the failing auxiliary source-policy row**
 
 Add:
 
@@ -354,7 +354,7 @@ Also scan every production Rust file and assert that only `cli_config.rs`
 defines `fn config_path_from_args`, `fn required_value`, or
 `fn resolve_config_path`.
 
-- [ ] **Step 2: Run the auxiliary policy and observe RED**
+- [x] **Step 2: Run the auxiliary policy and observe RED**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy cli_config_authority::auxiliary_commands_consume_cli_config_authority -- --exact
@@ -362,7 +362,7 @@ TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy cli_config_author
 
 Expected: FAIL on the existing auxiliary scanner/load/value/path copies.
 
-- [ ] **Step 3: Add failing explicit-profile unit tests**
+- [x] **Step 3: Add failing explicit-profile unit tests**
 
 Extend `cli_config::tests` with:
 
@@ -407,7 +407,7 @@ fn auxiliary_profiles_preserve_value_and_boolean_vocabularies() {
 
 Add missing-config assertions for each auxiliary wrapper.
 
-- [ ] **Step 4: Add auxiliary profiles to `cli_config.rs`**
+- [x] **Step 4: Add auxiliary profiles to `cli_config.rs`**
 
 Move the exact current GPU value and boolean lists, accelerator value list,
 multi-run value/boolean lists, and resource-acquire value list into constants.
@@ -416,7 +416,7 @@ Add command-named wrappers that call
 
 Do not add power-import config reading or a power-import profile.
 
-- [ ] **Step 5: Migrate GPU, accelerator, multi-run, and resource-acquire**
+- [x] **Step 5: Migrate GPU, accelerator, multi-run, and resource-acquire**
 
 For each command module:
 
@@ -433,7 +433,7 @@ For each command module:
 In `power_import_cli.rs`, import only `required_value` and delete its local
 copy. Keep power artifact reading and `PowerAnalysis` error mapping unchanged.
 
-- [ ] **Step 6: Run auxiliary GREEN verification**
+- [x] **Step 6: Run auxiliary GREEN verification**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo fmt --all -- --check
@@ -450,7 +450,7 @@ git diff --check
 Expected: all tests PASS with unchanged config paths, output paths, child
 commands, and error surfaces.
 
-- [ ] **Step 7: Commit the auxiliary migration**
+- [x] **Step 7: Commit the auxiliary migration**
 
 ```bash
 git add crates/rem6/src/cli_config.rs crates/rem6/src/gpu_cli.rs crates/rem6/src/accelerator_cli.rs crates/rem6/src/multi_run_cli.rs crates/rem6/src/resource_acquire_config.rs crates/rem6/src/power_import_cli.rs crates/rem6/tests/source_policy/cli_config_authority.rs
@@ -463,7 +463,7 @@ TMPDIR=$PWD/target/tmp git commit -m "refactor: unify auxiliary cli config mecha
 **Files:**
 - Test only unless a regression is found.
 
-- [ ] **Step 1: Run wildcard suppression and negative parser rows**
+- [x] **Step 1: Run wildcard suppression and negative parser rows**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run validation::rem6_run_config_scan_treats_riscv_se_stdin_as_value_taking -- --exact
@@ -471,7 +471,7 @@ TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run validation::rem6_trace_
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run execution::rem6_run_config_scan_preserves_non_config_flag_errors -- --exact
 ```
 
-- [ ] **Step 2: Run relative-path and command-load rows**
+- [x] **Step 2: Run relative-path and command-load rows**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run execution::rem6_run_resolves_toml_relative_binary_from_config_directory -- --exact
@@ -482,7 +482,7 @@ TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run multi_run::rem6_multi_r
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run resource_acquire::rem6_resource_acquire_loads_config_manifest_and_local_artifact -- --exact
 ```
 
-- [ ] **Step 3: Run broad verification**
+- [x] **Step 3: Run broad verification**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo fmt --all -- --check
@@ -505,7 +505,7 @@ dirty before closeout; no protected `temp/` path is staged or tracked.
 **Files:**
 - Modify: `docs/superpowers/plans/2026-07-20-cli-config-authority.md`
 
-- [ ] **Step 1: Dispatch the mandatory high-intensity read-only review**
+- [x] **Step 1: Dispatch the mandatory high-intensity read-only review**
 
 ```text
 Review only; do not edit. Audit the full increment for prescan semantic drift,
@@ -516,13 +516,13 @@ source-policy blind spots, and missing real CLI coverage. Report findings by
 severity with file and line references; explicitly say when there are none.
 ```
 
-- [ ] **Step 2: Resolve every finding and rerun affected plus workspace tests**
+- [x] **Step 2: Resolve every finding and rerun affected plus workspace tests**
 
 Reproduce each finding, add a failing regression when appropriate, make the
 smallest fix, rerun the focused command, then rerun Task 3 Step 3. Commit fixes
 with a scoped message.
 
-- [ ] **Step 3: Mark all plan tasks complete and commit closeout**
+- [x] **Step 3: Mark all plan tasks complete and commit closeout**
 
 ```bash
 git add docs/superpowers/plans/2026-07-20-cli-config-authority.md
@@ -530,7 +530,7 @@ git diff --cached --check
 TMPDIR=$PWD/target/tmp git commit -m "docs: close cli config authority plan"
 ```
 
-- [ ] **Step 4: Push and verify synchronization**
+- [x] **Step 4: Push and verify synchronization**
 
 ```bash
 git status --short --branch
