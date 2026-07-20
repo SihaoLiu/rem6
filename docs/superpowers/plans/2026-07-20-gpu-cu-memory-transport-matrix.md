@@ -316,7 +316,7 @@ present, matching the existing first-start/last-completion pattern.
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run gpu::representative_matrix:: -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run gpu::rem6_gpu_run_routes_coalesced_global_memory_through_cache_and_dram -- --exact
-TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run gpu::rem6_gpu_run_routes_memory_over_explicit_fabric -- --exact
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run gpu::rem6_gpu_run_routes_global_memory_through_configured_fabric -- --exact
 ```
 
 Expected: all PASS. If exact deterministic round-trip values are stable across

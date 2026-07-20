@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use rem6_gpu::{
@@ -16,6 +16,9 @@ use rem6_transport::{MemoryRouteId, MemoryTrace, MemoryTraceKind, ParallelMemory
 use serde::Deserialize;
 
 mod fabric;
+#[cfg(test)]
+#[path = "gpu_cli/memory_transport_tests.rs"]
+mod memory_transport_tests;
 mod nomali;
 
 use crate::cli_config::{
@@ -1468,6 +1471,7 @@ fn record_gpu_compute_unit_memory_transport(
     trace: &MemoryTrace,
 ) -> Result<(), Rem6CliError> {
     let mut requests = BTreeMap::<(MemoryRouteId, MemoryRequestId), (u64, String)>::new();
+    let mut final_responses = BTreeSet::<(MemoryRouteId, MemoryRequestId)>::new();
     for event in trace.snapshot() {
         let key = (event.route(), event.request_id());
         match event.kind() {
@@ -1492,6 +1496,12 @@ fn record_gpu_compute_unit_memory_transport(
                 };
                 if event.endpoint().as_str() != source {
                     continue;
+                }
+                if !final_responses.insert(key) {
+                    return Err(execute_error(format!(
+                        "GPU memory request {:?} received more than one final response",
+                        event.request_id()
+                    )));
                 }
                 let status = event.response_status().ok_or_else(|| {
                     execute_error(format!(
