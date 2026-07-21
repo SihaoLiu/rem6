@@ -497,8 +497,8 @@ impl O3RuntimeState {
 
     pub(super) fn discard_live_staged_window_from_at(&mut self, sequence: u64, now: u64) {
         if self
-            .pending_data_address
-            .as_ref()
+            .pending_data_addresses
+            .first()
             .is_some_and(|pending| pending.sequence >= sequence)
         {
             self.discard_pending_data_address_at(now);

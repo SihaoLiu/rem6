@@ -263,8 +263,8 @@ pub(super) fn is_terminal_o3_data_access_event(execution: &RiscvCpuExecutionEven
 
 impl O3RuntimeState {
     pub(crate) fn pending_data_address_fetch(&self) -> Option<MemoryRequestId> {
-        self.pending_data_address
-            .as_ref()
+        self.pending_data_addresses
+            .first()
             .map(|pending| pending.fetch.request_id())
     }
 
@@ -273,7 +273,7 @@ impl O3RuntimeState {
         fetch_request: MemoryRequestId,
         access: &MemoryAccessKind,
     ) -> bool {
-        self.pending_data_address.as_ref().is_some_and(|pending| {
+        self.pending_data_addresses.first().is_some_and(|pending| {
             pending.fetch.request_id() == fetch_request
                 && pending.selected_issue_tick.is_some()
                 && pending
@@ -301,8 +301,8 @@ impl O3RuntimeState {
         execution: RiscvCpuExecutionEvent,
     ) {
         let pending = self
-            .pending_data_address
-            .as_mut()
+            .pending_data_addresses
+            .first_mut()
             .expect("pending address owner");
         pending.selected_issue_tick = Some(issue_tick);
         pending.materialized = Some(execution);
@@ -1071,8 +1071,8 @@ impl O3RuntimeState {
         self.discard_live_writeback_reservations();
         self.deferred_live_data_access_execution = None;
         let pending_sequence = self
-            .pending_data_address
-            .as_ref()
+            .pending_data_addresses
+            .first()
             .map(O3PendingDataAddress::sequence);
         let live = std::mem::take(&mut self.live_data_accesses);
         for live in &live {
@@ -1091,8 +1091,8 @@ impl O3RuntimeState {
     pub(super) fn discard_live_data_access_lifecycle_at(&mut self, now: u64) {
         self.deferred_live_data_access_execution = None;
         let pending_sequence = self
-            .pending_data_address
-            .as_ref()
+            .pending_data_addresses
+            .first()
             .map(O3PendingDataAddress::sequence);
         let live = std::mem::take(&mut self.live_data_accesses);
         for live in &live {

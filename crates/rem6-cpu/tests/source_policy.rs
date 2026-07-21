@@ -42,6 +42,9 @@ const MAX_RISCV_RETAINED_DATA_ACCESS_RESULT_LINES: usize = 100;
 const MAX_RISCV_MEMORY_RESULT_AUTHORIZATION_LINES: usize = 150;
 const MAX_RISCV_BUFFERED_EFFECT_LINES: usize = 220;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_LINES: usize = 650;
+const MAX_O3_RUNTIME_PENDING_ADDRESS_SET_LINES: usize = 350;
+const MAX_O3_RUNTIME_PENDING_ADDRESS_STAGING_LINES: usize = 350;
+const MAX_O3_RUNTIME_ISSUE_PENDING_ADDRESS_LINES: usize = 300;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FACADE_LINES: usize = 300;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_STAGING_TEST_LINES: usize = 450;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_SCHEDULING_TEST_LINES: usize = 550;
@@ -706,6 +709,10 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let runtime_path = crate_dir.join("src/o3_runtime.rs");
     let retire_path = crate_dir.join("src/riscv_live_retire_window.rs");
     let pending_path = crate_dir.join("src/o3_runtime_pending_address.rs");
+    let pending_set_path = crate_dir.join("src/o3_runtime_pending_address_set.rs");
+    let pending_staging_path = crate_dir.join("src/o3_runtime_pending_address_staging.rs");
+    let issue_root_path = crate_dir.join("src/o3_runtime_issue.rs");
+    let issue_pending_path = crate_dir.join("src/o3_runtime_issue/pending_address.rs");
     let test_root_path = crate_dir.join("src/o3_runtime_pending_address_tests.rs");
     let staging_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/staging.rs");
     let scheduling_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/scheduling.rs");
@@ -715,6 +722,10 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
 
     for path in [
         &pending_path,
+        &pending_set_path,
+        &pending_staging_path,
+        &issue_root_path,
+        &issue_pending_path,
         &test_root_path,
         &staging_test_path,
         &scheduling_test_path,
@@ -731,6 +742,10 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let runtime = fs::read_to_string(&runtime_path).unwrap();
     let retire = fs::read_to_string(&retire_path).unwrap();
     let pending = fs::read_to_string(&pending_path).unwrap();
+    let pending_set = fs::read_to_string(&pending_set_path).unwrap();
+    let pending_staging = fs::read_to_string(&pending_staging_path).unwrap();
+    let issue_root = fs::read_to_string(&issue_root_path).unwrap();
+    let issue_pending = fs::read_to_string(&issue_pending_path).unwrap();
     let test_root = fs::read_to_string(&test_root_path).unwrap();
     let staging_test = fs::read_to_string(&staging_test_path).unwrap();
     let scheduling_test = fs::read_to_string(&scheduling_test_path).unwrap();
@@ -745,6 +760,33 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         ),
         1,
         "src/o3_runtime.rs must attach the pending-address owner exactly once"
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &runtime,
+            "o3_runtime_pending_address_set.rs",
+            "o3_runtime_pending_address_set"
+        ),
+        1,
+        "src/o3_runtime.rs must attach the pending-address set owner exactly once"
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &runtime,
+            "o3_runtime_pending_address_staging.rs",
+            "o3_runtime_pending_address_staging"
+        ),
+        1,
+        "src/o3_runtime.rs must attach the pending-address staging owner exactly once"
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &issue_root,
+            "o3_runtime_issue/pending_address.rs",
+            "pending_address"
+        ),
+        1,
+        "src/o3_runtime_issue.rs must attach the pending-address scheduler owner exactly once"
     );
     assert_eq!(
         path_owned_module_declaration_count(
@@ -791,6 +833,9 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     );
 
     assert!(include_macro_lines(&pending).is_empty());
+    assert!(include_macro_lines(&pending_set).is_empty());
+    assert!(include_macro_lines(&pending_staging).is_empty());
+    assert!(include_macro_lines(&issue_pending).is_empty());
     assert!(include_macro_lines(&test_root).is_empty());
     assert!(include_macro_lines(&staging_test).is_empty());
     assert!(include_macro_lines(&scheduling_test).is_empty());
@@ -799,6 +844,12 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     assert!(
         external_module_declaration_lines(&pending).is_empty()
             && path_attribute_lines(&pending).is_empty()
+            && external_module_declaration_lines(&pending_set).is_empty()
+            && path_attribute_lines(&pending_set).is_empty()
+            && external_module_declaration_lines(&pending_staging).is_empty()
+            && path_attribute_lines(&pending_staging).is_empty()
+            && external_module_declaration_lines(&issue_pending).is_empty()
+            && path_attribute_lines(&issue_pending).is_empty()
             && external_module_declaration_lines(&staging_test).is_empty()
             && path_attribute_lines(&staging_test).is_empty()
             && external_module_declaration_lines(&scheduling_test).is_empty()
@@ -813,6 +864,18 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     assert!(
         line_count(&pending_path) <= MAX_O3_RUNTIME_PENDING_ADDRESS_LINES,
         "o3_runtime_pending_address.rs exceeds {MAX_O3_RUNTIME_PENDING_ADDRESS_LINES} lines"
+    );
+    assert!(
+        line_count(&pending_set_path) <= MAX_O3_RUNTIME_PENDING_ADDRESS_SET_LINES,
+        "o3_runtime_pending_address_set.rs exceeds {MAX_O3_RUNTIME_PENDING_ADDRESS_SET_LINES} lines"
+    );
+    assert!(
+        line_count(&pending_staging_path) <= MAX_O3_RUNTIME_PENDING_ADDRESS_STAGING_LINES,
+        "o3_runtime_pending_address_staging.rs exceeds {MAX_O3_RUNTIME_PENDING_ADDRESS_STAGING_LINES} lines"
+    );
+    assert!(
+        line_count(&issue_pending_path) <= MAX_O3_RUNTIME_ISSUE_PENDING_ADDRESS_LINES,
+        "o3_runtime_issue/pending_address.rs exceeds {MAX_O3_RUNTIME_ISSUE_PENDING_ADDRESS_LINES} lines"
     );
     assert!(
         line_count(&test_root_path) <= MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FACADE_LINES,
@@ -844,6 +907,10 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     );
 
     let pending_code = production_rust_source(&pending);
+    let pending_set_code = production_rust_source(&pending_set);
+    let pending_staging_code = production_rust_source(&pending_staging);
+    let issue_root_code = production_rust_source(&issue_root);
+    let issue_pending_code = production_rust_source(&issue_pending);
     let runtime_code = production_rust_source(&runtime);
     let retire_code = production_rust_source(&retire);
     let lib_code =
@@ -882,25 +949,44 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         );
     }
     assert_eq!(
-        pending_code
-            .matches("pub(super) fn discard_pending_data_address_from")
+        pending_set_code
+            .matches("pub(super) struct O3PendingDataAddresses {")
             .count(),
         1,
-        "pending-address range discard must remain parent-module visible"
+        "pending-address set owner must define exactly one O3PendingDataAddresses struct"
+    );
+    assert_eq!(
+        pending_set_code
+            .matches("pub(super) const O3_PENDING_DATA_ADDRESS_CAPACITY: usize = 2;")
+            .count(),
+        1,
+        "pending-address set owner must define the exact capacity-two constant"
+    );
+    assert_eq!(
+        pending_set_code
+            .matches("rows: Vec<O3PendingDataAddress>,")
+            .count(),
+        1,
+        "pending-address set owner must hold one ordered row vector"
     );
     assert_eq!(
         runtime_code
-            .matches("pending_data_address: Option<O3PendingDataAddress>,")
+            .matches("pending_data_addresses: O3PendingDataAddresses,")
             .count(),
         1,
-        "runtime state must hold exactly one optional pending-address owner"
+        "runtime state must hold exactly one pending-address collection"
     );
     assert_eq!(
         production_code
-            .matches("Option<O3PendingDataAddress>")
+            .matches("pending_data_addresses: O3PendingDataAddresses,")
             .count(),
         1,
-        "production source must contain exactly one optional pending-address owner"
+        "production source must contain exactly one pending-address collection field"
+    );
+    assert!(
+        !production_code.contains("Option<O3PendingDataAddress>")
+            && !production_code.contains("pending_data_address_2"),
+        "production source must not retain singleton or parallel pending-address fields"
     );
     for (source_name, source) in [
         ("o3_runtime.rs", &runtime_code),
@@ -912,27 +998,136 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
             "{source_name} must not define the pending-address struct"
         );
         assert!(
-            !source.contains("pending_data_addresses")
-                && !source.contains("BTreeMap<MemoryRequestId, O3PendingDataAddress")
+            !source.contains("BTreeMap<MemoryRequestId, O3PendingDataAddress")
                 && !source.contains("BTreeMap<u64, O3PendingDataAddress"),
             "{source_name} must not grow a pending-address map"
         );
     }
 
+    assert!(production_defines_exact_function(
+        &pending_staging_code,
+        "stage_pending_data_address_window"
+    ));
+    let staging_definition =
+        rust_function_definition(&pending_staging_code, "stage_pending_data_address_window")
+            .expect("pending-address staging owner must define stage_pending_data_address_window");
+    let try_push_failure = staging_definition
+        .split_once("if !self.pending_data_addresses.try_push")
+        .expect("pending-address staging must use guarded collection insertion")
+        .1
+        .split_once("let mut staged")
+        .expect("pending-address insertion failure must precede suffix staging")
+        .0;
+    assert!(
+        try_push_failure.contains(".retain(|entry| entry.sequence() != sequence)"),
+        "pending-address insertion failure must remove its already-added LSQ row"
+    );
+    for source in [&pending_code, &pending_set_code, &runtime_code] {
+        assert!(!production_defines_exact_function(
+            source,
+            "stage_pending_data_address_window"
+        ));
+    }
+
     for helper in [
-        "stage_pending_data_address_window",
+        "pending_data_address_count",
+        "has_pending_data_address",
+        "pending_data_address_owns_fetch",
+        "pending_data_address_execution",
+        "pending_data_address_execution_mut",
+        "pending_data_address_decoded",
+        "pending_data_address_issue_matches",
         "discard_pending_data_address_at_internal",
         "discard_pending_data_address_from",
         "discard_pending_data_address",
         "discard_pending_data_address_at",
+        "bind_pending_data_address_issue",
+        "pending_data_address_owner_is_consistent",
+    ] {
+        assert!(
+            production_defines_exact_function(&pending_set_code, helper),
+            "pending-address set owner is missing `{helper}`"
+        );
+        for source in [&pending_code, &pending_staging_code, &runtime_code] {
+            assert!(
+                !production_defines_exact_function(source, helper),
+                "pending-address helper `{helper}` escaped its set owner"
+            );
+        }
+    }
+    for helper in [
+        "len",
+        "is_empty",
+        "first",
+        "first_mut",
+        "find_sequence",
+        "find_fetch",
+        "try_push",
+    ] {
+        assert!(
+            production_defines_exact_function(&pending_set_code, helper),
+            "pending-address set owner is missing bounded collection API `{helper}`"
+        );
+    }
+    for helper in [
+        "record_pending_data_address_materialization",
+        "pending_data_address_materialization_matches",
     ] {
         assert!(
             production_defines_exact_function(&pending_code, helper),
-            "pending-address owner is missing `{helper}`"
+            "pending-address row owner is missing `{helper}`"
+        );
+        for source in [&pending_set_code, &pending_staging_code, &runtime_code] {
+            assert!(!production_defines_exact_function(source, helper));
+        }
+    }
+
+    let pending_raw_code = rust_code_without_comments_and_literals(&pending);
+    let pending_set_raw_code = rust_code_without_comments_and_literals(&pending_set);
+    for helper in [
+        "pending_data_address_sequence_for_test",
+        "pending_data_address_owner_count_for_test",
+        "pending_data_address_selected_issue_tick_for_test",
+        "pending_data_address_materialized_execution_for_test",
+    ] {
+        assert_eq!(
+            rust_function_definition_count(&pending_set_raw_code, helper),
+            1
+        );
+        assert_eq!(rust_function_definition_count(&pending_raw_code, helper), 0);
+    }
+    for helper in [
+        "corrupt_pending_data_address_lsq_bytes_for_test",
+        "corrupt_pending_data_address_producer_sequence_for_test",
+    ] {
+        assert_eq!(rust_function_definition_count(&pending_raw_code, helper), 1);
+        assert_eq!(
+            rust_function_definition_count(&pending_set_raw_code, helper),
+            0
+        );
+    }
+
+    for helper in [
+        "pending_data_address_candidate_metadata",
+        "pending_data_address_producer_ready_tick",
+        "pending_data_address_committed_producer_ready_tick",
+        "pending_data_address_request_sequence",
+        "pending_data_address_sequence_for_replay",
+        "pending_data_address_has_producer_sequence",
+        "pending_data_address_wakeup_seed",
+        "pending_data_address_wake_tick",
+        "pending_data_address_selected_issue_tick_for_reservation",
+        "record_pending_data_address_resource_blocked",
+        "pending_data_address_producer_sequence",
+        "pending_data_address_head_reservation",
+    ] {
+        assert!(
+            production_defines_exact_function(&issue_pending_code, helper),
+            "pending-address scheduler owner is missing `{helper}`"
         );
         assert!(
-            !production_defines_exact_function(&runtime_code, helper),
-            "src/o3_runtime.rs must not own pending-address helper `{helper}`"
+            !production_defines_exact_function(&issue_root_code, helper),
+            "issue root must not retain pending-address scheduler helper `{helper}`"
         );
     }
     assert!(
@@ -1028,6 +1223,7 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
     let issue_test_root_path = crate_dir.join("src/riscv_data_issue_tests.rs");
     let issue_test_path = crate_dir.join("src/riscv_data_issue_tests/dependent_result_address.rs");
     let pending_path = crate_dir.join("src/o3_runtime_pending_address.rs");
+    let pending_set_path = crate_dir.join("src/o3_runtime_pending_address_set.rs");
     let lib_path = crate_dir.join("src/lib.rs");
     for path in [
         &translation_root_path,
@@ -1037,6 +1233,7 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
         &issue_test_root_path,
         &issue_test_path,
         &pending_path,
+        &pending_set_path,
         &lib_path,
     ] {
         assert!(path.is_file(), "missing Task 5 file {}", path.display());
@@ -1049,6 +1246,7 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
     let issue_test_root = fs::read_to_string(&issue_test_root_path).unwrap();
     let issue_test = fs::read_to_string(&issue_test_path).unwrap();
     let pending = fs::read_to_string(&pending_path).unwrap();
+    let pending_set = fs::read_to_string(&pending_set_path).unwrap();
     let lib = fs::read_to_string(&lib_path).unwrap();
 
     assert_eq!(
@@ -1091,6 +1289,7 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
     let issue_root_code = production_rust_source(&issue_root);
     let issue_child_code = production_rust_source(&issue_child);
     let pending_code = production_rust_source(&pending);
+    let pending_set_code = production_rust_source(&pending_set);
     let lib_code = production_rust_source(&lib);
     assert!(production_defines_exact_function(
         &unissued_code,
@@ -1109,6 +1308,10 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
         assert!(!production_defines_exact_function(&lib_code, helper));
     }
     assert!(production_defines_exact_function(
+        &pending_set_code,
+        "bind_pending_data_address_issue"
+    ));
+    assert!(!production_defines_exact_function(
         &pending_code,
         "bind_pending_data_address_issue"
     ));
@@ -1153,7 +1356,12 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
 fn task8_dependent_result_address_production_ownership_is_final() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let source_root = crate_dir.join("src");
+    let runtime_owner_path = Path::new("src/o3_runtime.rs");
+    let issue_root_path = Path::new("src/o3_runtime_issue.rs");
     let pending_owner_path = Path::new("src/o3_runtime_pending_address.rs");
+    let pending_set_owner_path = Path::new("src/o3_runtime_pending_address_set.rs");
+    let pending_staging_owner_path = Path::new("src/o3_runtime_pending_address_staging.rs");
+    let pending_issue_owner_path = Path::new("src/o3_runtime_issue/pending_address.rs");
     let authorization_owner_path =
         Path::new("src/riscv_fetch_ahead/memory_result_authorization.rs");
     let issue_owner_path = Path::new("src/riscv_data_issue/dependent_result_address.rs");
@@ -1174,13 +1382,46 @@ fn task8_dependent_result_address_production_ownership_is_final() {
             .unwrap_or_else(|| panic!("missing production source {}", path.display()))
     };
 
+    let runtime_module_source =
+        fs::read_to_string(crate_dir.join(runtime_owner_path)).expect("runtime root source");
+    let issue_root_module_source =
+        fs::read_to_string(crate_dir.join(issue_root_path)).expect("issue root source");
     let pending_owner = source(pending_owner_path);
+    let pending_set_owner = source(pending_set_owner_path);
+    let pending_staging_owner = source(pending_staging_owner_path);
+    let pending_issue_owner = source(pending_issue_owner_path);
     let authorization_owner = source(authorization_owner_path);
     let issue_owner = source(issue_owner_path);
     let production_code = production
         .iter()
         .map(|(_, source)| source.as_str())
         .collect::<String>();
+
+    for (path, module) in [
+        (
+            "o3_runtime_pending_address_set.rs",
+            "o3_runtime_pending_address_set",
+        ),
+        (
+            "o3_runtime_pending_address_staging.rs",
+            "o3_runtime_pending_address_staging",
+        ),
+    ] {
+        assert_eq!(
+            path_owned_module_declaration_count(&runtime_module_source, path, module),
+            1,
+            "runtime root must attach focused owner `{module}` exactly once"
+        );
+    }
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &issue_root_module_source,
+            "o3_runtime_issue/pending_address.rs",
+            "pending_address"
+        ),
+        1,
+        "issue root must attach the pending-address scheduler owner exactly once"
+    );
 
     let pending_struct_owners = production
         .iter()
@@ -1203,13 +1444,164 @@ fn task8_dependent_result_address_production_ownership_is_final() {
         [pending_owner_path.display().to_string()],
         "O3PendingDataAddress must have exactly one focused production owner"
     );
+    let pending_collection_struct_owners = production
+        .iter()
+        .flat_map(|(path, source)| {
+            production_struct_definitions(source)
+                .into_iter()
+                .filter(|definition| {
+                    production_defines_exact_named_item(
+                        definition,
+                        "struct",
+                        "O3PendingDataAddresses",
+                    )
+                })
+                .map(|_| path.display().to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        pending_collection_struct_owners,
+        [pending_set_owner_path.display().to_string()],
+        "O3PendingDataAddresses must have exactly one focused production owner"
+    );
+    let mut alternate_pending_storage = Vec::new();
+    for (path, source) in &production {
+        let mut definitions = production_struct_definitions(source);
+        definitions.extend(production_enum_definitions(source));
+        definitions.extend(production_type_alias_definitions(source));
+        for definition in definitions {
+            let storage_count =
+                production_definition_named_type_storage_count(&definition, "O3PendingDataAddress");
+            if storage_count == 0 {
+                continue;
+            }
+            let exact_collection_owner = path == pending_set_owner_path
+                && production_defines_exact_named_item(
+                    &definition,
+                    "struct",
+                    "O3PendingDataAddresses",
+                )
+                && storage_count == 1;
+            if !exact_collection_owner {
+                alternate_pending_storage.push(format!(
+                    "{} ({storage_count} exact row references)",
+                    path.display()
+                ));
+            }
+        }
+    }
+    assert!(
+        alternate_pending_storage.is_empty(),
+        "alternate pending-row aggregate storage is forbidden: {}",
+        alternate_pending_storage.join(", ")
+    );
     assert_eq!(
         production_code
-            .matches("Option<O3PendingDataAddress>")
+            .matches("pending_data_addresses: O3PendingDataAddresses,")
             .count(),
         1,
-        "production must contain exactly one optional pending-address field"
+        "production must contain exactly one pending-address collection field"
     );
+    let singleton_owners = production
+        .iter()
+        .filter_map(|(path, source)| {
+            source
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect::<String>()
+                .contains("Option<O3PendingDataAddress>")
+                .then_some(path.display().to_string())
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        singleton_owners.is_empty(),
+        "optional pending-address singleton ownership is forbidden: {}",
+        singleton_owners.join(", ")
+    );
+    assert!(
+        !production_code.contains("pending_data_address_2"),
+        "parallel pending-address fields are forbidden"
+    );
+    assert_eq!(
+        pending_set_owner
+            .matches("pub(super) const O3_PENDING_DATA_ADDRESS_CAPACITY: usize = 2;")
+            .count(),
+        1,
+        "the pending-address collection must have one exact capacity-two constant"
+    );
+    assert_eq!(
+        pending_set_owner
+            .matches("rows: Vec<O3PendingDataAddress>,")
+            .count(),
+        1,
+        "the pending-address collection must have one ordered row vector"
+    );
+    let try_push = rust_function_definition(pending_set_owner, "try_push")
+        .expect("pending-address set owner must define try_push");
+    for anchor in [
+        "self.rows.len() >= O3_PENDING_DATA_ADDRESS_CAPACITY",
+        "existing.sequence == row.sequence",
+        "existing.sequence >= row.sequence",
+        "duplicate_fetch",
+        "self.rows.push(row)",
+    ] {
+        assert!(
+            try_push.contains(anchor),
+            "pending-address insertion is missing bounded invariant `{anchor}`"
+        );
+    }
+    let pending_set_compact = pending_set_owner
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    let try_push_compact = try_push
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    assert_eq!(
+        pending_set_compact.matches("self.rows.push(").count(),
+        1,
+        "pending-address set owner must contain exactly one row push"
+    );
+    assert_eq!(
+        pending_set_compact.matches("self.rows.push(row)").count(),
+        1,
+        "the sole pending-address insertion must push the guarded row"
+    );
+    assert_eq!(
+        try_push_compact.matches("self.rows.push(row)").count(),
+        1,
+        "the sole pending-address insertion must remain inside try_push"
+    );
+    for forbidden in [
+        "self.rows.extend(",
+        "self.rows.extend_from_slice(",
+        "self.rows.append(",
+        "self.rows.insert(",
+        "self.rows.splice(",
+        "self.rows.push_front(",
+        "self.rows.push_back(",
+        "self.rows=",
+        "&mutself.rows",
+    ] {
+        assert!(
+            !pending_set_compact.contains(forbidden),
+            "pending-address rows must not have an alternate insertion path `{forbidden}`"
+        );
+    }
+    for forbidden in [
+        "rows_mut",
+        "as_mut_slice",
+        "DerefMut",
+        "pub(super) fn rows(",
+        "pub(crate) fn rows(",
+    ] {
+        assert!(
+            !pending_set_owner.contains(forbidden),
+            "pending-address set owner must not expose unbounded mutable rows via `{forbidden}`"
+        );
+    }
 
     let role = production_enum_definition(authorization_owner, "O3MemoryResultWindowRole")
         .expect("missing O3MemoryResultWindowRole authorization enum");
@@ -1231,32 +1623,87 @@ fn task8_dependent_result_address_production_ownership_is_final() {
     );
     assert!(!address_authority.contains("Pending"));
 
-    for helper in [
-        "stage_pending_data_address_window",
-        "record_pending_data_address_materialization",
-        "pending_data_address_materialization_matches",
-        "bind_pending_data_address_issue",
-        "discard_pending_data_address_at_internal",
-        "discard_pending_data_address_from",
-        "discard_pending_data_address",
-        "discard_pending_data_address_at",
-    ] {
-        let owners = production
+    let owners_of = |helper: &str| {
+        production
             .iter()
             .filter_map(|(path, source)| {
                 production_defines_exact_function(source, helper)
                     .then_some(path.display().to_string())
             })
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        owners_of("stage_pending_data_address_window"),
+        [pending_staging_owner_path.display().to_string()],
+        "pending-address staging must stay in its focused owner"
+    );
+    assert_eq!(
+        rust_function_definition_count(pending_staging_owner, "stage_pending_data_address_window"),
+        1
+    );
+
+    for helper in [
+        "record_pending_data_address_materialization",
+        "pending_data_address_materialization_matches",
+    ] {
         assert_eq!(
-            owners,
+            owners_of(helper),
             [pending_owner_path.display().to_string()],
-            "pending-address helper `{helper}` must stay in the focused owner"
+            "pending-address row helper `{helper}` must stay in the row owner"
+        );
+        assert_eq!(rust_function_definition_count(pending_owner, helper), 1);
+    }
+
+    for helper in [
+        "pending_data_address_count",
+        "has_pending_data_address",
+        "pending_data_address_owns_fetch",
+        "pending_data_address_execution",
+        "pending_data_address_execution_mut",
+        "pending_data_address_decoded",
+        "pending_data_address_issue_matches",
+        "bind_pending_data_address_issue",
+        "discard_pending_data_address_at_internal",
+        "discard_pending_data_address_from",
+        "discard_pending_data_address",
+        "discard_pending_data_address_at",
+        "pending_data_address_owner_is_consistent",
+    ] {
+        assert_eq!(
+            owners_of(helper),
+            [pending_set_owner_path.display().to_string()],
+            "pending-address collection helper `{helper}` must stay in the set owner"
         );
         assert_eq!(
-            rust_function_definition_count(pending_owner, helper),
+            rust_function_definition_count(pending_set_owner, helper),
             1,
             "pending-address helper `{helper}` must have exactly one definition"
+        );
+    }
+
+    for helper in [
+        "pending_data_address_candidate_metadata",
+        "pending_data_address_producer_ready_tick",
+        "pending_data_address_committed_producer_ready_tick",
+        "pending_data_address_request_sequence",
+        "pending_data_address_sequence_for_replay",
+        "pending_data_address_has_producer_sequence",
+        "pending_data_address_wakeup_seed",
+        "pending_data_address_wake_tick",
+        "pending_data_address_selected_issue_tick_for_reservation",
+        "record_pending_data_address_resource_blocked",
+        "pending_data_address_producer_sequence",
+        "pending_data_address_head_reservation",
+    ] {
+        assert_eq!(
+            owners_of(helper),
+            [pending_issue_owner_path.display().to_string()],
+            "pending-address scheduler helper `{helper}` must stay in the issue child"
+        );
+        assert_eq!(
+            rust_function_definition_count(pending_issue_owner, helper),
+            1
         );
     }
 
@@ -1264,15 +1711,8 @@ fn task8_dependent_result_address_production_ownership_is_final() {
         "validate_pending_address_pre_submit",
         "replay_pending_address_before_submit",
     ] {
-        let owners = production
-            .iter()
-            .filter_map(|(path, source)| {
-                production_defines_exact_function(source, helper)
-                    .then_some(path.display().to_string())
-            })
-            .collect::<Vec<_>>();
         assert_eq!(
-            owners,
+            owners_of(helper),
             [issue_owner_path.display().to_string()],
             "pre-submit helper `{helper}` must stay in the focused data-issue owner"
         );
@@ -1330,6 +1770,22 @@ fn task8_dependent_result_address_production_ownership_is_final() {
     );
 
     assert!(line_count(&crate_dir.join("src/o3_runtime.rs")) < 1200);
+    assert!(
+        line_count(&crate_dir.join("src/o3_runtime_pending_address.rs"))
+            <= MAX_O3_RUNTIME_PENDING_ADDRESS_LINES
+    );
+    assert!(
+        line_count(&crate_dir.join("src/o3_runtime_pending_address_set.rs"))
+            <= MAX_O3_RUNTIME_PENDING_ADDRESS_SET_LINES
+    );
+    assert!(
+        line_count(&crate_dir.join("src/o3_runtime_pending_address_staging.rs"))
+            <= MAX_O3_RUNTIME_PENDING_ADDRESS_STAGING_LINES
+    );
+    assert!(
+        line_count(&crate_dir.join("src/o3_runtime_issue/pending_address.rs"))
+            <= MAX_O3_RUNTIME_ISSUE_PENDING_ADDRESS_LINES
+    );
     assert!(
         line_count(&crate_dir.join("src/riscv_fetch_ahead/detailed_o3/data_access_result.rs"))
             <= 450
@@ -2042,7 +2498,7 @@ fn o3_runtime_issue_lives_in_focused_module() {
         "O3ScopedIssueScheduler::new(",
         "self.stats.record_issue_cycle(",
         "pub(crate) fn live_data_access_head_reservation(",
-        "O3LiveIssueHeadReservation::memory(",
+        "pub(super) const fn memory(",
     ];
     for anchor in issue_authority_patterns {
         assert!(
@@ -4428,6 +4884,55 @@ fn generic_type_contains_named_type(source: &str, outer: &str, inner: &str) -> b
     false
 }
 
+fn production_definition_named_type_storage_count(definition: &str, name: &str) -> usize {
+    let code = production_rust_source(definition);
+    let chars = code.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    let mut definition_kind = None;
+    let mut definition_name_end = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        if matches!(identifier.as_str(), "struct" | "enum" | "type") {
+            let name_start = skip_rust_whitespace(&chars, end);
+            let Some((_, name_end)) = rust_identifier_at(&chars, name_start) else {
+                return 0;
+            };
+            definition_kind = Some(identifier);
+            definition_name_end = name_end;
+            break;
+        }
+        index = end;
+    }
+    let Some(definition_kind) = definition_kind else {
+        return 0;
+    };
+    let storage_start = chars[definition_name_end..]
+        .iter()
+        .position(|character| match definition_kind.as_str() {
+            "struct" => matches!(character, '{' | '('),
+            "enum" => *character == '{',
+            "type" => *character == '=',
+            _ => false,
+        })
+        .map(|offset| definition_name_end + offset + 1);
+    let Some(mut index) = storage_start else {
+        return 0;
+    };
+    let mut count = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        count += usize::from(identifier == name);
+        index = end;
+    }
+    count
+}
+
 fn production_struct_definitions(source: &str) -> Vec<String> {
     let code = production_rust_source(source);
     let chars = code.chars().collect::<Vec<_>>();
@@ -5095,6 +5600,44 @@ fn query() -> Option<O3ProducerForwardedScalarDescendant> { None }\n";
         "fn query() -> Option<O3ProducerForwardedScalarDescendant> { None }"
     )
     .is_empty());
+}
+
+#[test]
+fn source_policy_helper_detects_exact_named_type_storage_without_request_false_positives() {
+    for definition in [
+        "struct Alternate { row: O3PendingDataAddress }",
+        "struct Alternate(O3PendingDataAddress);",
+        "struct Alternate { rows: Vec<O3PendingDataAddress> }",
+        "struct Alternate { rows: VecDeque<O3PendingDataAddress> }",
+        "struct Alternate { rows: [O3PendingDataAddress; 2] }",
+        "struct Alternate { row: Option<O3PendingDataAddress> }",
+        "enum Alternate { Row(O3PendingDataAddress) }",
+        "type Alternate = Vec<O3PendingDataAddress>;",
+    ] {
+        assert_eq!(
+            production_definition_named_type_storage_count(definition, "O3PendingDataAddress"),
+            1,
+            "failed to detect exact pending-row storage in `{definition}`"
+        );
+    }
+    assert_eq!(
+        production_definition_named_type_storage_count(
+            "enum Alternate { First(O3PendingDataAddress), Second(O3PendingDataAddress) }",
+            "O3PendingDataAddress"
+        ),
+        2
+    );
+    for definition in [
+        "struct O3PendingDataAddress { sequence: u64 }",
+        "struct O3PendingDataAddressRequest { sequence: u64 }",
+        "type Requests = Vec<O3PendingDataAddressRequest>;",
+    ] {
+        assert_eq!(
+            production_definition_named_type_storage_count(definition, "O3PendingDataAddress"),
+            0,
+            "request or row declarations must not count as alternate storage: `{definition}`"
+        );
+    }
 }
 
 #[test]

@@ -57,6 +57,10 @@ mod o3_runtime_memory_tests;
 mod o3_runtime_memory_window;
 #[path = "o3_runtime_pending_address.rs"]
 mod o3_runtime_pending_address;
+#[path = "o3_runtime_pending_address_set.rs"]
+mod o3_runtime_pending_address_set;
+#[path = "o3_runtime_pending_address_staging.rs"]
+mod o3_runtime_pending_address_staging;
 #[cfg(test)]
 #[path = "o3_runtime_pending_address_tests.rs"]
 mod o3_runtime_pending_address_tests;
@@ -110,6 +114,7 @@ use o3_runtime_memory::{
 };
 use o3_runtime_pending_address::O3PendingDataAddress;
 pub(crate) use o3_runtime_pending_address::O3PendingDataAddressRequest;
+use o3_runtime_pending_address_set::O3PendingDataAddresses;
 pub(crate) use o3_runtime_producer_forwarded_chain::{
     O3ProducerForwardedControlTarget, O3ProducerForwardedReturnDescendant,
     O3ProducerForwardedScalarChain,
@@ -247,7 +252,7 @@ pub struct O3RuntimeState {
     invalidated_live_staged_fetch_identities: BTreeMap<u64, O3LiveStagedFetchIdentity>,
     deferred_live_data_access_execution: Option<MemoryRequestId>,
     live_data_accesses: Vec<O3LiveDataAccess>,
-    pending_data_address: Option<O3PendingDataAddress>,
+    pending_data_addresses: O3PendingDataAddresses,
     live_data_access_younger_sequences: BTreeSet<u64>,
     scalar_memory_window_limit: usize,
     scalar_live_window_limit: usize,
@@ -673,7 +678,7 @@ impl Default for O3RuntimeState {
             invalidated_live_staged_fetch_identities: BTreeMap::new(),
             deferred_live_data_access_execution: None,
             live_data_accesses: Vec::new(),
-            pending_data_address: None,
+            pending_data_addresses: O3PendingDataAddresses::default(),
             live_data_access_younger_sequences: BTreeSet::new(),
             scalar_memory_window_limit: 2,
             scalar_live_window_limit: 2,
