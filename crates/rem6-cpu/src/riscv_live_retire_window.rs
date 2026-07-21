@@ -846,8 +846,15 @@ pub(crate) fn wake_o3_data_access_younger_window(
     issue_tick: u64,
     fetch_events: &[CpuFetchEvent],
 ) {
-    let Some((tail_request, younger_pcs)) = state.o3_runtime.live_data_access_younger_wakeup_seed()
+    let pending_window = state.o3_runtime.has_pending_data_address();
+    let Some((tail_request, younger_pcs)) = state
+        .o3_runtime
+        .pending_data_address_wakeup_seed()
+        .or_else(|| state.o3_runtime.live_data_access_younger_wakeup_seed())
     else {
+        if pending_window {
+            state.o3_runtime.discard_pending_data_address();
+        }
         return;
     };
     let mut current_request = tail_request;
@@ -856,6 +863,9 @@ pub(crate) fn wake_o3_data_access_younger_window(
         let Some(instruction) =
             completed_fetch_instruction_at(state, fetch_events, current_request, pc)
         else {
+            if pending_window {
+                state.o3_runtime.discard_pending_data_address();
+            }
             return;
         };
         current_request = instruction.last_consumed_request();
@@ -864,7 +874,11 @@ pub(crate) fn wake_o3_data_access_younger_window(
     let Some(head) = state
         .o3_runtime
         .live_data_access_head_reservation(tail_request)
+        .or_else(|| state.o3_runtime.pending_data_address_head_reservation())
     else {
+        if pending_window {
+            state.o3_runtime.discard_pending_data_address();
+        }
         return;
     };
     schedule_o3_live_speculative_younger_executions(state, head, &younger, issue_tick)
@@ -898,12 +912,16 @@ fn schedule_o3_live_speculative_younger_executions(
     younger: &[RiscvCompletedFetchInstruction],
     issue_tick: u64,
 ) -> Result<bool, RiscvCpuError> {
+    let pending_window = state.o3_runtime.has_pending_data_address();
     for younger in younger {
         if !state.o3_runtime.bind_live_staged_fetch_identity(
             younger.pc,
             younger.decoded.instruction(),
             &younger.consumed_requests,
         ) {
+            if pending_window {
+                state.o3_runtime.discard_pending_data_address();
+            }
             return Ok(false);
         }
     }

@@ -40,6 +40,8 @@ const MAX_RISCV_BUFFERED_EFFECT_LINES: usize = 220;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_LINES: usize = 650;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FACADE_LINES: usize = 300;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_STAGING_TEST_LINES: usize = 450;
+const MAX_O3_RUNTIME_PENDING_ADDRESS_SCHEDULING_TEST_LINES: usize = 550;
+const MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FAMILY_LINES: usize = 1050;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_STAGE_LINES: usize = 250;
 const MAX_RISCV_DETAILED_O3_CONTROL_TEST_ROOT_LINES: usize = 450;
 const MAX_RISCV_DETAILED_O3_LINKED_CONTROL_TEST_LINES: usize = 1500;
@@ -701,6 +703,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let pending_path = crate_dir.join("src/o3_runtime_pending_address.rs");
     let test_root_path = crate_dir.join("src/o3_runtime_pending_address_tests.rs");
     let staging_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/staging.rs");
+    let scheduling_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/scheduling.rs");
     let stage_child_path =
         crate_dir.join("src/riscv_live_retire_window/dependent_result_address.rs");
 
@@ -708,6 +711,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         &pending_path,
         &test_root_path,
         &staging_test_path,
+        &scheduling_test_path,
         &stage_child_path,
     ] {
         assert!(
@@ -722,6 +726,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let pending = fs::read_to_string(&pending_path).unwrap();
     let test_root = fs::read_to_string(&test_root_path).unwrap();
     let staging_test = fs::read_to_string(&staging_test_path).unwrap();
+    let scheduling_test = fs::read_to_string(&scheduling_test_path).unwrap();
     let stage_child = fs::read_to_string(&stage_child_path).unwrap();
 
     assert_eq!(
@@ -752,6 +757,15 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "pending-address tests must use the focused staging child exactly once"
     );
     assert_eq!(
+        path_owned_module_declaration_count(
+            &test_root,
+            "o3_runtime_pending_address_tests/scheduling.rs",
+            "scheduling"
+        ),
+        1,
+        "pending-address tests must use the focused scheduling child exactly once"
+    );
+    assert_eq!(
         rust_code_without_comments_and_literals(&retire)
             .matches("mod dependent_result_address;")
             .count(),
@@ -762,12 +776,15 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     assert!(include_macro_lines(&pending).is_empty());
     assert!(include_macro_lines(&test_root).is_empty());
     assert!(include_macro_lines(&staging_test).is_empty());
+    assert!(include_macro_lines(&scheduling_test).is_empty());
     assert!(include_macro_lines(&stage_child).is_empty());
     assert!(
         external_module_declaration_lines(&pending).is_empty()
             && path_attribute_lines(&pending).is_empty()
             && external_module_declaration_lines(&staging_test).is_empty()
             && path_attribute_lines(&staging_test).is_empty()
+            && external_module_declaration_lines(&scheduling_test).is_empty()
+            && path_attribute_lines(&scheduling_test).is_empty()
             && external_module_declaration_lines(&stage_child).is_empty()
             && path_attribute_lines(&stage_child).is_empty(),
         "Task 3 leaf owners must not declare child modules"
@@ -784,6 +801,17 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     assert!(
         line_count(&staging_test_path) <= MAX_O3_RUNTIME_PENDING_ADDRESS_STAGING_TEST_LINES,
         "o3_runtime_pending_address_tests/staging.rs exceeds {MAX_O3_RUNTIME_PENDING_ADDRESS_STAGING_TEST_LINES} lines"
+    );
+    assert!(
+        line_count(&scheduling_test_path) <= MAX_O3_RUNTIME_PENDING_ADDRESS_SCHEDULING_TEST_LINES,
+        "o3_runtime_pending_address_tests/scheduling.rs exceeds {MAX_O3_RUNTIME_PENDING_ADDRESS_SCHEDULING_TEST_LINES} lines"
+    );
+    assert!(
+        line_count(&test_root_path)
+            + line_count(&staging_test_path)
+            + line_count(&scheduling_test_path)
+            < MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FAMILY_LINES,
+        "pending-address test family must remain below {MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FAMILY_LINES} lines"
     );
     assert!(
         line_count(&stage_child_path) <= MAX_RISCV_DEPENDENT_RESULT_ADDRESS_STAGE_LINES,
@@ -911,6 +939,29 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
             rust_function_definition_count(&staging_test_code, anchor),
             1,
             "missing or duplicated pending-address staging test `{anchor}`"
+        );
+    }
+
+    let expected_scheduling_tests = [
+        "pending_address_scheduler_waits_for_head_writeback",
+        "pending_address_scheduler_width_one_orders_memory_before_scalar",
+        "pending_address_scheduler_width_two_coissues_memory_and_scalar",
+        "pending_address_materialization_uses_admitted_producer_value",
+        "pending_address_materialization_stale_identity_replays_and_discards_suffix",
+        "pending_address_materialization_failure_replays_without_callback_error",
+        "pending_address_materialization_does_not_allocate_a_request",
+    ];
+    let scheduling_test_code = rust_code_without_comments_and_literals(&scheduling_test);
+    assert_eq!(
+        scheduling_test_code.matches("#[test]").count(),
+        expected_scheduling_tests.len(),
+        "pending-address scheduling tests must expose exactly the focused inventory"
+    );
+    for anchor in expected_scheduling_tests {
+        assert_eq!(
+            rust_function_definition_count(&scheduling_test_code, anchor),
+            1,
+            "missing or duplicated pending-address scheduling test `{anchor}`"
         );
     }
 }

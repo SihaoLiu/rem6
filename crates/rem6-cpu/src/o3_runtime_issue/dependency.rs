@@ -134,6 +134,7 @@ fn data_ready_tick(runtime: &O3RuntimeState, sequence: u64) -> Option<u64> {
         .find(|row| row.sequence == sequence)
         .map(|row| row.admitted_writeback_tick)
         .or_else(|| runtime.completed_live_data_access_ready_tick(sequence))
+        .or_else(|| runtime.pending_data_address_producer_ready_tick(sequence))
 }
 
 fn control_ready_tick(

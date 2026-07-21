@@ -1,5 +1,7 @@
-use rem6_isa_riscv::{MemoryAccessKind, MemoryWidth, Register, RiscvDecodedInstruction};
-use rem6_memory::{AddressRange, MemoryRequestId};
+use rem6_isa_riscv::{
+    MemoryAccessKind, MemoryWidth, Register, RiscvDecodedInstruction, RiscvExecutionRecord,
+};
+use rem6_memory::{Address, AddressRange, MemoryRequestId};
 
 use super::*;
 use crate::{CpuFetchEvent, CpuFetchEventKind};
@@ -8,19 +10,20 @@ const PENDING_DATA_ADDRESS_LSQ_BYTES: u32 = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct O3PendingDataAddress {
-    sequence: u64,
-    fetch: CpuFetchEvent,
-    consumed_requests: Vec<MemoryRequestId>,
-    decoded: RiscvDecodedInstruction,
-    producer_register: Register,
-    producer_sequence: u64,
-    destination: O3RenameMapEntry,
+    pub(super) sequence: u64,
+    pub(super) fetch: CpuFetchEvent,
+    pub(super) consumed_requests: Vec<MemoryRequestId>,
+    pub(super) decoded: RiscvDecodedInstruction,
+    pub(super) producer_register: Register,
+    pub(super) producer_sequence: u64,
+    pub(super) producer_fetch: MemoryRequestId,
+    pub(super) destination: O3RenameMapEntry,
     expected_lsq_bytes: u32,
     head_range: AddressRange,
     atomic_head: bool,
-    requested_wake_tick: Option<u64>,
-    selected_issue_tick: Option<u64>,
-    materialized: Option<RiscvCpuExecutionEvent>,
+    pub(super) requested_wake_tick: Option<u64>,
+    pub(super) selected_issue_tick: Option<u64>,
+    pub(super) materialized: Option<RiscvCpuExecutionEvent>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -134,6 +137,7 @@ impl O3RuntimeState {
             decoded: pending.decoded,
             producer_register: pending.producer_register,
             producer_sequence,
+            producer_fetch: head_fetch,
             destination,
             expected_lsq_bytes: PENDING_DATA_ADDRESS_LSQ_BYTES,
             head_range,
@@ -164,6 +168,89 @@ impl O3RuntimeState {
         self.stats
             .set_rename_map_entries(self.snapshot_with_live_rename_map().rename_map.len());
         staged
+    }
+
+    pub(super) fn record_pending_data_address_materialization(
+        &mut self,
+        candidate: O3LiveSpeculativeIssueCandidate,
+        consumed_requests: &[MemoryRequestId],
+        issue_tick: u64,
+        execution: RiscvExecutionRecord,
+    ) -> Result<bool, O3RuntimeError> {
+        let Some(pending) = self.pending_data_address.as_ref().cloned() else {
+            return Ok(false);
+        };
+        let producer = candidate.data_producers();
+        let valid_producer = producer.len() == 1
+            && producer[0].sequence() == pending.producer_sequence
+            && producer[0].source() == pending.producer_register
+            && candidate.producer_sequences() == [pending.producer_sequence];
+        let valid_lsq = pending.expected_lsq_bytes == PENDING_DATA_ADDRESS_LSQ_BYTES
+            && self.snapshot.load_store_queue.iter().any(|entry| {
+                entry.sequence() == pending.sequence
+                    && entry.kind() == O3LoadStoreQueueKind::Load
+                    && entry.address().is_none()
+                    && entry.bytes() == pending.expected_lsq_bytes
+            });
+        let expected_destination = u32::from(match execution.memory_access() {
+            Some(MemoryAccessKind::Load {
+                rd,
+                width: MemoryWidth::Doubleword,
+                ..
+            }) if !rd.is_zero() => rd.index(),
+            _ => return Ok(false),
+        });
+        if candidate.sequence() != pending.sequence
+            || candidate.instruction() != pending.decoded.instruction()
+            || candidate.pending_data_address_destination() != Some(pending.destination)
+            || pending.destination.register_class() != O3RegisterClass::Integer
+            || pending.destination.architectural() != expected_destination
+            || pending.consumed_requests != consumed_requests
+            || !valid_producer
+            || !valid_lsq
+            || !self.live_staged_fetch_identity_matches(
+                pending.sequence,
+                pending.decoded.instruction(),
+                consumed_requests,
+            )
+            || execution.pc() != pending.fetch.pc().get()
+            || execution.instruction() != pending.decoded.instruction()
+            || execution.instruction_bytes() != pending.decoded.bytes()
+            || execution.next_pc()
+                != execution
+                    .pc()
+                    .wrapping_add(u64::from(execution.instruction_bytes()))
+            || execution.trap().is_some()
+            || execution.system_event().is_some()
+            || !execution.register_writes().is_empty()
+            || !execution.float_register_writes().is_empty()
+        {
+            return Ok(false);
+        }
+        let event =
+            RiscvCpuExecutionEvent::new(pending.fetch, pending.decoded.instruction(), execution);
+        let Some(stored) = self.pending_data_address.as_mut() else {
+            return Ok(false);
+        };
+        if let Some(materialized) = &stored.materialized {
+            return Ok(stored.selected_issue_tick == Some(issue_tick) && materialized == &event);
+        }
+        stored.requested_wake_tick = None;
+        stored.selected_issue_tick = Some(issue_tick);
+        stored.materialized = Some(event);
+        Ok(true)
+    }
+
+    pub(super) fn pending_data_address_materialization_matches(
+        &self,
+        request: &O3LiveIssueRequest,
+    ) -> bool {
+        self.pending_data_address.as_ref().is_some_and(|pending| {
+            pending.materialized.is_some()
+                && pending.fetch.pc() == request.pc()
+                && pending.decoded == request.decoded()
+                && pending.consumed_requests == request.consumed_requests()
+        })
     }
 
     pub(super) fn discard_pending_data_address_from(&mut self, sequence: u64) {
@@ -338,9 +425,8 @@ impl O3RuntimeState {
         head_range == pending.head_range
             && atomic_head == pending.atomic_head
             && pending.expected_lsq_bytes == PENDING_DATA_ADDRESS_LSQ_BYTES
-            && pending.materialized.is_none()
-            && pending.requested_wake_tick.is_none()
-            && pending.selected_issue_tick.is_none()
+            && pending.materialized.is_some() == pending.selected_issue_tick.is_some()
+            && !(pending.materialized.is_some() && pending.requested_wake_tick.is_some())
             && self.snapshot.reorder_buffer.iter().any(|entry| {
                 entry.sequence() == pending.sequence
                     && entry.destination() == Some(pending.destination.physical())
@@ -372,5 +458,38 @@ impl O3RuntimeState {
     #[cfg(test)]
     pub(crate) fn pending_data_address_owner_count_for_test(&self) -> usize {
         usize::from(self.pending_data_address.is_some())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_data_address_selected_issue_tick_for_test(&self) -> Option<u64> {
+        self.pending_data_address
+            .as_ref()
+            .and_then(|pending| pending.selected_issue_tick)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_data_address_materialized_execution_for_test(
+        &self,
+    ) -> Option<&RiscvCpuExecutionEvent> {
+        self.pending_data_address
+            .as_ref()
+            .and_then(|pending| pending.materialized.as_ref())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_pending_data_address_lsq_bytes_for_test(&mut self, bytes: u32) {
+        if let Some(pending) = self.pending_data_address.as_mut() {
+            pending.expected_lsq_bytes = bytes;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_pending_data_address_producer_sequence_for_test(
+        &mut self,
+        sequence: u64,
+    ) {
+        if let Some(pending) = self.pending_data_address.as_mut() {
+            pending.producer_sequence = sequence;
+        }
     }
 }

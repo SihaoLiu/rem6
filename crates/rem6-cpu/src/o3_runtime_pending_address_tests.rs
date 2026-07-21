@@ -2,17 +2,21 @@ use super::*;
 
 use crate::{
     riscv_fetch_ahead::O3MemoryResultWindowRole,
-    riscv_live_retire_window::stage_o3_data_access_younger_window, CpuCore, CpuFetchConfig,
-    CpuFetchEvent, CpuFetchRecord, CpuId, CpuResetState, RiscvCore,
+    riscv_live_retire_window::{
+        stage_o3_data_access_younger_window, wake_o3_data_access_younger_window,
+    },
+    CpuCore, CpuFetchConfig, CpuFetchEvent, CpuFetchRecord, CpuId, CpuResetState, RiscvCore,
 };
 use rem6_isa_riscv::{
     Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvDecodedInstruction,
     RiscvExecutionRecord, RiscvInstruction,
 };
-use rem6_kernel::PartitionId;
+use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryRequestId};
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
+#[path = "o3_runtime_pending_address_tests/scheduling.rs"]
+mod scheduling;
 #[path = "o3_runtime_pending_address_tests/staging.rs"]
 mod staging;
 

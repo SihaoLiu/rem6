@@ -62,6 +62,17 @@ pub(crate) struct O3PreparedLiveIssue {
     pub(crate) execution: RiscvExecutionRecord,
 }
 
+enum O3PreparedLiveIssueBatch {
+    Prepared(Vec<O3PreparedLiveIssue>),
+    ReplayPending(u64),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum O3LiveIssueBatchOutcome {
+    Recorded,
+    ReplayPending(u64),
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct O3LiveIssueHeadReservation {
     sequence: u64,
@@ -92,6 +103,144 @@ impl O3LiveIssueHeadReservation {
 }
 
 impl O3RuntimeState {
+    pub(super) fn pending_data_address_candidate_metadata(
+        &self,
+        sequence: u64,
+        pc: Address,
+        instruction: RiscvInstruction,
+        consumed_requests: &[MemoryRequestId],
+    ) -> Option<(O3RenameMapEntry, Register, u64)> {
+        let pending = self.pending_data_address.as_ref()?;
+        (pending.materialized.is_none()
+            && pending.sequence == sequence
+            && pending.fetch.pc() == pc
+            && pending.decoded.instruction() == instruction
+            && pending.consumed_requests == consumed_requests)
+            .then_some((
+                pending.destination,
+                pending.producer_register,
+                pending.producer_sequence,
+            ))
+    }
+
+    pub(super) fn pending_data_address_producer_ready_tick(&self, sequence: u64) -> Option<u64> {
+        let pending = self.pending_data_address.as_ref()?;
+        (pending.materialized.is_none()
+            && pending.producer_sequence == sequence
+            && pending.requested_wake_tick.is_some())
+        .then_some(pending.requested_wake_tick?.saturating_sub(1))
+    }
+
+    pub(super) fn pending_data_address_committed_producer_ready_tick(
+        &self,
+        sequence: u64,
+        source: Register,
+    ) -> Option<u64> {
+        let pending = self.pending_data_address.as_ref()?;
+        (pending.producer_register == source)
+            .then(|| self.pending_data_address_producer_ready_tick(sequence))?
+    }
+
+    pub(super) fn pending_data_address_request_sequence(
+        &self,
+        request: &O3LiveIssueRequest,
+    ) -> Option<u64> {
+        let pending = self.pending_data_address.as_ref()?;
+        (pending.materialized.is_none()
+            && pending.fetch.pc() == request.pc()
+            && pending.decoded == request.decoded()
+            && pending.consumed_requests == request.consumed_requests())
+        .then_some(pending.sequence)
+    }
+
+    pub(super) fn pending_data_address_sequence_for_replay(&self, sequence: u64) -> Option<u64> {
+        self.pending_data_address
+            .as_ref()
+            .filter(|pending| pending.sequence == sequence)
+            .map(O3PendingDataAddress::sequence)
+    }
+
+    pub(super) fn pending_data_address_has_producer_sequence(&self, sequence: u64) -> bool {
+        self.pending_data_address
+            .as_ref()
+            .is_some_and(|pending| pending.producer_sequence == sequence)
+    }
+
+    pub(crate) fn pending_data_address_wakeup_seed(
+        &self,
+    ) -> Option<(MemoryRequestId, Vec<Address>)> {
+        let pending = self.pending_data_address.as_ref()?;
+        let younger_pcs = self
+            .snapshot
+            .reorder_buffer
+            .iter()
+            .filter(|entry| {
+                entry.sequence() >= pending.sequence
+                    && self
+                        .live_data_access_younger_sequences
+                        .contains(&entry.sequence())
+            })
+            .copied()
+            .map(O3ReorderBufferEntry::pc)
+            .collect::<Vec<_>>();
+        (younger_pcs.len() == self.live_data_access_younger_sequences.len())
+            .then_some((pending.producer_fetch, younger_pcs))
+    }
+
+    pub(crate) fn pending_data_address_wake_tick(&self) -> Option<u64> {
+        self.pending_data_address
+            .as_ref()
+            .filter(|pending| pending.materialized.is_none())
+            .and_then(|pending| pending.requested_wake_tick)
+    }
+
+    pub(super) fn pending_data_address_selected_issue_tick_for_reservation(&self) -> Option<u64> {
+        self.pending_data_address
+            .as_ref()
+            .and_then(|pending| pending.selected_issue_tick)
+    }
+
+    pub(super) fn record_pending_data_address_resource_blocked(
+        &mut self,
+        sequence: u64,
+        actual_tick: u64,
+    ) {
+        let Some((producer_sequence, producer_register)) = self
+            .pending_data_address
+            .as_ref()
+            .filter(|pending| pending.sequence == sequence && pending.materialized.is_none())
+            .map(|pending| (pending.producer_sequence, pending.producer_register))
+        else {
+            return;
+        };
+        let producer_ready = self
+            .live_issue_source_value(producer_sequence, producer_register)
+            .map(|(_, ready_tick)| ready_tick)
+            .or_else(|| self.pending_data_address_producer_ready_tick(producer_sequence))
+            .is_some_and(|ready_tick| ready_tick <= actual_tick);
+        let Some(next_tick) = actual_tick.checked_add(1).filter(|_| producer_ready) else {
+            return;
+        };
+        if let Some(pending) = self.pending_data_address.as_mut() {
+            if pending.sequence == sequence && pending.materialized.is_none() {
+                pending.requested_wake_tick = Some(next_tick);
+            }
+        }
+    }
+
+    pub(super) fn pending_data_address_producer_sequence(&self) -> Option<u64> {
+        self.pending_data_address
+            .as_ref()
+            .map(|pending| pending.producer_sequence)
+    }
+
+    pub(crate) fn pending_data_address_head_reservation(
+        &self,
+    ) -> Option<O3LiveIssueHeadReservation> {
+        self.pending_data_address_producer_sequence()
+            .map(|sequence| O3LiveIssueHeadReservation::memory(sequence, 0))
+    }
+
     pub(crate) fn live_data_access_head_reservation(
         &self,
         fetch_request: MemoryRequestId,
@@ -186,21 +335,39 @@ impl O3RuntimeState {
     pub(crate) fn record_live_issue_batch(
         &mut self,
         prepared: Vec<O3PreparedLiveIssue>,
-    ) -> Result<(), O3RuntimeError> {
+    ) -> Result<O3LiveIssueBatchOutcome, O3RuntimeError> {
         let mut staged = self.clone();
         for row in prepared {
             let sequence = row.candidate.sequence();
-            if !staged.record_live_speculative_execution(
-                row.candidate,
-                &row.consumed_requests,
-                row.issue_tick,
-                row.execution,
-            )? {
+            let recorded = if row.candidate.is_pending_data_address() {
+                staged.record_pending_data_address_materialization(
+                    row.candidate,
+                    &row.consumed_requests,
+                    row.issue_tick,
+                    row.execution,
+                )?
+            } else {
+                staged.record_live_speculative_execution(
+                    row.candidate,
+                    &row.consumed_requests,
+                    row.issue_tick,
+                    row.execution,
+                )?
+            };
+            if !recorded {
+                if staged
+                    .pending_data_address_sequence_for_replay(sequence)
+                    .is_some()
+                {
+                    staged.discard_pending_data_address_from(sequence);
+                    *self = staged;
+                    return Ok(O3LiveIssueBatchOutcome::ReplayPending(sequence));
+                }
                 return Err(O3RuntimeError::SelectedIssueCandidateNotExecutable { sequence });
             }
         }
         *self = staged;
-        Ok(())
+        Ok(O3LiveIssueBatchOutcome::Recorded)
     }
 
     pub(crate) fn schedule_live_speculative_issues(
@@ -215,6 +382,7 @@ impl O3RuntimeState {
             .reorder_buffer
             .iter()
             .any(|entry| entry.is_live_staged() && entry.sequence() == head.sequence)
+            && !self.pending_data_address_has_producer_sequence(head.sequence)
         {
             return Ok(());
         }
@@ -230,6 +398,21 @@ impl O3RuntimeState {
             }
 
             let candidates = self.live_issue_candidates(requests);
+            if let Some(sequence) = requests
+                .iter()
+                .find_map(|request| self.pending_data_address_request_sequence(request))
+                .filter(|sequence| {
+                    !candidates
+                        .iter()
+                        .any(|candidate| candidate.sequence() == *sequence)
+                })
+            {
+                let mut staged = self.clone();
+                staged.discard_pending_data_address_from(sequence);
+                *self = staged;
+                self.flush_live_issue_decision(tick, &mut tick_decision);
+                break;
+            }
             if candidates.is_empty() {
                 self.flush_live_issue_decision(tick, &mut tick_decision);
                 break;
@@ -259,7 +442,27 @@ impl O3RuntimeState {
                     plan.issued(),
                     tick,
                 )?;
-                self.record_live_issue_batch(prepared)?;
+                let outcome = match prepared {
+                    O3PreparedLiveIssueBatch::Prepared(prepared) => {
+                        self.record_live_issue_batch(prepared)?
+                    }
+                    O3PreparedLiveIssueBatch::ReplayPending(sequence) => {
+                        let mut staged = self.clone();
+                        staged.discard_pending_data_address_from(sequence);
+                        *self = staged;
+                        O3LiveIssueBatchOutcome::ReplayPending(sequence)
+                    }
+                };
+                if matches!(outcome, O3LiveIssueBatchOutcome::ReplayPending(_)) {
+                    tick_decision.observe(
+                        0,
+                        plan.resource_blocked().len(),
+                        plan.dependency_blocked().len(),
+                        plan.reserved_width(),
+                    );
+                    self.flush_live_issue_decision(tick, &mut tick_decision);
+                    break;
+                }
             }
             tick_decision.observe(
                 issued_rows,
@@ -268,7 +471,14 @@ impl O3RuntimeState {
                 plan.reserved_width().saturating_add(issued_rows),
             );
 
-            if !plan.resource_blocked().is_empty() {
+            let blocked_pending = plan.resource_blocked().iter().find_map(|blocked| {
+                self.pending_data_address_sequence_for_replay(blocked.sequence())
+            });
+            if let Some(sequence) = blocked_pending {
+                self.record_pending_data_address_resource_blocked(sequence, tick);
+                self.flush_live_issue_decision(tick, &mut tick_decision);
+                break;
+            } else if !plan.resource_blocked().is_empty() {
                 let next_tick = tick.saturating_add(1);
                 self.flush_live_issue_decision(tick, &mut tick_decision);
                 if next_tick == tick {
@@ -290,6 +500,14 @@ impl O3RuntimeState {
                     self.flush_live_issue_decision(tick, &mut tick_decision);
                     break;
                 };
+                if remaining_candidates
+                    .iter()
+                    .any(O3LiveIssueSchedulingCandidate::is_pending_data_address)
+                    && next_tick > earliest_tick
+                {
+                    self.flush_live_issue_decision(tick, &mut tick_decision);
+                    break;
+                }
                 self.flush_live_issue_decision(tick, &mut tick_decision);
                 tick = next_tick;
             } else if issued_rows == 0 {
@@ -328,57 +546,77 @@ impl O3RuntimeState {
         candidates: &[O3LiveIssueSchedulingCandidate],
         issued: &[O3ScopedReadyInstruction],
         issue_tick: u64,
-    ) -> Result<Vec<O3PreparedLiveIssue>, O3RuntimeError> {
-        issued
-            .iter()
-            .map(|issued| {
-                let scheduling = candidates
-                    .iter()
-                    .find(|candidate| candidate.sequence() == issued.sequence())
-                    .ok_or(O3RuntimeError::SelectedIssueCandidateNotExecutable {
-                        sequence: issued.sequence(),
-                    })?;
-                let candidate = self
-                    .materialize_live_speculative_issue_candidate(scheduling)
-                    .ok_or(O3RuntimeError::SelectedIssueCandidateNotExecutable {
-                        sequence: issued.sequence(),
-                    })?;
-                let request = requests.get(scheduling.request_index()).ok_or(
-                    O3RuntimeError::SelectedIssueCandidateNotExecutable {
-                        sequence: issued.sequence(),
-                    },
-                )?;
-                if scheduling.consumed_requests() != request.consumed_requests() {
-                    return Err(O3RuntimeError::SelectedIssueCandidateNotExecutable {
-                        sequence: issued.sequence(),
-                    });
+    ) -> Result<O3PreparedLiveIssueBatch, O3RuntimeError> {
+        let mut selected = Vec::with_capacity(issued.len());
+        for issued in issued {
+            let Some(scheduling) = candidates
+                .iter()
+                .find(|candidate| candidate.sequence() == issued.sequence())
+            else {
+                return Err(O3RuntimeError::SelectedIssueCandidateNotExecutable {
+                    sequence: issued.sequence(),
+                });
+            };
+            selected.push(scheduling);
+        }
+        selected.sort_by_key(|candidate| !candidate.is_pending_data_address());
+
+        let mut prepared = Vec::with_capacity(selected.len());
+        for scheduling in selected {
+            let sequence = scheduling.sequence();
+            let Some(candidate) = self.materialize_live_speculative_issue_candidate(scheduling)
+            else {
+                return if scheduling.is_pending_data_address() {
+                    Ok(O3PreparedLiveIssueBatch::ReplayPending(sequence))
+                } else {
+                    Err(O3RuntimeError::SelectedIssueCandidateNotExecutable { sequence })
+                };
+            };
+            let Some(request) = requests.get(scheduling.request_index()) else {
+                return if scheduling.is_pending_data_address() {
+                    Ok(O3PreparedLiveIssueBatch::ReplayPending(sequence))
+                } else {
+                    Err(O3RuntimeError::SelectedIssueCandidateNotExecutable { sequence })
+                };
+            };
+            if scheduling.consumed_requests() != request.consumed_requests() {
+                return if scheduling.is_pending_data_address() {
+                    Ok(O3PreparedLiveIssueBatch::ReplayPending(sequence))
+                } else {
+                    Err(O3RuntimeError::SelectedIssueCandidateNotExecutable { sequence })
+                };
+            }
+            let mut speculative_hart = hart.clone();
+            for write in candidate.forwarded_register_writes() {
+                speculative_hart.write(write.register(), write.value());
+            }
+            speculative_hart.set_pc(request.pc().get());
+            let execution = match speculative_hart.execute_decoded(request.decoded()) {
+                Ok(execution) => execution,
+                Err(_) if scheduling.is_pending_data_address() => {
+                    return Ok(O3PreparedLiveIssueBatch::ReplayPending(sequence));
                 }
-                let mut speculative_hart = hart.clone();
-                for write in candidate.forwarded_register_writes() {
-                    speculative_hart.write(write.register(), write.value());
+                Err(_) => {
+                    return Err(O3RuntimeError::SelectedIssueCandidateNotExecutable { sequence });
                 }
-                speculative_hart.set_pc(request.pc().get());
-                let execution = speculative_hart
-                    .execute_decoded(request.decoded())
-                    .map_err(|_| O3RuntimeError::SelectedIssueCandidateNotExecutable {
-                        sequence: issued.sequence(),
-                    })?;
-                Ok(O3PreparedLiveIssue {
-                    candidate,
-                    consumed_requests: request.consumed_requests().to_vec(),
-                    issue_tick,
-                    execution,
-                })
-            })
-            .collect()
+            };
+            prepared.push(O3PreparedLiveIssue {
+                candidate,
+                consumed_requests: request.consumed_requests().to_vec(),
+                issue_tick,
+                execution,
+            });
+        }
+        Ok(O3PreparedLiveIssueBatch::Prepared(prepared))
     }
 
     fn live_issue_request_is_recorded(&self, request: &O3LiveIssueRequest) -> bool {
-        self.live_speculative_executions.iter().any(|issued| {
-            issued.consumed_requests == request.consumed_requests
-                && issued.execution.pc() == request.pc.get()
-                && issued.execution.instruction() == request.instruction()
-        })
+        self.pending_data_address_materialization_matches(request)
+            || self.live_speculative_executions.iter().any(|issued| {
+                issued.consumed_requests == request.consumed_requests
+                    && issued.execution.pc() == request.pc.get()
+                    && issued.execution.instruction() == request.instruction()
+            })
     }
 
     fn record_live_issue_decision(
@@ -422,6 +660,9 @@ impl O3RuntimeState {
         if head.issue_tick == tick {
             reservations.reserve(head.op_class);
         }
+        if self.pending_data_address_selected_issue_tick_for_reservation() == Some(tick) {
+            reservations.reserve(O3IssueOpClass::Memory);
+        }
         for issued in self.live_speculative_executions.iter().filter(|issued| {
             issued.issue_tick == tick
                 && issued.sequence != head.sequence
@@ -443,6 +684,7 @@ struct O3LiveIssueReservations {
     int_alu: usize,
     int_mult: usize,
     branch: usize,
+    memory: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -477,7 +719,8 @@ impl O3LiveIssueReservations {
             O3IssueOpClass::IntAlu => self.int_alu = self.int_alu.saturating_add(1),
             O3IssueOpClass::IntMult => self.int_mult = self.int_mult.saturating_add(1),
             O3IssueOpClass::Branch => self.branch = self.branch.saturating_add(1),
-            O3IssueOpClass::Float | O3IssueOpClass::Memory | O3IssueOpClass::System => {}
+            O3IssueOpClass::Memory => self.memory = self.memory.saturating_add(1),
+            O3IssueOpClass::Float | O3IssueOpClass::System => {}
         }
     }
 }
@@ -498,6 +741,10 @@ fn live_issue_capacities_after_reservations(
         (
             O3IssueOpClass::Branch,
             1_usize.saturating_sub(reservations.branch),
+        ),
+        (
+            O3IssueOpClass::Memory,
+            1_usize.saturating_sub(reservations.memory),
         ),
     ]
     .into_iter()

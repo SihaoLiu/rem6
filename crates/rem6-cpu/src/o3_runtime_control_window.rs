@@ -88,6 +88,9 @@ pub(crate) struct O3LiveSpeculativeIssueCandidate {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum O3LiveSpeculativeIssueKind {
+    PendingDataAddress {
+        destination: O3RenameMapEntry,
+    },
     Scalar {
         destination: O3RenameMapEntry,
     },
@@ -135,12 +138,20 @@ impl O3LiveIssueSchedulingCandidate {
     pub(crate) fn consumed_requests(&self) -> &[MemoryRequestId] {
         &self.consumed_requests
     }
+
+    pub(crate) const fn is_pending_data_address(&self) -> bool {
+        matches!(
+            self.kind,
+            O3LiveSpeculativeIssueKind::PendingDataAddress { .. }
+        )
+    }
 }
 
 impl O3LiveSpeculativeIssueCandidate {
     #[cfg(test)]
     pub(crate) const fn destination(&self) -> Option<O3RenameMapEntry> {
         match self.scheduling.kind {
+            O3LiveSpeculativeIssueKind::PendingDataAddress { destination } => Some(destination),
             O3LiveSpeculativeIssueKind::Scalar { destination } => Some(destination),
             O3LiveSpeculativeIssueKind::Control { destination, .. } => destination,
         }
@@ -158,9 +169,27 @@ impl O3LiveSpeculativeIssueCandidate {
         self.scheduling.request_index
     }
 
-    #[cfg(test)]
     pub(crate) fn producer_sequences(&self) -> &[u64] {
         &self.producer_sequences
+    }
+
+    pub(crate) const fn is_pending_data_address(&self) -> bool {
+        matches!(
+            self.scheduling.kind,
+            O3LiveSpeculativeIssueKind::PendingDataAddress { .. }
+        )
+    }
+
+    pub(crate) const fn pending_data_address_destination(&self) -> Option<O3RenameMapEntry> {
+        match self.scheduling.kind {
+            O3LiveSpeculativeIssueKind::PendingDataAddress { destination } => Some(destination),
+            O3LiveSpeculativeIssueKind::Scalar { .. }
+            | O3LiveSpeculativeIssueKind::Control { .. } => None,
+        }
+    }
+
+    pub(crate) fn data_producers(&self) -> &[O3LiveIssueSourceProducer] {
+        &self.scheduling.data_producers
     }
 
     pub(crate) const fn instruction(&self) -> RiscvInstruction {
@@ -239,11 +268,12 @@ impl O3RuntimeState {
             instruction,
             consumed_requests.to_vec(),
         )?;
-        self.live_staged_fetch_identity_matches(
-            candidate.sequence(),
-            candidate.instruction(),
-            consumed_requests,
-        )
+        (candidate.is_pending_data_address()
+            || self.live_staged_fetch_identity_matches(
+                candidate.sequence(),
+                candidate.instruction(),
+                consumed_requests,
+            ))
         .then_some(candidate)
     }
 
@@ -254,15 +284,6 @@ impl O3RuntimeState {
         instruction: RiscvInstruction,
         consumed_requests: Vec<MemoryRequestId>,
     ) -> Option<O3LiveIssueSchedulingCandidate> {
-        let (scalar_destination, control, sources) = if let Some((destination, sources)) =
-            o3_predicted_scalar_descendant_operands(instruction)
-        {
-            (Some(destination), None, sources)
-        } else {
-            let control = o3_live_control_operands(instruction)?;
-            let sources = control.sources().to_vec();
-            (None, Some(control), sources)
-        };
         let Some((index, entry)) = self
             .snapshot
             .reorder_buffer
@@ -273,15 +294,63 @@ impl O3RuntimeState {
         else {
             return None;
         };
-        if !self.live_staged_instruction_matches(entry.sequence(), instruction)
-            || index == 0
-            || self
-                .live_speculative_executions
-                .iter()
-                .any(|issued| issued.sequence == entry.sequence())
+        if self
+            .live_speculative_executions
+            .iter()
+            .any(|issued| issued.sequence == entry.sequence())
         {
             return None;
         }
+        if let Some((destination, producer_register, producer_sequence)) = self
+            .pending_data_address_candidate_metadata(
+                entry.sequence(),
+                pc,
+                instruction,
+                &consumed_requests,
+            )
+        {
+            let expected_producer = O3LiveIssueSourceProducer {
+                sequence: producer_sequence,
+                source: producer_register,
+            };
+            let mut data_producers = self.live_issue_source_producers(index, &[producer_register]);
+            if data_producers.is_empty()
+                && self
+                    .pending_data_address_committed_producer_ready_tick(
+                        producer_sequence,
+                        producer_register,
+                    )
+                    .is_some()
+            {
+                data_producers.push(expected_producer);
+            }
+            if data_producers.as_slice() != [expected_producer] {
+                return None;
+            }
+            return Some(O3LiveIssueSchedulingCandidate {
+                request_index,
+                sequence: entry.sequence(),
+                pc,
+                instruction,
+                consumed_requests,
+                kind: O3LiveSpeculativeIssueKind::PendingDataAddress { destination },
+                op_class: O3IssueOpClass::Memory,
+                control_dependency: None,
+                data_producers,
+            });
+        }
+        if index == 0 || !self.live_staged_instruction_matches(entry.sequence(), instruction) {
+            return None;
+        }
+        let (scalar_destination, control, sources) = if let Some((destination, sources)) =
+            o3_predicted_scalar_descendant_operands(instruction)
+        {
+            (Some(destination), None, sources)
+        } else {
+            let control = o3_live_control_operands(instruction)?;
+            let sources = control.sources().to_vec();
+            (None, Some(control), sources)
+        };
         let staged_destination = staged_rename_entry(entry);
         let kind = if let Some(destination) = scalar_destination {
             let Some(staged_destination) = staged_destination else {
@@ -341,15 +410,33 @@ impl O3RuntimeState {
         let mut forwarded_ready_tick = 0;
         for producer in scheduling.data_producers.iter().copied() {
             let (write, ready_tick) =
-                self.live_issue_source_value(producer.sequence(), producer.source())?;
+                match self.live_issue_source_value(producer.sequence(), producer.source()) {
+                    Some((write, ready_tick)) => (Some(write), ready_tick),
+                    None if matches!(
+                        scheduling.kind,
+                        O3LiveSpeculativeIssueKind::PendingDataAddress { .. }
+                    ) =>
+                    {
+                        (
+                            None,
+                            self.pending_data_address_committed_producer_ready_tick(
+                                producer.sequence(),
+                                producer.source(),
+                            )?,
+                        )
+                    }
+                    None => return None,
+                };
             if !producer_sequences.contains(&producer.sequence()) {
                 producer_sequences.push(producer.sequence());
             }
-            if !forwarded_register_writes
-                .iter()
-                .any(|forwarded: &RegisterWrite| forwarded.register() == producer.source())
-            {
-                forwarded_register_writes.push(write);
+            if let Some(write) = write {
+                if !forwarded_register_writes
+                    .iter()
+                    .any(|forwarded: &RegisterWrite| forwarded.register() == producer.source())
+                {
+                    forwarded_register_writes.push(write);
+                }
             }
             forwarded_ready_tick = forwarded_ready_tick.max(ready_tick);
         }
@@ -397,6 +484,7 @@ impl O3RuntimeState {
             return Ok(false);
         }
         let valid_kind = match candidate.scheduling.kind {
+            O3LiveSpeculativeIssueKind::PendingDataAddress { .. } => false,
             O3LiveSpeculativeIssueKind::Scalar { destination } => {
                 execution.next_pc()
                     == execution
@@ -507,7 +595,7 @@ impl O3RuntimeState {
         producers
     }
 
-    fn live_issue_source_value(
+    pub(super) fn live_issue_source_value(
         &self,
         sequence: u64,
         source: Register,

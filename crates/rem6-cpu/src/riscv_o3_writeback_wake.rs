@@ -150,6 +150,7 @@ impl RiscvCore {
         let memory_result = state
             .o3_runtime
             .earliest_unpublished_memory_result_writeback_tick();
+        let pending_address = state.o3_runtime.pending_data_address_wake_tick();
         let live_gate_ready_tick = state.live_retire_gate.pending_ready_tick();
         let live_gate_wakes = state.live_retire_gate.owned_scheduler_wakes();
         let restored_live_gate = live_gate_wakes
@@ -165,12 +166,20 @@ impl RiscvCore {
                     .contains_key(&forwarded.fetch_request().sequence())
             })
             .map(|forwarded| forwarded.ready_tick().max(now));
-        let desired = [memory_result, restored_live_gate, forwarded_control]
-            .into_iter()
-            .flatten()
-            .min();
+        let desired = [
+            memory_result,
+            pending_address,
+            restored_live_gate,
+            forwarded_control,
+        ]
+        .into_iter()
+        .flatten()
+        .min();
         state.o3_writeback_wake.set_desired_tick(desired, now);
-        if restored_live_gate == Some(now) || forwarded_control == Some(now) {
+        if pending_address == Some(now)
+            || restored_live_gate == Some(now)
+            || forwarded_control == Some(now)
+        {
             state
                 .o3_writeback_wake
                 .requested_tick_with_current(now, true)
@@ -192,9 +201,18 @@ impl RiscvCore {
     }
 
     pub fn mark_o3_writeback_wake_fired(&self, now: Tick) {
+        let fetch_events = self.core.fetch_events();
         let mut state = self.state.lock().expect("riscv core lock");
         state.o3_runtime.prune_writeback_calendar_before(now);
         state.o3_writeback_wake.mark_fired(now);
+        if state
+            .o3_runtime
+            .pending_data_address_wake_tick()
+            .is_some_and(|tick| tick <= now)
+        {
+            state.wake_ready_o3_data_access_younger_window(now, &fetch_events);
+            state.refresh_o3_writeback_wake(now);
+        }
     }
 
     pub fn owned_o3_writeback_wakes(&self) -> Vec<(SchedulerInstanceId, PendingEventSnapshot)> {
@@ -232,9 +250,35 @@ impl RiscvCore {
 
 impl RiscvCoreState {
     pub(crate) fn refresh_o3_writeback_wake(&mut self, now: Tick) {
-        let desired = self
+        let memory_result = self
             .o3_runtime
             .earliest_unpublished_memory_result_writeback_tick();
+        let pending_address = self.o3_runtime.pending_data_address_wake_tick();
+        let live_gate_ready_tick = self.live_retire_gate.pending_ready_tick();
+        let restored_live_gate = self
+            .live_retire_gate
+            .owned_scheduler_wakes()
+            .is_empty()
+            .then_some(live_gate_ready_tick)
+            .flatten();
+        let forwarded_control = self
+            .o3_runtime
+            .producer_forwarded_control_target()
+            .filter(|forwarded| {
+                !self
+                    .branch_speculations
+                    .contains_key(&forwarded.fetch_request().sequence())
+            })
+            .map(|forwarded| forwarded.ready_tick().max(now));
+        let desired = [
+            memory_result,
+            pending_address,
+            restored_live_gate,
+            forwarded_control,
+        ]
+        .into_iter()
+        .flatten()
+        .min();
         self.o3_writeback_wake.set_desired_tick(desired, now);
     }
 }
