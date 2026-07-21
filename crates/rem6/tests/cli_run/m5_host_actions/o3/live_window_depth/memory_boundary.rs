@@ -41,6 +41,30 @@ fn five_load_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
+fn four_load_scalar_binary(name: &str) -> std::path::PathBuf {
+    let mut words = vec![
+        u_type(0, 10, 0x17),
+        i_type(128, 10, 0x0, 10, 0x13),
+        i_type(0, 10, 0b011, 5, 0x03),
+        i_type(8, 10, 0b011, 6, 0x03),
+        i_type(16, 10, 0b011, 7, 0x03),
+        i_type(24, 10, 0b011, 8, 0x03),
+        i_type(9, 0, 0x0, 9, 0x13),
+        i_type(1, 9, 0x0, 11, 0x13),
+        i_type(1, 11, 0x0, 12, 0x13),
+        i_type(1, 12, 0x0, 13, 0x13),
+        m5op(M5_EXIT),
+        m5op(M5_FAIL),
+    ];
+    while words.len() * 4 < 128 {
+        words.push(0);
+    }
+    words.extend([1, 0, 2, 0, 3, 0, 4, 0]);
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
 fn five_load_json(path: &Path, max_tick: u64) -> Value {
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
         .args([
@@ -94,6 +118,84 @@ fn dumped_memory_hex(json: &Value) -> String {
         .iter()
         .map(|entry| entry.pointer("/hex").and_then(Value::as_str).unwrap())
         .collect()
+}
+
+fn four_load_scalar_json(path: &Path, max_tick: u64) -> Value {
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            &max_tick.to_string(),
+            "--stats-format",
+            "json",
+            "--execute",
+            "--debug-flags",
+            "O3,Data,Fetch,Memory",
+            "--riscv-execution-mode",
+            "detailed",
+            "--riscv-o3-scalar-memory-depth",
+            "4",
+            "--riscv-o3-scalar-live-window-depth",
+            "8",
+            "--riscv-o3-issue-width",
+            "4",
+            "--memory-system",
+            "direct",
+            "--memory-route-delay",
+            "80",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+#[test]
+fn rem6_run_o3_scalar_live_depth_eight_combines_four_memory_and_four_scalar_rows() {
+    let path = four_load_scalar_binary("o3-live-eight-four-memory-four-scalar");
+    let completed = four_load_scalar_json(&path, 4_000);
+    for (register, value) in [
+        ("x5", "0x1"),
+        ("x6", "0x2"),
+        ("x7", "0x3"),
+        ("x8", "0x4"),
+        ("x9", "0x9"),
+        ("x11", "0xa"),
+        ("x12", "0xb"),
+        ("x13", "0xc"),
+    ] {
+        assert_eq!(
+            completed
+                .pointer(&format!("/cores/0/registers/{register}"))
+                .and_then(Value::as_str),
+            Some(value)
+        );
+    }
+    let first_response = LOAD_PCS[..4]
+        .iter()
+        .map(|pc| event_u64(event_at_pc(&completed, pc), "lsq_data_response_tick"))
+        .min()
+        .unwrap();
+    let resident = four_load_scalar_json(&path, first_response - 1);
+    let rob = resident
+        .pointer("/cores/0/o3_runtime/snapshot/rob/entries")
+        .and_then(Value::as_array)
+        .unwrap();
+    assert_eq!(rob.len(), 8, "four-memory/four-scalar window: {resident}");
+    assert_eq!(
+        resident
+            .pointer("/cores/0/o3_runtime/snapshot/lsq/count")
+            .and_then(Value::as_u64),
+        Some(4)
+    );
 }
 
 #[test]

@@ -147,6 +147,20 @@ fn rem6_run_host_switch_preserves_deep_scalar_window_timing() {
         &["--host-switch-cpu-mode", &switch_arg],
     );
     assert_final_witness(&switched, FINAL_MEMORY, final_registers());
+    let baseline_events = baseline
+        .pointer("/debug/o3_trace/0/events")
+        .and_then(Value::as_array)
+        .unwrap();
+    let switched_events = switched
+        .pointer("/debug/o3_trace/0/events")
+        .and_then(Value::as_array)
+        .unwrap();
+    let transferred_end = baseline_events
+        .iter()
+        .position(|event| event.pointer("/pc").and_then(Value::as_str) == Some(ROW_PCS[6]))
+        .unwrap();
+    let transferred_events = &baseline_events[..=transferred_end];
+    assert_eq!(switched_events.as_slice(), transferred_events);
     for pc in std::iter::once(LOAD_PC).chain(ROW_PCS) {
         let expected = event_at_pc(&baseline, pc);
         let actual = event_at_pc(&switched, pc);
