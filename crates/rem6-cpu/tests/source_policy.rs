@@ -2,6 +2,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const MAX_FACADE_LINES: usize = 1300;
+const MAX_O3_RUNTIME_DEEP_CLEANUP_TEST_LINES: usize = 350;
+const MAX_O3_RUNTIME_ISSUE_DEPENDENCY_LINES: usize = 500;
+const MAX_O3_RUNTIME_ISSUE_DEPENDENCY_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_ISSUE_LINES: usize = 800;
 const MAX_O3_RUNTIME_MEMORY_LINES: usize = 1200;
 const MAX_O3_RUNTIME_ROOT_LINES: usize = 1200;
@@ -1239,6 +1242,65 @@ fn o3_runtime_issue_lives_in_focused_module() {
         !live_retire.contains("O3ScopedIssueScheduler"),
         "src/riscv_live_retire_window.rs must not construct the scoped issue scheduler"
     );
+}
+
+#[test]
+fn deep_scalar_issue_dependency_ownership_is_focused() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let issue = fs::read_to_string(crate_dir.join("src/o3_runtime_issue.rs")).unwrap();
+    let dependency =
+        fs::read_to_string(crate_dir.join("src/o3_runtime_issue/dependency.rs")).unwrap();
+    let dependency_tests =
+        fs::read_to_string(crate_dir.join("src/o3_runtime_issue_tests/dependency_scopes.rs"))
+            .unwrap();
+    let cleanup =
+        fs::read_to_string(crate_dir.join("src/o3_runtime_writeback_tests/deep_scalar_cleanup.rs"))
+            .unwrap();
+    assert!(issue.lines().count() <= MAX_O3_RUNTIME_ISSUE_LINES);
+    assert!(dependency.lines().count() <= MAX_O3_RUNTIME_ISSUE_DEPENDENCY_LINES);
+    assert!(dependency_tests.lines().count() <= MAX_O3_RUNTIME_ISSUE_DEPENDENCY_TEST_LINES);
+    assert!(cleanup.lines().count() <= MAX_O3_RUNTIME_DEEP_CLEANUP_TEST_LINES);
+    assert!(issue.contains("mod dependency;"));
+    for removed in [
+        "enum O3LiveIssueDependencyReadiness",
+        "fn earliest_dependency_tick",
+        "fn live_issue_dependencies_ready_at",
+        "fn live_issue_dependency_readiness",
+    ] {
+        let offenders = rust_source_files(&crate_dir.join("src"))
+            .into_iter()
+            .filter(|path| fs::read_to_string(path).unwrap().contains(removed))
+            .collect::<Vec<_>>();
+        assert!(
+            offenders.is_empty(),
+            "manual issue authority remains: {removed}"
+        );
+    }
+
+    let defaults_path = crate_dir.join("src/riscv_defaults.rs");
+    let defaults = fs::read_to_string(&defaults_path).unwrap();
+    let rem6_src = crate_dir.parent().unwrap().join("rem6/src");
+    let mut sources = rust_source_files(&crate_dir.join("src"));
+    sources.extend(rust_source_files(&rem6_src));
+    for constant in [
+        "MAX_RISCV_O3_SCALAR_MEMORY_DEPTH",
+        "MAX_RISCV_O3_SCALAR_LIVE_WINDOW_DEPTH",
+    ] {
+        assert!(defaults.contains(&format!("pub const {constant}")));
+        let duplicate_definitions = sources
+            .iter()
+            .filter(|path| path.as_path() != defaults_path.as_path())
+            .filter(|path| {
+                fs::read_to_string(path)
+                    .unwrap()
+                    .contains(&format!("const {constant}"))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            duplicate_definitions.is_empty(),
+            "duplicate scalar-depth definition for {constant}: {duplicate_definitions:?}"
+        );
+    }
 }
 
 #[test]

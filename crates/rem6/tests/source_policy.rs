@@ -24,6 +24,8 @@ mod m5_host_action_fixture_ownership;
 mod m5_host_action_o3_runtime_ownership;
 #[path = "source_policy/o3_alias_authority.rs"]
 mod o3_alias_authority;
+#[path = "source_policy/o3_live_window_ownership.rs"]
+mod o3_live_window_ownership;
 #[path = "source_policy/power_activity_ownership.rs"]
 mod power_activity_ownership;
 #[path = "source_policy/producer_forwarded_jalr_ownership.rs"]
