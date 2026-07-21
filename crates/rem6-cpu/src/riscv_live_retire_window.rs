@@ -195,7 +195,9 @@ impl RiscvCore {
         gate_scheduler: &mut Option<(&mut PartitionedScheduler, RiscvLiveRetireGateWakeKind)>,
         window: RiscvLiveRetireWindowRequest<'_>,
     ) -> Result<Option<u64>, RiscvCpuError> {
-        if crate::riscv_fetch_ahead::hart_has_enabled_pending_interrupt(&state.hart) {
+        if state.o3_runtime.has_pending_data_address()
+            && crate::riscv_fetch_ahead::hart_has_enabled_pending_interrupt(&state.hart)
+        {
             let retire_tick = match gate_scheduler.as_mut() {
                 Some((scheduler, _)) => scheduler
                     .partition_now(self.partition())
