@@ -53,9 +53,10 @@ pub(in crate::riscv_fetch_ahead) fn result_head_allows_younger_read(
         } => {
             !acquire
                 && !release
-                && !head_authorization
-                    .physical_range()
-                    .overlaps(younger_authorization.physical_range())
+                && head_authorization
+                    .resolved_range()
+                    .zip(younger_authorization.resolved_range())
+                    .is_some_and(|(head, younger)| !head.overlaps(younger))
         }
         _ => true,
     }

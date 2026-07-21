@@ -76,6 +76,9 @@ impl RiscvCoreState {
         if authorization.role() != expected_role {
             return false;
         }
+        if authorization.dependent_source().is_some() {
+            return false;
+        }
         let Some(integer_destination) = o3_memory_result_window_destination(access) else {
             return false;
         };
@@ -89,14 +92,16 @@ impl RiscvCoreState {
         let Ok(span) = masked_vector_memory_request_span(access, base_address, base_size) else {
             return false;
         };
-        authorization.matches(O3MemoryResultWindowRoute::Memory, span.address, span.size)
-            && matches!(
-                self.pma
-                    .is_uncacheable(span.address.get(), span.size.bytes()),
-                Ok(false)
-            )
-            && self
-                .o3_runtime
-                .can_stage_memory_result_window_access(access)
+        authorization.matches_resolved_range(
+            O3MemoryResultWindowRoute::Memory,
+            span.address,
+            span.size,
+        ) && matches!(
+            self.pma
+                .is_uncacheable(span.address.get(), span.size.bytes()),
+            Ok(false)
+        ) && self
+            .o3_runtime
+            .can_stage_memory_result_window_access(access)
     }
 }

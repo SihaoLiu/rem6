@@ -270,11 +270,33 @@ fn split_head_and_whole_younger_result_keep_distinct_authorization_identities() 
 }
 
 #[test]
-fn dependent_or_overlapping_second_result_does_not_open_a_pair() {
+fn exact_dependent_scalar_read_uses_dependent_address_role() {
+    let second = i_type(0, 11, 0b011, 13, 0x03);
+    let core = atomic_pair_core(second, 0x9010);
+
+    assert_eq!(
+        core.next_fetch_ahead_before_retire()
+            .map(|decision| decision.pc()),
+        Some(Address::new(0x8008))
+    );
+    assert_eq!(
+        core.state
+            .lock()
+            .expect("riscv core lock")
+            .memory_result_window_authorizations
+            .get(&request(1))
+            .copied()
+            .map(O3MemoryResultWindowAuthorization::role),
+        Some(O3MemoryResultWindowRole::YoungerDependentRead)
+    );
+}
+
+#[test]
+fn resolved_dependent_or_overlapping_second_result_does_not_open_a_pair() {
     for (label, second, base) in [
         (
-            "dependent integer base",
-            i_type(0, 11, 0b011, 13, 0x03),
+            "resolved dependent float base",
+            i_type(0, 11, 0b011, 2, 0x07),
             0x9010,
         ),
         (

@@ -32,6 +32,8 @@ const MAX_RISCV_FETCH_AHEAD_PREPARED_OWNER_LINES: usize = 390;
 const MAX_RISCV_DATA_ACCESS_RESULT_LINES: usize = 450;
 const MAX_RISCV_DATA_ACCESS_RESULT_PAIR_POLICY_LINES: usize = 100;
 const MAX_RISCV_DATA_ACCESS_RESULT_EFFECT_POLICY_LINES: usize = 120;
+const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_LINES: usize = 200;
+const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_FETCH_TEST_LINES: usize = 450;
 const MAX_RISCV_RETAINED_DATA_ACCESS_RESULT_LINES: usize = 100;
 const MAX_RISCV_MEMORY_RESULT_AUTHORIZATION_LINES: usize = 150;
 const MAX_RISCV_BUFFERED_EFFECT_LINES: usize = 220;
@@ -858,9 +860,15 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
         crate_dir.join("src/riscv_fetch_ahead/detailed_o3/data_access_result_pair_policy.rs");
     let effect_policy_path =
         crate_dir.join("src/riscv_fetch_ahead/detailed_o3/data_access_result_effect_policy.rs");
+    let dependent_address_path =
+        crate_dir.join("src/riscv_fetch_ahead/detailed_o3/dependent_result_address.rs");
     let retained_path =
         crate_dir.join("src/riscv_fetch_ahead/detailed_o3/retained_data_access_result.rs");
+    let fetch_tests_root_path = crate_dir.join("src/riscv_fetch_ahead/tests.rs");
+    let dependent_address_test_path =
+        crate_dir.join("src/riscv_fetch_ahead/tests/dependent_result_address.rs");
     let root = fs::read_to_string(&root_path).unwrap();
+    let fetch_tests_root = fs::read_to_string(&fetch_tests_root_path).unwrap();
 
     assert!(
         root.contains("#[path = \"detailed_o3/data_access_result.rs\"]\nmod data_access_result;"),
@@ -880,6 +888,12 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
     );
     assert!(
         root.contains(
+            "#[path = \"detailed_o3/dependent_result_address.rs\"]\nmod dependent_result_address;"
+        ),
+        "detailed_o3.rs must delegate dependent-result address policy to the focused child"
+    );
+    assert!(
+        root.contains(
             "#[path = \"detailed_o3/retained_data_access_result.rs\"]\nmod retained_data_access_result;"
         ),
         "detailed_o3.rs must delegate retained result authority to the focused child"
@@ -892,6 +906,7 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
     let child = fs::read_to_string(&child_path).unwrap();
     let pair_policy = fs::read_to_string(&pair_policy_path).unwrap();
     let effect_policy = fs::read_to_string(&effect_policy_path).unwrap();
+    let dependent_address = fs::read_to_string(&dependent_address_path).unwrap();
     let retained = fs::read_to_string(&retained_path).unwrap();
     assert!(
         child.lines().count() <= MAX_RISCV_DATA_ACCESS_RESULT_LINES,
@@ -926,6 +941,37 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
             "data_access_result.rs must not own effect policy `{anchor}`"
         );
     }
+    assert!(dependent_address_path.is_file());
+    assert!(include_macro_lines(&dependent_address).is_empty());
+    assert!(
+        dependent_address.lines().count() <= MAX_RISCV_DEPENDENT_RESULT_ADDRESS_LINES,
+        "dependent_result_address.rs exceeds {MAX_RISCV_DEPENDENT_RESULT_ADDRESS_LINES} lines"
+    );
+    assert!(
+        dependent_address.contains(
+            "pub(in crate::riscv_fetch_ahead) fn dependent_result_address_authorization("
+        ),
+        "dependent-result address policy is missing its focused owner"
+    );
+    let dependent_address_code = rust_code_without_comments_and_literals(&dependent_address);
+    assert_eq!(
+        rust_function_definition_count(
+            &dependent_address_code,
+            "dependent_result_address_authorization"
+        ),
+        1,
+        "dependent-result address policy must own exactly one helper definition"
+    );
+    assert!(
+        external_module_declaration_lines(&dependent_address).is_empty()
+            && path_attribute_lines(&dependent_address).is_empty(),
+        "dependent-result address policy must remain a leaf child"
+    );
+    assert!(
+        !root.contains("fn dependent_result_address_authorization(")
+            && !child.contains("fn dependent_result_address_authorization("),
+        "dependent-result address helper escaped into a root owner"
+    );
     assert!(
         retained.lines().count() <= MAX_RISCV_RETAINED_DATA_ACCESS_RESULT_LINES,
         "retained_data_access_result.rs exceeds {MAX_RISCV_RETAINED_DATA_ACCESS_RESULT_LINES} lines"
@@ -951,6 +997,50 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
         assert!(
             !root.contains(anchor),
             "detailed_o3.rs still owns `{anchor}`"
+        );
+    }
+    assert_eq!(
+        rust_code_without_comments_and_literals(&fetch_tests_root)
+            .matches("mod dependent_result_address;")
+            .count(),
+        1,
+        "fetch-ahead tests must attach dependent_result_address exactly once"
+    );
+    assert!(dependent_address_test_path.is_file());
+    let dependent_address_test_source = fs::read_to_string(&dependent_address_test_path).unwrap();
+    assert!(include_macro_lines(&dependent_address_test_source).is_empty());
+    assert!(
+        line_count(&dependent_address_test_path)
+            <= MAX_RISCV_DEPENDENT_RESULT_ADDRESS_FETCH_TEST_LINES,
+        "dependent_result_address.rs exceeds {MAX_RISCV_DEPENDENT_RESULT_ADDRESS_FETCH_TEST_LINES} lines"
+    );
+    let dependent_address_test =
+        rust_code_without_comments_and_literals(&dependent_address_test_source);
+    assert!(
+        external_module_declaration_lines(&dependent_address_test_source).is_empty()
+            && path_attribute_lines(&dependent_address_test_source).is_empty(),
+        "dependent-result address fetch tests must remain a leaf child"
+    );
+    let expected_tests = [
+        "dependent_scalar_ld_authorizes_addressless_younger_read",
+        "dependent_address_fetch_rejects_non_exact_load_shapes",
+        "dependent_address_authorization_requires_integer_result_head",
+        "dependent_address_atomic_head_rejects_ordering_and_allows_unordered",
+        "dependent_address_authorization_rejects_translation_and_mmio_heads",
+        "dependent_address_counts_as_second_result_and_blocks_third_result",
+        "dependent_address_window_remains_four_rows_at_scalar_live_depth_eight",
+        "retained_unissued_head_preserves_dependent_address_authority",
+    ];
+    assert_eq!(
+        dependent_address_test.matches("#[test]").count(),
+        expected_tests.len(),
+        "dependent-result address fetch tests must expose exactly the focused inventory"
+    );
+    for anchor in expected_tests {
+        assert_eq!(
+            rust_function_definition_count(&dependent_address_test, anchor),
+            1,
+            "missing or duplicated dependent-result address fetch test `{anchor}`"
         );
     }
 
@@ -998,10 +1088,21 @@ fn riscv_memory_result_authorization_has_focused_ownership() {
     for anchor in [
         "enum O3MemoryResultWindowRoute",
         "enum O3MemoryResultWindowRole",
+        "YoungerDependentRead",
+        "enum O3MemoryResultWindowAddressAuthority",
+        "ResolvedRange(AddressRange)",
+        "DependentSource",
         "struct O3MemoryResultWindowAuthorization",
+        "address_authority: O3MemoryResultWindowAddressAuthority",
+        "const fn resolved(",
+        "const fn dependent(\n        integer_destination: Register,",
+        "integer_destination: Some(integer_destination)",
         "const fn is_younger(self)",
         "const fn is_buffered_effect(self)",
+        "const fn resolved_range(self)",
+        "const fn dependent_source(self)",
         "const fn route(self)",
+        "fn matches_resolved_range(",
     ] {
         assert!(
             owner.contains(anchor),
@@ -1012,6 +1113,10 @@ fn riscv_memory_result_authorization_has_focused_ownership() {
             "riscv_fetch_ahead.rs still owns `{anchor}`"
         );
     }
+    assert!(
+        !owner.contains("fn physical_range(") && !owner.contains("fn matches(\n"),
+        "memory-result authorization must expose resolved-only matching"
+    );
     let production = rust_source_files(&crate_dir.join("src"))
         .into_iter()
         .map(|path| fs::read_to_string(path).unwrap())
@@ -3229,6 +3334,15 @@ fn live_window_module_policy_ignores_comments_and_detects_nonliteral_includes() 
     assert_eq!(include_macro_lines("include\n!(\"identity.rs\");\n"), [1]);
     assert!(include_macro_lines("// include!(\"identity.rs\");\n").is_empty());
     assert!(include_macro_lines("include_str!(\"identity.rs\");\n").is_empty());
+    assert_eq!(path_attribute_lines(live), [1]);
+    assert!(path_attribute_lines(commented).is_empty());
+    assert_eq!(external_module_declaration_lines(live), [2]);
+    assert_eq!(
+        external_module_declaration_lines("pub(crate) mod child;\n"),
+        [1]
+    );
+    assert!(external_module_declaration_lines("mod inline {}\n").is_empty());
+    assert!(external_module_declaration_lines("// mod child;\n").is_empty());
 }
 
 #[test]
@@ -3527,8 +3641,13 @@ fn branch_predictor_legacy_checkpoints_use_frozen_payloads() {
 }
 
 fn production_defines_exact_function(source: &str, name: &str) -> bool {
+    rust_function_definition_count(source, name) > 0
+}
+
+fn rust_function_definition_count(source: &str, name: &str) -> usize {
     let chars = source.chars().collect::<Vec<_>>();
     let mut index = 0;
+    let mut count = 0;
     while index < chars.len() {
         let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
             index += 1;
@@ -3540,14 +3659,14 @@ fn production_defines_exact_function(source: &str, name: &str) -> bool {
                 if function_name == name {
                     let after_name = skip_rust_whitespace(&chars, name_end);
                     if matches!(chars.get(after_name), Some('(' | '<')) {
-                        return true;
+                        count += 1;
                     }
                 }
             }
         }
         index = end;
     }
-    false
+    count
 }
 
 fn generic_type_contains_named_type(source: &str, outer: &str, inner: &str) -> bool {
@@ -4539,6 +4658,31 @@ fn include_macro_lines(source: &str) -> Vec<usize> {
         index = end;
     }
     lines
+}
+
+fn path_attribute_lines(source: &str) -> Vec<usize> {
+    rust_code_without_comments_and_literals(source)
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| line.trim_start().starts_with("#[path").then_some(index + 1))
+        .collect()
+}
+
+fn external_module_declaration_lines(source: &str) -> Vec<usize> {
+    rust_code_without_comments_and_literals(source)
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let line = line.trim();
+            let is_external_mod = line.ends_with(';')
+                && (line.starts_with("mod ")
+                    || line.starts_with("pub mod ")
+                    || line.starts_with("pub(crate) mod ")
+                    || line.starts_with("pub(super) mod ")
+                    || (line.starts_with("pub(in ") && line.contains(" mod ")));
+            is_external_mod.then_some(index + 1)
+        })
+        .collect()
 }
 
 fn path_owned_module_declaration_count(source: &str, path: &str, module: &str) -> usize {

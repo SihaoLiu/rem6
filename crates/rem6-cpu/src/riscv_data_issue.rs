@@ -685,7 +685,7 @@ impl RiscvCore {
                 .copied()
                 .is_some_and(|authorization| {
                     authorization.role() == expected_memory_result_role
-                        && authorization.matches(
+                        && authorization.matches_resolved_range(
                             memory_result_route,
                             issue.physical_address,
                             issue.size,
