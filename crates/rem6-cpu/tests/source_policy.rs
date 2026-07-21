@@ -44,7 +44,8 @@ const MAX_O3_RUNTIME_PENDING_ADDRESS_LINES: usize = 650;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FACADE_LINES: usize = 300;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_STAGING_TEST_LINES: usize = 450;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_SCHEDULING_TEST_LINES: usize = 550;
-const MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FAMILY_LINES: usize = 1050;
+const MAX_O3_RUNTIME_PENDING_ADDRESS_LIFECYCLE_TEST_LINES: usize = 650;
+const MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FAMILY_LINES: usize = 1600;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_STAGE_LINES: usize = 250;
 const MAX_RISCV_DETAILED_O3_CONTROL_TEST_ROOT_LINES: usize = 450;
 const MAX_RISCV_DETAILED_O3_LINKED_CONTROL_TEST_LINES: usize = 1500;
@@ -707,6 +708,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let test_root_path = crate_dir.join("src/o3_runtime_pending_address_tests.rs");
     let staging_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/staging.rs");
     let scheduling_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/scheduling.rs");
+    let lifecycle_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/lifecycle.rs");
     let stage_child_path =
         crate_dir.join("src/riscv_live_retire_window/dependent_result_address.rs");
 
@@ -715,6 +717,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         &test_root_path,
         &staging_test_path,
         &scheduling_test_path,
+        &lifecycle_test_path,
         &stage_child_path,
     ] {
         assert!(
@@ -730,6 +733,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let test_root = fs::read_to_string(&test_root_path).unwrap();
     let staging_test = fs::read_to_string(&staging_test_path).unwrap();
     let scheduling_test = fs::read_to_string(&scheduling_test_path).unwrap();
+    let lifecycle_test = fs::read_to_string(&lifecycle_test_path).unwrap();
     let stage_child = fs::read_to_string(&stage_child_path).unwrap();
 
     assert_eq!(
@@ -749,6 +753,15 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         ),
         1,
         "src/o3_runtime.rs must attach the pending-address test facade exactly once"
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &test_root,
+            "o3_runtime_pending_address_tests/lifecycle.rs",
+            "lifecycle"
+        ),
+        1,
+        "pending-address tests must use the focused lifecycle child exactly once"
     );
     assert_eq!(
         path_owned_module_declaration_count(
@@ -780,6 +793,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     assert!(include_macro_lines(&test_root).is_empty());
     assert!(include_macro_lines(&staging_test).is_empty());
     assert!(include_macro_lines(&scheduling_test).is_empty());
+    assert!(include_macro_lines(&lifecycle_test).is_empty());
     assert!(include_macro_lines(&stage_child).is_empty());
     assert!(
         external_module_declaration_lines(&pending).is_empty()
@@ -788,6 +802,8 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
             && path_attribute_lines(&staging_test).is_empty()
             && external_module_declaration_lines(&scheduling_test).is_empty()
             && path_attribute_lines(&scheduling_test).is_empty()
+            && external_module_declaration_lines(&lifecycle_test).is_empty()
+            && path_attribute_lines(&lifecycle_test).is_empty()
             && external_module_declaration_lines(&stage_child).is_empty()
             && path_attribute_lines(&stage_child).is_empty(),
         "Task 3 leaf owners must not declare child modules"
@@ -810,9 +826,14 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "o3_runtime_pending_address_tests/scheduling.rs exceeds {MAX_O3_RUNTIME_PENDING_ADDRESS_SCHEDULING_TEST_LINES} lines"
     );
     assert!(
+        line_count(&lifecycle_test_path) <= MAX_O3_RUNTIME_PENDING_ADDRESS_LIFECYCLE_TEST_LINES,
+        "o3_runtime_pending_address_tests/lifecycle.rs exceeds {MAX_O3_RUNTIME_PENDING_ADDRESS_LIFECYCLE_TEST_LINES} lines"
+    );
+    assert!(
         line_count(&test_root_path)
             + line_count(&staging_test_path)
             + line_count(&scheduling_test_path)
+            + line_count(&lifecycle_test_path)
             < MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FAMILY_LINES,
         "pending-address test family must remain below {MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FAMILY_LINES} lines"
     );
@@ -899,9 +920,10 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
 
     for helper in [
         "stage_pending_data_address_window",
+        "discard_pending_data_address_at_internal",
         "discard_pending_data_address_from",
         "discard_pending_data_address",
-        "clear_pending_data_address_from_without_window",
+        "discard_pending_data_address_at",
     ] {
         assert!(
             production_defines_exact_function(&pending_code, helper),
@@ -965,6 +987,32 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
             rust_function_definition_count(&scheduling_test_code, anchor),
             1,
             "missing or duplicated pending-address scheduling test `{anchor}`"
+        );
+    }
+
+    let expected_lifecycle_tests = [
+        "head_retry_discards_pending_address_and_suffix",
+        "head_failure_discards_pending_address_and_suffix",
+        "redirect_discards_pending_address_and_future_wake",
+        "interrupt_discards_pending_address_and_suffix",
+        "restart_discards_pending_address_and_suffix",
+        "reset_and_restore_clear_pending_address_state",
+        "detailed_mode_disable_discards_pending_address_state",
+        "pending_address_keeps_live_data_handoff_nonquiescent",
+        "pending_address_rejects_live_checkpoint_capture",
+        "drained_pending_address_restores_checkpoint_compatibility",
+    ];
+    let lifecycle_test_code = rust_code_without_comments_and_literals(&lifecycle_test);
+    assert_eq!(
+        lifecycle_test_code.matches("#[test]").count(),
+        expected_lifecycle_tests.len(),
+        "pending-address lifecycle tests must expose exactly the focused inventory"
+    );
+    for anchor in expected_lifecycle_tests {
+        assert_eq!(
+            rust_function_definition_count(&lifecycle_test_code, anchor),
+            1,
+            "missing or duplicated pending-address lifecycle test `{anchor}`"
         );
     }
 }

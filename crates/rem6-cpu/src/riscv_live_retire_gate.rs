@@ -354,6 +354,11 @@ impl RiscvCore {
                     event.clear_data_access_retirement();
                 }
             }
+            let pending_address_wake = state.o3_runtime.pending_data_address_wake_tick().is_some();
+            state.o3_runtime.discard_pending_data_address();
+            if pending_address_wake {
+                state.o3_writeback_wake.clear();
+            }
             if state.o3_runtime.has_live_retirement_authority() {
                 return;
             }

@@ -424,7 +424,6 @@ impl O3RuntimeState {
     pub(crate) fn discard_live_staged_instructions(&mut self) {
         self.discard_live_writeback_reservations();
         self.discard_live_data_access_lifecycle();
-        self.clear_pending_data_address_from_without_window(0);
         self.snapshot
             .reorder_buffer
             .retain(|entry| !entry.is_live_staged());
@@ -441,7 +440,6 @@ impl O3RuntimeState {
     pub(crate) fn discard_live_staged_instructions_at(&mut self, now: u64) {
         self.discard_live_writeback_reservations();
         self.discard_live_data_access_lifecycle_at(now);
-        self.clear_pending_data_address_from_without_window(0);
         self.snapshot
             .reorder_buffer
             .retain(|entry| !entry.is_live_staged());
@@ -492,17 +490,24 @@ impl O3RuntimeState {
     }
 
     pub(super) fn discard_live_staged_window_from(&mut self, sequence: u64) {
+        self.discard_pending_data_address_from(sequence);
         self.discard_live_writeback_from_sequence(sequence);
         self.discard_live_staged_window_rows_from_at(sequence, None);
     }
 
     pub(super) fn discard_live_staged_window_from_at(&mut self, sequence: u64, now: u64) {
+        if self
+            .pending_data_address
+            .as_ref()
+            .is_some_and(|pending| pending.sequence >= sequence)
+        {
+            self.discard_pending_data_address_at(now);
+        }
         self.discard_future_writeback_from_sequence(sequence, now);
         self.discard_live_staged_window_rows_from_at(sequence, Some(now));
     }
 
     fn discard_live_staged_window_rows_from_at(&mut self, sequence: u64, now: Option<u64>) {
-        self.clear_pending_data_address_from_without_window(sequence);
         self.snapshot
             .reorder_buffer
             .retain(|entry| !entry.is_live_staged() || entry.sequence() < sequence);

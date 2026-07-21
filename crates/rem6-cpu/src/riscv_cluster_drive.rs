@@ -86,6 +86,37 @@ impl PreparedParallelActions {
         self.actions.drain(..)
     }
 
+    fn discard_stale_data_actions(&mut self) -> Vec<usize> {
+        let mut discarded_transactions = Vec::new();
+        self.actions.retain(|action| {
+            let current = match action {
+                PreparedParallelAction::Data { cleanup, .. }
+                | PreparedParallelAction::LocalDataFailure { cleanup, .. }
+                | PreparedParallelAction::LocalDataForwarding { cleanup, .. }
+                | PreparedParallelAction::LocalBufferedEffect { cleanup, .. } => {
+                    cleanup.is_current()
+                }
+                PreparedParallelAction::BufferedEffectData {
+                    core, request_id, ..
+                } => core.owns_ready_buffered_o3_effect(*request_id),
+                _ => true,
+            };
+            if !current {
+                match action {
+                    PreparedParallelAction::Data {
+                        transaction_index, ..
+                    }
+                    | PreparedParallelAction::BufferedEffectData {
+                        transaction_index, ..
+                    } => discarded_transactions.push(*transaction_index),
+                    _ => {}
+                }
+            }
+            current
+        });
+        discarded_transactions
+    }
+
     fn cancel_pipeline_cycles(
         &self,
         scheduler: &mut PartitionedScheduler,
@@ -108,15 +139,31 @@ pub(crate) fn finish_prepared_parallel_actions(
     transactions: Vec<ParallelMemoryTransaction>,
 ) -> Result<Vec<RiscvClusterDriveEvent>, RiscvClusterError> {
     debug_assert_eq!(transaction_cpus.len(), transactions.len());
-    let events = if transactions.is_empty() {
+    let discarded_transactions = prepared_actions.discard_stale_data_actions();
+    let transaction_count = transactions.len();
+    let mut retained_indices = vec![true; transaction_count];
+    for index in discarded_transactions {
+        retained_indices[index] = false;
+    }
+    let mut retained_transaction_indices = Vec::new();
+    let mut retained_transaction_cpus = Vec::new();
+    let mut retained_transactions = Vec::new();
+    for (index, (cpu, transaction)) in transaction_cpus.into_iter().zip(transactions).enumerate() {
+        if retained_indices[index] {
+            retained_transaction_indices.push(index);
+            retained_transaction_cpus.push(cpu);
+            retained_transactions.push(transaction);
+        }
+    }
+    let submitted_events = if retained_transactions.is_empty() {
         Vec::new()
     } else {
-        match transport.submit_parallel_batch(scheduler, transactions) {
+        match transport.submit_parallel_batch(scheduler, retained_transactions) {
             Ok(events) => events,
             Err(error) => {
                 prepared_actions.cancel_pipeline_cycles(scheduler)?;
                 return Err(RiscvClusterError::Core {
-                    cpu: transaction_cpus
+                    cpu: retained_transaction_cpus
                         .first()
                         .copied()
                         .expect("batch submission has at least one CPU"),
@@ -125,6 +172,13 @@ pub(crate) fn finish_prepared_parallel_actions(
             }
         }
     };
+    let mut events = vec![None; transaction_count];
+    for (index, event) in retained_transaction_indices
+        .into_iter()
+        .zip(submitted_events)
+    {
+        events[index] = Some(event);
+    }
 
     let mut actions = Vec::with_capacity(prepared_actions.len());
     let mut pipeline_cycles = Vec::new();
@@ -151,7 +205,8 @@ pub(crate) fn finish_prepared_parallel_actions(
                 Ok(()) => actions.push(RiscvClusterDriveEvent::new(
                     cpu,
                     RiscvCoreDriveAction::FetchIssued {
-                        event: events[transaction_index],
+                        event: events[transaction_index]
+                            .expect("retained fetch action owns a submitted transaction"),
                     },
                 )),
                 Err(error) => {
@@ -170,7 +225,8 @@ pub(crate) fn finish_prepared_parallel_actions(
                 actions.push(RiscvClusterDriveEvent::new(
                     cpu,
                     RiscvCoreDriveAction::DataAccessIssued {
-                        event: events[transaction_index],
+                        event: events[transaction_index]
+                            .expect("retained data action owns a submitted transaction"),
                     },
                 ));
             }
@@ -245,7 +301,8 @@ pub(crate) fn finish_prepared_parallel_actions(
                 actions.push(RiscvClusterDriveEvent::new(
                     cpu,
                     RiscvCoreDriveAction::DataAccessIssued {
-                        event: events[transaction_index],
+                        event: events[transaction_index]
+                            .expect("retained buffered effect owns a submitted transaction"),
                     },
                 ));
             }

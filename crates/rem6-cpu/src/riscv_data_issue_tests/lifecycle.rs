@@ -1,4 +1,8 @@
+use super::dependent_result_address::PendingIssueFixture;
 use super::*;
+use crate::riscv_cluster_drive::{
+    finish_prepared_parallel_actions, push_prepared_data_action, PreparedParallelActions,
+};
 
 #[test]
 fn retry_response_discards_pending_o3_trace_data_access_outcome() {
@@ -89,6 +93,76 @@ fn control_boundary_after_stats_reset_discards_pending_o3_data_access_outcome() 
     state.o3_runtime.record_data_access_outcome(&event, 41, 7);
     assert_eq!(state.o3_runtime.stats().lsq_data_latency_samples(), 0);
     assert_eq!(state.o3_runtime.stats().lsq_data_latency_ticks(), 0);
+}
+
+#[test]
+fn cluster_batch_discards_invalidated_prepared_dependent_address_before_transport() {
+    let mut fixture = PendingIssueFixture::load(0x9000);
+    let target_calls = Arc::new(AtomicU64::new(0));
+    let responder_calls = Arc::clone(&target_calls);
+    let prepared = fixture
+        .core
+        .prepare_data_parallel_access(
+            fixture.scheduler.now(),
+            &fixture.transport,
+            MemoryTrace::new(),
+            move |_delivery, _context| {
+                responder_calls.fetch_add(1, Ordering::Relaxed);
+                TargetOutcome::NoResponse
+            },
+        )
+        .unwrap()
+        .expect("dependent address prepares");
+    let mut prepared_actions = PreparedParallelActions::new();
+    let mut transaction_cpus = Vec::new();
+    let mut transactions = Vec::new();
+    assert!(push_prepared_data_action(
+        CpuId::new(0),
+        &fixture.core,
+        Some(prepared),
+        &mut prepared_actions,
+        &mut transaction_cpus,
+        &mut transactions,
+    ));
+    fixture.core.redirect_pc(Address::new(0x9000));
+
+    let submission = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        finish_prepared_parallel_actions(
+            &mut fixture.scheduler,
+            &fixture.transport,
+            prepared_actions,
+            transaction_cpus,
+            transactions,
+        )
+    }));
+
+    assert!(submission.is_ok(), "stale prepared data must fail closed");
+    assert!(submission.unwrap().unwrap().is_empty());
+    assert!(fixture.scheduler.is_idle());
+    assert_eq!(target_calls.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn direct_submit_discards_invalidated_prepared_dependent_address_before_transport() {
+    let mut fixture = PendingIssueFixture::load(0x9000);
+    let prepared = fixture
+        .core
+        .prepare_data_parallel_access(
+            fixture.scheduler.now(),
+            &fixture.transport,
+            MemoryTrace::new(),
+            |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap()
+        .expect("dependent address prepares");
+    fixture.core.redirect_pc(Address::new(0x9000));
+
+    assert!(fixture
+        .core
+        .submit_prepared_data_parallel_access(&mut fixture.scheduler, &fixture.transport, prepared,)
+        .unwrap()
+        .is_none());
+    assert!(fixture.scheduler.is_idle());
 }
 
 #[test]

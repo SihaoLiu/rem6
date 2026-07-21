@@ -107,17 +107,26 @@ impl RiscvCore {
                 transaction,
                 cleanup,
             } => {
+                if !cleanup.is_current() {
+                    return Ok(None);
+                }
                 let event = submit_single_parallel_data(scheduler, transport, transaction)?;
                 self.record_data_issue(issue);
                 cleanup.disarm();
                 Ok(Some(event))
             }
             PreparedDataParallelAccess::ConditionalFailed { issue, cleanup } => {
+                if !cleanup.is_current() {
+                    return Ok(None);
+                }
                 let event = self.schedule_store_conditional_failure_parallel(scheduler, issue)?;
                 cleanup.disarm();
                 Ok(Some(event))
             }
             PreparedDataParallelAccess::Forwarded { issue, cleanup } => {
+                if !cleanup.is_current() {
+                    return Ok(None);
+                }
                 let event = self.schedule_forwarded_load_completion_parallel(scheduler, issue)?;
                 cleanup.disarm();
                 Ok(Some(event))
@@ -143,6 +152,9 @@ impl RiscvCore {
                 request_id,
                 transaction,
             } => {
+                if !self.owns_ready_buffered_o3_effect(request_id) {
+                    return Ok(None);
+                }
                 let event = submit_single_parallel_data(scheduler, transport, transaction)?;
                 self.record_buffered_o3_effect_submission(request_id);
                 Ok(Some(event))
@@ -167,21 +179,65 @@ fn submit_single_parallel_data(
 pub(crate) struct PreparedDataIssueCleanup {
     core: RiscvCore,
     fetch_request: MemoryRequestId,
+    owner: PreparedDataIssueOwner,
     armed: bool,
 }
 
 impl PreparedDataIssueCleanup {
     fn new(core: &RiscvCore, fetch_request: MemoryRequestId) -> Self {
+        let state = core
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let owner = if state
+            .o3_runtime
+            .pending_data_address_owns_fetch(fetch_request)
+        {
+            PreparedDataIssueOwner::PendingAddress
+        } else if state.o3_runtime.deferred_live_data_access_execution() == Some(fetch_request) {
+            PreparedDataIssueOwner::DeferredLiveDataAccess
+        } else {
+            PreparedDataIssueOwner::Execution
+        };
+        drop(state);
         Self {
             core: core.clone(),
             fetch_request,
+            owner,
             armed: true,
+        }
+    }
+
+    pub(crate) fn is_current(&self) -> bool {
+        let state = self
+            .core
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match self.owner {
+            PreparedDataIssueOwner::PendingAddress => state
+                .o3_runtime
+                .pending_data_address_owns_fetch(self.fetch_request),
+            PreparedDataIssueOwner::DeferredLiveDataAccess => {
+                state.o3_runtime.deferred_live_data_access_execution() == Some(self.fetch_request)
+            }
+            PreparedDataIssueOwner::Execution => {
+                !state.issued_data_for_fetches.contains(&self.fetch_request)
+                    && state.data_access_execution(self.fetch_request).is_some()
+            }
         }
     }
 
     pub(crate) fn disarm(mut self) {
         self.armed = false;
     }
+}
+
+#[derive(Clone, Copy)]
+enum PreparedDataIssueOwner {
+    PendingAddress,
+    DeferredLiveDataAccess,
+    Execution,
 }
 
 impl Drop for PreparedDataIssueCleanup {

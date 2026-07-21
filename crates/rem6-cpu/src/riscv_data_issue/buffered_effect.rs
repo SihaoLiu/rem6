@@ -93,6 +93,14 @@ impl RiscvCore {
             .ready_buffered_o3_effect()
     }
 
+    pub(crate) fn owns_ready_buffered_o3_effect(&self, request_id: MemoryRequestId) -> bool {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .ready_buffered_o3_effect()
+            .is_some_and(|effect| effect.issue.request_id == request_id)
+    }
+
     pub(super) fn submit_buffered_o3_effect<F>(
         &self,
         scheduler: &mut PartitionedScheduler,

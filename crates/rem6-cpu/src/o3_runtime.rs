@@ -274,6 +274,7 @@ impl O3RuntimeState {
     pub fn restore(&mut self, snapshot: O3RuntimeSnapshot) -> Result<(), O3RuntimeError> {
         let snapshot = snapshot.into_checkpoint_snapshot();
         validate_runtime_snapshot(&snapshot)?;
+        self.discard_pending_data_address();
         self.next_sequence = next_runtime_sequence(&snapshot);
         self.next_physical_register = next_runtime_physical_register(&snapshot);
         self.snapshot = snapshot;
@@ -293,7 +294,6 @@ impl O3RuntimeState {
         self.invalidated_live_staged_fetch_identities.clear();
         self.deferred_live_data_access_execution = None;
         self.live_data_accesses.clear();
-        self.pending_data_address = None;
         self.live_data_access_younger_sequences.clear();
         self.last_live_commit_tick = None;
         Ok(())

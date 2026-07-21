@@ -374,6 +374,113 @@ fn cluster_discards_stale_prepared_atomic_without_an_issued_action() {
 }
 
 #[test]
+fn cluster_discards_stale_ready_buffered_effect_before_transport() {
+    let (mut scheduler, transport, core) = ready_buffered_atomic_fixture();
+    let target_calls = Arc::new(AtomicU64::new(0));
+    let responder_calls = Arc::clone(&target_calls);
+    let prepared = core
+        .prepare_data_parallel_access(
+            scheduler.now(),
+            &transport,
+            MemoryTrace::new(),
+            move |_delivery, _context| {
+                responder_calls.fetch_add(1, Ordering::Relaxed);
+                TargetOutcome::NoResponse
+            },
+        )
+        .unwrap()
+        .expect("ready buffered effect prepares");
+    assert!(matches!(
+        &prepared,
+        PreparedDataParallelAccess::BufferedTransaction { .. }
+    ));
+    let mut prepared_actions = PreparedParallelActions::new();
+    let mut transaction_cpus = Vec::new();
+    let mut transactions = Vec::new();
+    assert!(push_prepared_data_action(
+        CpuId::new(0),
+        &core,
+        Some(prepared),
+        &mut prepared_actions,
+        &mut transaction_cpus,
+        &mut transactions,
+    ));
+    core.redirect_pc(Address::new(0x9000));
+
+    let submission = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        finish_prepared_parallel_actions(
+            &mut scheduler,
+            &transport,
+            prepared_actions,
+            transaction_cpus,
+            transactions,
+        )
+    }));
+
+    assert!(submission.is_ok(), "stale buffered effect must fail closed");
+    assert!(submission.unwrap().unwrap().is_empty());
+    assert!(scheduler.is_idle());
+    assert_eq!(target_calls.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn direct_submit_discards_stale_ready_buffered_effect_before_transport() {
+    let (mut scheduler, transport, core) = ready_buffered_atomic_fixture();
+    let prepared = core
+        .prepare_data_parallel_access(
+            scheduler.now(),
+            &transport,
+            MemoryTrace::new(),
+            |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap()
+        .expect("ready buffered effect prepares");
+    core.redirect_pc(Address::new(0x9000));
+
+    assert!(core
+        .submit_prepared_data_parallel_access(&mut scheduler, &transport, prepared)
+        .unwrap()
+        .is_none());
+    assert!(scheduler.is_idle());
+}
+
+fn ready_buffered_atomic_fixture() -> (PartitionedScheduler, MemoryTransport, RiscvCore) {
+    let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = younger_atomic_core(fetch_route, data_route, false);
+    core.next_fetch_ahead_before_retire();
+    core.execute_next_completed_fetch()
+        .unwrap()
+        .expect("float head executes");
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |delivery, _context| {
+            TargetOutcome::Respond(
+                MemoryResponse::completed(
+                    delivery.request(),
+                    Some(3.5_f64.to_bits().to_le_bytes().to_vec()),
+                )
+                .unwrap(),
+            )
+        },
+    )
+    .unwrap()
+    .expect("float head issues");
+    core.execute_next_completed_fetch()
+        .unwrap()
+        .expect("younger atomic executes");
+    issue_without_response(&core, &mut scheduler, &transport);
+    scheduler.run_until_idle_conservative();
+    assert!(core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .has_ready_buffered_o3_effect());
+    (scheduler, transport, core)
+}
+
+#[test]
 fn older_failure_cancels_the_buffered_atomic_before_transport() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
     let core = younger_atomic_core(fetch_route, data_route, false);

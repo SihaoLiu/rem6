@@ -170,7 +170,13 @@ impl RiscvCore {
         state.detach_pending_in_order_pipeline_advance();
         state.discard_branch_speculations();
         state.live_retire_gate.rebind_pending_to_next_request();
+        let pending_address_wake = state.o3_runtime.pending_data_address_wake_tick().is_some();
+        state.o3_runtime.discard_pending_data_address_at(now);
         state.o3_runtime.discard_live_speculative_executions_at(now);
+        if pending_address_wake {
+            state.o3_writeback_wake.clear();
+        }
+        state.refresh_o3_writeback_wake(now);
         drop(state);
         self.inner().reset_fetch_stream_to_pc(pc);
     }

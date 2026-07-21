@@ -15,6 +15,8 @@ use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryRequestId};
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
+#[path = "o3_runtime_pending_address_tests/lifecycle.rs"]
+mod lifecycle;
 #[path = "o3_runtime_pending_address_tests/scheduling.rs"]
 mod scheduling;
 #[path = "o3_runtime_pending_address_tests/staging.rs"]

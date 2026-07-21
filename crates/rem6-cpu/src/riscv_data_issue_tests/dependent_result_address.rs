@@ -11,17 +11,17 @@ const HEAD_ADDRESS: u64 = 0x8800;
 const ISSUE_TICK: u64 = 41;
 const SUBMIT_TICK: u64 = 43;
 
-struct PendingIssueFixture {
-    core: RiscvCore,
-    scheduler: PartitionedScheduler,
-    transport: MemoryTransport,
+pub(super) struct PendingIssueFixture {
+    pub(super) core: RiscvCore,
+    pub(super) scheduler: PartitionedScheduler,
+    pub(super) transport: MemoryTransport,
     data_route: MemoryRouteId,
     fetch_request: MemoryRequestId,
     head_lsq_count: usize,
 }
 
 impl PendingIssueFixture {
-    fn load(address: u64) -> Self {
+    pub(super) fn load(address: u64) -> Self {
         Self::new(address, false)
     }
 

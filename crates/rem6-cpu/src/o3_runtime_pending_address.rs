@@ -328,23 +328,35 @@ impl O3RuntimeState {
         })
     }
 
-    pub(super) fn discard_pending_data_address_from(&mut self, sequence: u64) {
-        let Some(pending_sequence) = self.clear_pending_data_address_from_without_window(sequence)
-        else {
+    fn discard_pending_data_address_at_internal(&mut self, now: Option<u64>) {
+        let Some(pending) = self.pending_data_address.take() else {
             return;
         };
-        self.discard_live_staged_window_from(pending_sequence);
+        self.snapshot
+            .load_store_queue
+            .retain(|entry| entry.sequence() != pending.sequence);
+        match now {
+            Some(now) => self.discard_live_staged_window_from_at(pending.sequence, now),
+            None => self.discard_live_staged_window_from(pending.sequence),
+        }
+    }
+
+    pub(super) fn discard_pending_data_address_from(&mut self, sequence: u64) {
+        if self
+            .pending_data_address
+            .as_ref()
+            .is_some_and(|pending| pending.sequence >= sequence)
+        {
+            self.discard_pending_data_address_at_internal(None);
+        }
     }
 
     pub(crate) fn discard_pending_data_address(&mut self) {
-        let Some(sequence) = self
-            .pending_data_address
-            .as_ref()
-            .map(O3PendingDataAddress::sequence)
-        else {
-            return;
-        };
-        self.discard_pending_data_address_from(sequence);
+        self.discard_pending_data_address_at_internal(None);
+    }
+
+    pub(crate) fn discard_pending_data_address_at(&mut self, now: u64) {
+        self.discard_pending_data_address_at_internal(Some(now));
     }
 
     pub(crate) fn bind_pending_data_address_issue(
@@ -420,21 +432,6 @@ impl O3RuntimeState {
             event_taken: false,
         });
         Some(consumed_requests)
-    }
-
-    pub(super) fn clear_pending_data_address_from_without_window(
-        &mut self,
-        sequence: u64,
-    ) -> Option<u64> {
-        let pending_sequence = self.pending_data_address.as_ref()?.sequence;
-        if pending_sequence < sequence {
-            return None;
-        }
-        self.pending_data_address = None;
-        self.snapshot
-            .load_store_queue
-            .retain(|entry| entry.sequence() != pending_sequence);
-        Some(pending_sequence)
     }
 
     fn pending_data_address_head_metadata_for_sequence(
