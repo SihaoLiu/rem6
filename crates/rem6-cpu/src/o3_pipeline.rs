@@ -2,6 +2,10 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 
+#[path = "o3_pipeline_scoped_issue.rs"]
+mod o3_pipeline_scoped_issue;
+pub use o3_pipeline_scoped_issue::{O3ScopedIssuePlan, O3ScopedIssueScheduler};
+
 const O3_WRITEBACK_CHECKPOINT_MAGIC: [u8; 4] = *b"O3WB";
 const O3_WRITEBACK_CHECKPOINT_VERSION: u8 = 1;
 const O3_PENDING_STATE_CHECKPOINT_MAGIC: [u8; 4] = *b"O3PS";
@@ -261,36 +265,6 @@ impl O3DistributedIssuePlan {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct O3ScopedIssuePlan {
-    issue_width: usize,
-    issued: Vec<O3ScopedReadyInstruction>,
-    resource_blocked: Vec<O3ScopedReadyInstruction>,
-    dependency_blocked: Vec<O3ScopedReadyInstruction>,
-}
-
-impl O3ScopedIssuePlan {
-    pub const fn issue_width(&self) -> usize {
-        self.issue_width
-    }
-
-    pub fn issued(&self) -> &[O3ScopedReadyInstruction] {
-        &self.issued
-    }
-
-    pub fn resource_blocked(&self) -> &[O3ScopedReadyInstruction] {
-        &self.resource_blocked
-    }
-
-    pub fn dependency_blocked(&self) -> &[O3ScopedReadyInstruction] {
-        &self.dependency_blocked
-    }
-
-    pub fn issued_sequences(&self) -> impl Iterator<Item = u64> + '_ {
-        self.issued.iter().map(|instruction| instruction.sequence())
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct O3DistributedIssueScheduler {
     issue_width: usize,
     capacities: BTreeMap<(O3IssueQueueId, O3IssueOpClass), usize>,
@@ -360,95 +334,6 @@ impl O3DistributedIssueScheduler {
             issued,
             blocked,
         }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct O3ScopedIssueScheduler {
-    issue_width: usize,
-    capacities: BTreeMap<(O3IssueQueueId, O3IssueOpClass), usize>,
-}
-
-impl O3ScopedIssueScheduler {
-    pub fn new<I>(issue_width: usize, capacities: I) -> Result<Self, O3PipelineError>
-    where
-        I: IntoIterator<Item = O3IssueQueueCapacity>,
-    {
-        if issue_width == 0 {
-            return Err(O3PipelineError::ZeroIssueWidth);
-        }
-
-        Ok(Self {
-            issue_width,
-            capacities: capacities
-                .into_iter()
-                .map(|capacity| ((capacity.queue(), capacity.op_class()), capacity.slots()))
-                .collect(),
-        })
-    }
-
-    pub const fn issue_width(&self) -> usize {
-        self.issue_width
-    }
-
-    pub fn plan<R, I>(&self, resolved_scopes: R, ready: I) -> O3ScopedIssuePlan
-    where
-        R: IntoIterator<Item = O3DependencyScopeId>,
-        I: IntoIterator<Item = O3ScopedReadyInstruction>,
-    {
-        self.try_plan(resolved_scopes, ready)
-            .expect("scoped issue plan must not contain duplicate dependency producers")
-    }
-
-    pub fn try_plan<R, I>(
-        &self,
-        resolved_scopes: R,
-        ready: I,
-    ) -> Result<O3ScopedIssuePlan, O3PipelineError>
-    where
-        R: IntoIterator<Item = O3DependencyScopeId>,
-        I: IntoIterator<Item = O3ScopedReadyInstruction>,
-    {
-        let resolved_scopes = resolved_scopes.into_iter().collect::<BTreeSet<_>>();
-        let mut pending = ready.into_iter().collect::<Vec<_>>();
-        pending.sort_by_key(|instruction| instruction.sequence());
-        validate_unique_dependency_producers(&pending)?;
-
-        let mut remaining_capacity = self.capacities.clone();
-        let mut issued = Vec::new();
-        while issued.len() < self.issue_width {
-            let Some(index) = pending.iter().position(|instruction| {
-                dependency_ready(&resolved_scopes, instruction)
-                    && scoped_issue_slots(&remaining_capacity, instruction) != 0
-            }) else {
-                break;
-            };
-
-            let instruction = pending.remove(index);
-            if let Some(slots) =
-                remaining_capacity.get_mut(&(instruction.queue(), instruction.op_class()))
-            {
-                *slots -= 1;
-            }
-            issued.push(instruction);
-        }
-
-        let mut resource_blocked = Vec::new();
-        let mut dependency_blocked = Vec::new();
-        for instruction in pending {
-            if dependency_ready(&resolved_scopes, &instruction) {
-                resource_blocked.push(instruction);
-            } else {
-                dependency_blocked.push(instruction);
-            }
-        }
-
-        Ok(O3ScopedIssuePlan {
-            issue_width: self.issue_width,
-            issued,
-            resource_blocked,
-            dependency_blocked,
-        })
     }
 }
 
@@ -669,6 +554,10 @@ pub enum O3PipelineError {
         source: O3PipelineStage,
     },
     ZeroIssueWidth,
+    ReservedIssueWidthExceedsConfigured {
+        reserved_width: usize,
+        issue_width: usize,
+    },
     ZeroIssueQueueCapacity {
         queue: O3IssueQueueId,
         op_class: O3IssueOpClass,
@@ -737,6 +626,13 @@ impl fmt::Display for O3PipelineError {
                 write!(formatter, "O3 {source} writeback width must be positive")
             }
             Self::ZeroIssueWidth => write!(formatter, "O3 issue width must be positive"),
+            Self::ReservedIssueWidthExceedsConfigured {
+                reserved_width,
+                issue_width,
+            } => write!(
+                formatter,
+                "O3 reserved issue width {reserved_width} exceeds configured width {issue_width}"
+            ),
             Self::ZeroIssueQueueCapacity { queue, op_class } => write!(
                 formatter,
                 "O3 issue queue {} capacity for {op_class:?} must be positive",

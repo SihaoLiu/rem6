@@ -736,3 +736,73 @@ fn o3_scoped_issue_scheduler_rejects_duplicate_producers() {
         O3PipelineError::DuplicateDependencyProducer { scope }
     );
 }
+
+#[test]
+fn scoped_issue_full_reservation_still_classifies_dependency_state() {
+    let queue = O3IssueQueueId::new(1);
+    let scope = O3DependencyScopeId::new(10);
+    let scheduler = O3ScopedIssueScheduler::new(
+        2,
+        [O3IssueQueueCapacity::new(queue, O3IssueOpClass::IntAlu, 2).unwrap()],
+    )
+    .unwrap();
+    let resolved = O3ScopedReadyInstruction::new(1, queue, O3IssueOpClass::IntAlu);
+    let unresolved =
+        O3ScopedReadyInstruction::new(2, queue, O3IssueOpClass::IntAlu).with_waits_on([scope]);
+    let plan = scheduler
+        .try_plan_with_reserved_width(2, [], [resolved.clone(), unresolved.clone()])
+        .unwrap();
+    assert_eq!(plan.issue_width(), 2);
+    assert_eq!(plan.reserved_width(), 2);
+    assert_eq!(plan.available_width(), 0);
+    assert!(plan.issued().is_empty());
+    assert_eq!(plan.resource_blocked(), &[resolved]);
+    assert_eq!(plan.dependency_blocked(), &[unresolved]);
+}
+
+#[test]
+fn scoped_issue_partial_reservation_limits_selected_rows() {
+    let queue = O3IssueQueueId::new(1);
+    let scheduler = O3ScopedIssueScheduler::new(
+        4,
+        [O3IssueQueueCapacity::new(queue, O3IssueOpClass::IntAlu, 4).unwrap()],
+    )
+    .unwrap();
+    let ready = [3, 1, 2]
+        .into_iter()
+        .map(|sequence| O3ScopedReadyInstruction::new(sequence, queue, O3IssueOpClass::IntAlu));
+    let plan = scheduler.plan_with_reserved_width(2, [], ready);
+    assert_eq!(plan.available_width(), 2);
+    assert_eq!(plan.issued_sequences().collect::<Vec<_>>(), vec![1, 2]);
+    assert_eq!(
+        plan.resource_blocked()
+            .iter()
+            .map(|row| row.sequence())
+            .collect::<Vec<_>>(),
+        vec![3]
+    );
+}
+
+#[test]
+fn scoped_issue_rejects_reservation_above_configured_width() {
+    let scheduler =
+        O3ScopedIssueScheduler::new(2, std::iter::empty::<O3IssueQueueCapacity>()).unwrap();
+    let error = scheduler
+        .try_plan_with_reserved_width(
+            3,
+            std::iter::empty::<O3DependencyScopeId>(),
+            std::iter::empty::<O3ScopedReadyInstruction>(),
+        )
+        .unwrap_err();
+    assert_eq!(
+        error,
+        O3PipelineError::ReservedIssueWidthExceedsConfigured {
+            reserved_width: 3,
+            issue_width: 2,
+        }
+    );
+    assert_eq!(
+        error.to_string(),
+        "O3 reserved issue width 3 exceeds configured width 2"
+    );
+}
