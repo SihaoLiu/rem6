@@ -1,6 +1,7 @@
 use super::*;
 
 const WRITEBACK_ROOT: &str = "tests/cli_run/m5_host_actions/o3/writeback_port.rs";
+const FIXED_FU: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/fixed_fu.rs";
 const RESULT_SUPPORT: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/result_support.rs";
 const RESULT_CLASSES: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/result_classes.rs";
 const RESULT_SCALAR_SUFFIX: &str =
@@ -19,7 +20,7 @@ const YOUNGER_ATOMIC_RESULT: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/younger_atomic_result.rs";
 const YOUNGER_ATOMIC_BOUNDARIES: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/younger_atomic_result/boundaries.rs";
-const WRITEBACK_ROOT_MODULES: [ExpectedModuleDeclaration; 5] = [
+const WRITEBACK_ROOT_MODULES: [ExpectedModuleDeclaration; 6] = [
     ExpectedModuleDeclaration {
         name: "result_support",
         path: "writeback_port/result_support.rs",
@@ -39,6 +40,10 @@ const WRITEBACK_ROOT_MODULES: [ExpectedModuleDeclaration; 5] = [
     ExpectedModuleDeclaration {
         name: "younger_atomic_result",
         path: "writeback_port/younger_atomic_result.rs",
+    },
+    ExpectedModuleDeclaration {
+        name: "fixed_fu",
+        path: "writeback_port/fixed_fu.rs",
     },
 ];
 const YOUNGER_ATOMIC_CHILD_MODULES: [ExpectedModuleDeclaration; 1] = [ExpectedModuleDeclaration {
@@ -61,6 +66,19 @@ const RESULT_CLASS_CHILD_MODULES: [ExpectedModuleDeclaration; 2] = [
     },
 ];
 const RESULT_CLASS_TEST_PREFIX: &str = "rem6_run_o3_memory_result_writeback_";
+const FIXED_FU_ANCHORS: [&str; 11] = [
+    "rem6_run_o3_writeback_width_one_serializes_direct_fu_dependent_collision",
+    "rem6_run_o3_writeback_width_two_exact_fit_direct_fu_dependent_collision",
+    "rem6_run_o3_writeback_port_json_exposes_counters",
+    "rem6_run_o3_writeback_port_text_stats_expose_counters",
+    "rem6_run_o3_writeback_port_stats_dump_exposes_counters",
+    "rem6_run_o3_writeback_scalar_load_fu_collision_blocks_architecture_until_admission",
+    "rem6_run_o3_writeback_scalar_load_fu_collision_cache_fabric_dram",
+    "rem6_run_timing_suppresses_o3_writeback_port_surface",
+    "rem6_run_o3_writeback_wrong_path_reservation_never_publishes",
+    "rem6_run_o3_writeback_port_checkpoint_boundary",
+    "rem6_run_host_switch_preserves_o3_writeback_port_ticks",
+];
 const RESULT_CLASS_ANCHORS: [&str; 4] = [
     "rem6_run_o3_memory_result_writeback_matrix_direct",
     "rem6_run_o3_memory_result_writeback_matrix_cache_fabric_dram",
@@ -137,7 +155,8 @@ const RESULT_BOUNDARY_SUPPORT_HELPERS: [&str; 2] = [
     "pmp_denied_amo_output",
     "assert_denied_amo_failure_diagnostics",
 ];
-const WRITEBACK_ROOT_MAX_LINES: usize = 1250;
+const WRITEBACK_ROOT_MAX_LINES: usize = 550;
+const FIXED_FU_MAX_LINES: usize = 800;
 const RESULT_SUPPORT_MAX_LINES: usize = 160;
 const RESULT_CLASSES_MAX_LINES: usize = 700;
 const RESULT_CLASSES_AGGREGATE_MAX_LINES: usize = 805;
@@ -169,6 +188,7 @@ struct ModuleDeclaration {
 fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root_path = crate_dir.join(WRITEBACK_ROOT);
+    let fixed_fu_path = crate_dir.join(FIXED_FU);
     let support_path = crate_dir.join(RESULT_SUPPORT);
     let child_path = crate_dir.join(RESULT_CLASSES);
     let scalar_suffix_path = crate_dir.join(RESULT_SCALAR_SUFFIX);
@@ -180,6 +200,7 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let younger_atomic_path = crate_dir.join(YOUNGER_ATOMIC_RESULT);
     let younger_atomic_boundaries_path = crate_dir.join(YOUNGER_ATOMIC_BOUNDARIES);
     let root = fs::read_to_string(&root_path).unwrap();
+    let fixed_fu = fs::read_to_string(&fixed_fu_path);
     let child = fs::read_to_string(&child_path).unwrap();
     let scalar_suffix = fs::read_to_string(&scalar_suffix_path);
     let pairs = fs::read_to_string(&pairs_path);
@@ -209,6 +230,10 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         &root,
         &WRITEBACK_ROOT_MODULES,
     ));
+    match &fixed_fu {
+        Ok(fixed_fu) => boundary_failures.extend(support_leaf_failures(FIXED_FU, fixed_fu)),
+        Err(_) => boundary_failures.push(format!("{FIXED_FU} must exist")),
+    }
     for (relative, source) in [
         (WRITEBACK_ROOT, root.as_str()),
         (RESULT_CLASSES, child.as_str()),
@@ -326,6 +351,7 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         "writeback result ownership boundary is incomplete:\n{}",
         boundary_failures.join("\n")
     );
+    let fixed_fu = fixed_fu.unwrap();
     let support = support.unwrap();
     let scalar_suffix = scalar_suffix.unwrap();
     let pairs = pairs.unwrap();
@@ -335,6 +361,10 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let younger_atomic = younger_atomic.unwrap();
     let younger_atomic_boundaries = younger_atomic_boundaries.unwrap();
 
+    assert!(
+        line_count(&fixed_fu_path) <= FIXED_FU_MAX_LINES,
+        "{FIXED_FU} must remain at or below {FIXED_FU_MAX_LINES} lines"
+    );
     assert!(
         line_count(&support_path) <= RESULT_SUPPORT_MAX_LINES,
         "{RESULT_SUPPORT} must remain at or below {RESULT_SUPPORT_MAX_LINES} lines"
@@ -458,6 +488,40 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         "{RESULT_BOUNDARIES_SUPPORT} must own exactly the focused PMP subprocess helper"
     );
 
+    let fixed_fu_tests = top_level_test_names(FIXED_FU, &fixed_fu);
+    assert_eq!(
+        fixed_fu_tests, FIXED_FU_ANCHORS,
+        "{FIXED_FU} must own exactly the required fixed-FU test anchors in order"
+    );
+    for anchor in FIXED_FU_ANCHORS {
+        assert_eq!(
+            fixed_fu.matches(anchor).count(),
+            1,
+            "{FIXED_FU} must contain fixed-FU anchor `{anchor}` exactly once"
+        );
+        for (relative, source) in [
+            (WRITEBACK_ROOT, root.as_str()),
+            (RESULT_CLASSES, child.as_str()),
+            (RESULT_SCALAR_SUFFIX, scalar_suffix.as_str()),
+            (RESULT_PAIRS, pairs.as_str()),
+            (RESULT_SUPPORT, support.as_str()),
+            (RESULT_BOUNDARIES, boundary.as_str()),
+            (RESULT_BOUNDARIES_SUPPORT, boundary_support.as_str()),
+            (STORE_CONDITIONAL_RESULT, store_conditional.as_str()),
+            (YOUNGER_ATOMIC_RESULT, younger_atomic.as_str()),
+            (
+                YOUNGER_ATOMIC_BOUNDARIES,
+                younger_atomic_boundaries.as_str(),
+            ),
+        ] {
+            assert_eq!(
+                source.matches(anchor).count(),
+                0,
+                "{relative} must not contain fixed-FU anchor `{anchor}`"
+            );
+        }
+    }
+
     let child_tests = result_class_tests(RESULT_CLASSES, &child);
     assert_eq!(
         child_tests, RESULT_CLASS_ANCHORS,
@@ -483,6 +547,7 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         );
         for (relative, source) in [
             (WRITEBACK_ROOT, root.as_str()),
+            (FIXED_FU, fixed_fu.as_str()),
             (RESULT_CLASSES, child.as_str()),
             (RESULT_PAIRS, pairs.as_str()),
             (RESULT_SUPPORT, support.as_str()),
@@ -516,6 +581,7 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         );
         for (relative, source) in [
             (WRITEBACK_ROOT, root.as_str()),
+            (FIXED_FU, fixed_fu.as_str()),
             (RESULT_CLASSES, child.as_str()),
             (RESULT_SCALAR_SUFFIX, scalar_suffix.as_str()),
             (RESULT_SUPPORT, support.as_str()),
@@ -549,6 +615,7 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         );
         for (relative, source) in [
             (WRITEBACK_ROOT, root.as_str()),
+            (FIXED_FU, fixed_fu.as_str()),
             (RESULT_CLASSES, child.as_str()),
             (RESULT_SCALAR_SUFFIX, scalar_suffix.as_str()),
             (RESULT_PAIRS, pairs.as_str()),
@@ -583,6 +650,7 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         );
         for (relative, source) in [
             (WRITEBACK_ROOT, root.as_str()),
+            (FIXED_FU, fixed_fu.as_str()),
             (RESULT_CLASSES, child.as_str()),
             (RESULT_SCALAR_SUFFIX, scalar_suffix.as_str()),
             (RESULT_PAIRS, pairs.as_str()),
@@ -616,6 +684,7 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         );
         for (relative, source) in [
             (WRITEBACK_ROOT, root.as_str()),
+            (FIXED_FU, fixed_fu.as_str()),
             (RESULT_CLASSES, child.as_str()),
             (RESULT_SCALAR_SUFFIX, scalar_suffix.as_str()),
             (RESULT_PAIRS, pairs.as_str()),
@@ -650,6 +719,7 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         );
         for (relative, source) in [
             (WRITEBACK_ROOT, root.as_str()),
+            (FIXED_FU, fixed_fu.as_str()),
             (RESULT_CLASSES, child.as_str()),
             (RESULT_SCALAR_SUFFIX, scalar_suffix.as_str()),
             (RESULT_PAIRS, pairs.as_str()),
@@ -667,6 +737,7 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         }
     }
 
+    assert_rustfmt_clean(&fixed_fu_path);
     assert_rustfmt_clean(&child_path);
     assert_rustfmt_clean(&scalar_suffix_path);
     assert_rustfmt_clean(&pairs_path);
@@ -693,6 +764,8 @@ mod result_boundaries;
 mod store_conditional_result;
 #[path = "writeback_port/younger_atomic_result.rs"]
 mod younger_atomic_result;
+#[path = "writeback_port/fixed_fu.rs"]
+mod fixed_fu;
 "#;
     assert!(module_declaration_failures("synthetic.rs", valid, &WRITEBACK_ROOT_MODULES).is_empty());
 
@@ -710,6 +783,8 @@ mod result_boundaries;
 mod store_conditional_result;
 #[path = "writeback_port/younger_atomic_result.rs"]
 mod younger_atomic_result;
+#[path = "writeback_port/fixed_fu.rs"]
+mod fixed_fu;
 "#,
         ),
         (
@@ -724,6 +799,8 @@ mod result_boundaries;
 mod store_conditional_result;
 #[path = "writeback_port/younger_atomic_result.rs"]
 mod younger_atomic_result;
+#[path = "writeback_port/fixed_fu.rs"]
+mod fixed_fu;
 "#,
         ),
         (
@@ -740,6 +817,8 @@ mod result_boundaries;
 mod store_conditional_result;
 #[path = "writeback_port/younger_atomic_result.rs"]
 mod younger_atomic_result;
+#[path = "writeback_port/fixed_fu.rs"]
+mod fixed_fu;
 "#,
         ),
         (
@@ -755,6 +834,8 @@ mod result_boundaries;
 mod store_conditional_result;
 #[path = "writeback_port/younger_atomic_result.rs"]
 mod younger_atomic_result;
+#[path = "writeback_port/fixed_fu.rs"]
+mod fixed_fu;
 "#,
         ),
         (
@@ -770,6 +851,8 @@ mod result_boundaries;
 mod store_conditional_result;
 #[path = "writeback_port/younger_atomic_result.rs"]
 mod younger_atomic_result;
+#[path = "writeback_port/fixed_fu.rs"]
+mod fixed_fu;
 "#,
         ),
     ] {
