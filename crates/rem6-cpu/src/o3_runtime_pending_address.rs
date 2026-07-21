@@ -1,7 +1,8 @@
 use rem6_isa_riscv::{
     MemoryAccessKind, MemoryWidth, Register, RiscvDecodedInstruction, RiscvExecutionRecord,
+    RiscvInstruction,
 };
-use rem6_memory::{Address, AddressRange, MemoryRequestId};
+use rem6_memory::{AccessSize, Address, AddressRange, MemoryRequestId};
 
 use super::*;
 use crate::{CpuFetchEvent, CpuFetchEventKind};
@@ -18,9 +19,9 @@ pub(super) struct O3PendingDataAddress {
     pub(super) producer_sequence: u64,
     pub(super) producer_fetch: MemoryRequestId,
     pub(super) destination: O3RenameMapEntry,
-    expected_lsq_bytes: u32,
-    head_range: AddressRange,
-    atomic_head: bool,
+    pub(super) expected_lsq_bytes: u32,
+    pub(super) head_range: AddressRange,
+    pub(super) atomic_head: bool,
     pub(super) requested_wake_tick: Option<u64>,
     pub(super) selected_issue_tick: Option<u64>,
     pub(super) materialized: Option<RiscvCpuExecutionEvent>,
@@ -71,6 +72,80 @@ impl O3RuntimeState {
             pending.fetch.request_id() == fetch_request
                 || pending.consumed_requests.contains(&fetch_request)
         })
+    }
+
+    pub(crate) fn pending_data_address_execution(&self) -> Option<&RiscvCpuExecutionEvent> {
+        self.pending_data_address
+            .as_ref()
+            .and_then(|pending| pending.materialized.as_ref())
+    }
+
+    pub(crate) fn pending_data_address_execution_mut(
+        &mut self,
+    ) -> Option<&mut RiscvCpuExecutionEvent> {
+        self.pending_data_address
+            .as_mut()
+            .and_then(|pending| pending.materialized.as_mut())
+    }
+
+    pub(crate) fn pending_data_address_issue_matches(
+        &self,
+        fetch_request: MemoryRequestId,
+        access: &MemoryAccessKind,
+        physical_address: Address,
+        size: AccessSize,
+        request_tick: u64,
+    ) -> bool {
+        if !self.pending_data_address_can_issue(fetch_request, access) {
+            return false;
+        }
+        let Some(pending) = self.pending_data_address.as_ref() else {
+            return false;
+        };
+        let Some(execution) = pending.materialized.as_ref() else {
+            return false;
+        };
+        let Some(issue_tick) = pending.selected_issue_tick else {
+            return false;
+        };
+        let RiscvInstruction::Load {
+            rd,
+            rs1,
+            width: MemoryWidth::Doubleword,
+            ..
+        } = pending.decoded.instruction()
+        else {
+            return false;
+        };
+        let Some(MemoryAccessKind::Load {
+            rd: access_rd,
+            address,
+            width: MemoryWidth::Doubleword,
+            ..
+        }) = execution.execution().memory_access()
+        else {
+            return false;
+        };
+        let Ok(range) = AddressRange::new(physical_address, size) else {
+            return false;
+        };
+        pending.fetch.request_id() == fetch_request
+            && pending.fetch.pc() == execution.fetch().pc()
+            && pending.decoded.instruction() == execution.instruction()
+            && pending.producer_register == rs1
+            && pending.destination.register_class() == O3RegisterClass::Integer
+            && pending.destination.architectural() == u32::from(rd.index())
+            && *access_rd == rd
+            && execution.execution().memory_access() == Some(access)
+            && physical_address.get() == *address
+            && size.bytes() == u64::from(pending.expected_lsq_bytes)
+            && request_tick >= issue_tick
+            && (!pending.atomic_head || !pending.head_range.overlaps(range))
+            && self.live_staged_fetch_identity_matches(
+                pending.sequence,
+                pending.decoded.instruction(),
+                &pending.consumed_requests,
+            )
     }
 
     pub(crate) fn stage_pending_data_address_window(
@@ -270,6 +345,81 @@ impl O3RuntimeState {
             return;
         };
         self.discard_pending_data_address_from(sequence);
+    }
+
+    pub(crate) fn bind_pending_data_address_issue(
+        &mut self,
+        execution: &RiscvCpuExecutionEvent,
+        data_request: MemoryRequestId,
+        physical_address: Address,
+        request_tick: u64,
+    ) -> Option<Vec<MemoryRequestId>> {
+        let access = execution
+            .execution()
+            .memory_access()
+            .expect("pending address execution carries a load");
+        let size = AccessSize::new(u64::from(PENDING_DATA_ADDRESS_LSQ_BYTES))
+            .expect("pending data address size");
+        let owns_fetch = self.pending_data_address_owns_fetch(execution.fetch().request_id());
+        if !owns_fetch {
+            return None;
+        }
+        assert!(self.pending_data_address_issue_matches(
+            execution.fetch().request_id(),
+            access,
+            physical_address,
+            size,
+            request_tick,
+        ));
+        let pending = self.pending_data_address.as_ref()?;
+        let issue_tick = pending
+            .selected_issue_tick
+            .expect("materialized pending address has a selected issue tick");
+        assert!(!self
+            .live_data_accesses
+            .iter()
+            .any(|live| live.data_request == data_request));
+        assert!(self.snapshot.reorder_buffer.iter().any(|entry| {
+            entry.sequence() == pending.sequence
+                && entry.destination() == Some(pending.destination.physical())
+        }));
+
+        let sequence = pending.sequence;
+        let consumed_requests = pending.consumed_requests.clone();
+        let issue_rob_occupancy = self.snapshot.reorder_buffer.len();
+        let issue_lsq_occupancy = self.snapshot.load_store_queue.len();
+        let lsq = self
+            .snapshot
+            .load_store_queue
+            .iter_mut()
+            .find(|entry| entry.sequence() == sequence)
+            .expect("pending address LSQ row");
+        assert_eq!(lsq.kind(), O3LoadStoreQueueKind::Load);
+        assert_eq!(lsq.bytes(), PENDING_DATA_ADDRESS_LSQ_BYTES);
+        assert!(lsq.resolve_address(physical_address));
+
+        self.pending_data_address = None;
+        self.live_data_access_younger_sequences.remove(&sequence);
+        self.live_data_accesses.push(O3LiveDataAccess {
+            fetch_request: execution.fetch().request_id(),
+            data_request,
+            execution: execution.clone(),
+            sequence,
+            lsq_sequence_span: 1,
+            issue_tick,
+            issue_rob_occupancy,
+            issue_lsq_occupancy,
+            younger_window_policy: O3DataAccessWindowPolicy::MemoryResultWindow,
+            response_tick: None,
+            latency_ticks: None,
+            commit_tick: None,
+            load_data: None,
+            memory_result: None,
+            forwarding_plan: None,
+            outcome: O3LiveDataAccessOutcome::Resident,
+            event_taken: false,
+        });
+        Some(consumed_requests)
     }
 
     pub(super) fn clear_pending_data_address_from_without_window(

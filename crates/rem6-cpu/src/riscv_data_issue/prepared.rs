@@ -3,7 +3,19 @@ use rem6_memory::{MemoryRequest, MemoryRequestId};
 use rem6_transport::{MemoryTransport, ParallelMemoryTransaction};
 
 use super::OutstandingDataAccess;
-use crate::{RiscvCore, RiscvCpuError};
+use crate::{RiscvCore, RiscvCoreState, RiscvCpuError};
+
+impl RiscvCoreState {
+    pub(crate) fn abort_prepared_data_issue(&mut self, fetch_request: MemoryRequestId) -> bool {
+        let pending = self
+            .o3_runtime
+            .pending_data_address_owns_fetch(fetch_request);
+        if pending {
+            self.o3_runtime.discard_pending_data_address();
+        }
+        self.abort_deferred_o3_live_data_access_execution(fetch_request) || pending
+    }
+}
 
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum PreparedDataParallelAccess {
@@ -181,6 +193,6 @@ impl Drop for PreparedDataIssueCleanup {
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .abort_deferred_o3_live_data_access_execution(self.fetch_request);
+            .abort_prepared_data_issue(self.fetch_request);
     }
 }

@@ -40,6 +40,7 @@ use crate::{
 
 mod csr;
 mod helpers;
+mod unissued_data;
 
 use csr::{
     read_counter_enable_csr, read_counter_inhibit_csr, read_environment_config_csr,
@@ -589,49 +590,6 @@ impl RiscvCoreState {
             None => tlb.flush_all(),
             Some(physical_range) => tlb.demap_physical_range_all_address_spaces(physical_range),
         })
-    }
-
-    pub(super) fn next_unissued_data_access(
-        &self,
-    ) -> Option<(MemoryRequestId, rem6_isa_riscv::MemoryAccessKind)> {
-        let pending_terminal = self
-            .pending_terminal_memory_result
-            .as_ref()
-            .filter(|pending| pending.issue_ready())
-            .filter(|_| !crate::riscv_fetch_ahead::hart_has_enabled_pending_interrupt(&self.hart))
-            .map(|pending| pending.execution());
-        let candidate = self
-            .events
-            .iter()
-            .chain(pending_terminal)
-            .find_map(|event| {
-                let fetch_request = event.fetch().request_id();
-                if self.issued_data_for_fetches.contains(&fetch_request) {
-                    return None;
-                }
-                if self
-                    .pending_data_translations
-                    .values()
-                    .any(|pending| pending.fetch_request() == fetch_request)
-                {
-                    return None;
-                }
-                if self.ready_translated_data.contains_key(&fetch_request) {
-                    return None;
-                }
-                event
-                    .execution()
-                    .memory_access()
-                    .map(|access| (event, fetch_request, access.clone()))
-            });
-        let (event, fetch_request, access) = candidate?;
-        if self.outstanding_data.is_empty() && !self.o3_runtime.has_live_data_access() {
-            return Some((fetch_request, access));
-        }
-        ((self.can_overlap_detailed_scalar_memory_instruction(event.instruction())
-            && self.o3_runtime.can_stage_scalar_memory(event))
-            || self.can_overlap_detailed_memory_result_event(event))
-        .then_some((fetch_request, access))
     }
 }
 

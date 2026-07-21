@@ -23,6 +23,8 @@ use crate::{
 
 #[path = "riscv_data_issue_tests/atomic.rs"]
 mod atomic;
+#[path = "riscv_data_issue_tests/dependent_result_address.rs"]
+mod dependent_result_address;
 #[path = "riscv_data_issue_tests/forwarding.rs"]
 mod forwarding;
 #[path = "riscv_data_issue_tests/lifecycle.rs"]

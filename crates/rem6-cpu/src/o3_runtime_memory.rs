@@ -262,6 +262,75 @@ pub(super) fn is_terminal_o3_data_access_event(execution: &RiscvCpuExecutionEven
 }
 
 impl O3RuntimeState {
+    pub(crate) fn pending_data_address_fetch(&self) -> Option<MemoryRequestId> {
+        self.pending_data_address
+            .as_ref()
+            .map(|pending| pending.fetch.request_id())
+    }
+
+    pub(crate) fn pending_data_address_can_issue(
+        &self,
+        fetch_request: MemoryRequestId,
+        access: &MemoryAccessKind,
+    ) -> bool {
+        self.pending_data_address.as_ref().is_some_and(|pending| {
+            pending.fetch.request_id() == fetch_request
+                && pending.selected_issue_tick.is_some()
+                && pending
+                    .materialized
+                    .as_ref()
+                    .and_then(|event| event.execution().memory_access())
+                    == Some(access)
+                && self.snapshot.reorder_buffer.iter().any(|entry| {
+                    entry.sequence() == pending.sequence
+                        && entry.destination() == Some(pending.destination.physical())
+                })
+                && self.snapshot.load_store_queue.iter().any(|entry| {
+                    entry.sequence() == pending.sequence
+                        && entry.kind() == O3LoadStoreQueueKind::Load
+                        && entry.address().is_none()
+                        && entry.bytes() == pending.expected_lsq_bytes
+                })
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_pending_data_address_materialized_for_test(
+        &mut self,
+        issue_tick: u64,
+        execution: RiscvCpuExecutionEvent,
+    ) {
+        let pending = self
+            .pending_data_address
+            .as_mut()
+            .expect("pending address owner");
+        pending.selected_issue_tick = Some(issue_tick);
+        pending.materialized = Some(execution);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn live_data_access_count_for_test(&self) -> usize {
+        self.live_data_accesses.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn live_data_access_issue_identity_for_test(
+        &self,
+        fetch_request: MemoryRequestId,
+    ) -> Option<(u64, usize, usize, u64)> {
+        self.live_data_accesses
+            .iter()
+            .find(|live| live.fetch_request == fetch_request)
+            .map(|live| {
+                (
+                    live.sequence,
+                    live.issue_rob_occupancy,
+                    live.issue_lsq_occupancy,
+                    live.issue_tick,
+                )
+            })
+    }
+
     #[cfg(test)]
     pub(crate) fn live_data_access_younger_window_policy(
         &self,
@@ -1095,9 +1164,22 @@ impl crate::RiscvCore {
 
     pub(crate) fn clear_deferred_o3_live_data_access_execution(&self) -> bool {
         let mut state = self.state.lock().expect("riscv core lock");
-        let Some(fetch_request) = state.o3_runtime.deferred_live_data_access_execution() else {
-            return false;
+        let fetch_request = match state.o3_runtime.deferred_live_data_access_execution() {
+            Some(fetch_request) => fetch_request,
+            None => {
+                let Some(pending_fetch) = state.o3_runtime.pending_data_address_fetch() else {
+                    return false;
+                };
+                let pending_is_next = state.ready_buffered_o3_effect().is_none()
+                    && state
+                        .next_unissued_data_access()
+                        .is_some_and(|(fetch_request, _)| fetch_request == pending_fetch);
+                if !pending_is_next {
+                    return false;
+                }
+                pending_fetch
+            }
         };
-        state.abort_deferred_o3_live_data_access_execution(fetch_request)
+        state.abort_prepared_data_issue(fetch_request)
     }
 }

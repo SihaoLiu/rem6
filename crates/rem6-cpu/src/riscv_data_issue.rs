@@ -35,6 +35,7 @@ use crate::{
 };
 
 mod buffered_effect;
+mod dependent_result_address;
 mod forwarding;
 mod handoff;
 mod o3_callback;
@@ -44,6 +45,7 @@ mod store_conditional;
 
 pub(crate) use buffered_effect::BufferedO3Effect;
 use buffered_effect::{buffered_o3_effect_admission, PreparedDataAccess};
+use dependent_result_address::PendingAddressPreSubmit;
 use o3_callback::{
     cloned_data_access_event_with_kind, mark_data_access_event_kind, record_callback_error,
     record_o3_data_access_outcome,
@@ -323,114 +325,144 @@ impl RiscvCore {
         let Some((fetch_request, mut access)) = self.next_unissued_data_access() else {
             return Ok(None);
         };
+        let prepared = (|| {
+            let state = self.state.lock().expect("riscv core lock");
+            let data = state.data.clone().ok_or(RiscvCpuError::MissingDataConfig {
+                fetch: fetch_request,
+            })?;
+            drop(state);
+            let route = transport
+                .route(data.route())
+                .ok_or(RiscvCpuError::Transport(TransportError::UnknownRoute {
+                    route: data.route(),
+                }))?;
+            if route.source_partition() != self.core.partition() {
+                return Err(RiscvCpuError::DataRoutePartitionMismatch {
+                    route: data.route(),
+                    expected: self.core.partition(),
+                    actual: route.source_partition(),
+                });
+            }
+            if route.source() != data.endpoint() {
+                return Err(RiscvCpuError::DataRouteEndpointMismatch {
+                    route: data.route(),
+                    expected: data.endpoint().clone(),
+                    actual: route.source().clone(),
+                });
+            }
 
-        let state = self.state.lock().expect("riscv core lock");
-        let data = state.data.clone().ok_or(RiscvCpuError::MissingDataConfig {
-            fetch: fetch_request,
-        })?;
-        drop(state);
-        let route = transport
-            .route(data.route())
-            .ok_or(RiscvCpuError::Transport(TransportError::UnknownRoute {
-                route: data.route(),
-            }))?;
-        if route.source_partition() != self.core.partition() {
-            return Err(RiscvCpuError::DataRoutePartitionMismatch {
-                route: data.route(),
-                expected: self.core.partition(),
-                actual: route.source_partition(),
-            });
-        }
-        if route.source() != data.endpoint() {
-            return Err(RiscvCpuError::DataRouteEndpointMismatch {
-                route: data.route(),
-                expected: data.endpoint().clone(),
-                actual: route.source().clone(),
-            });
-        }
-
-        let base_size = access_size(&access)?;
-        let base_address = Address::new(access_address(&access));
-        let request_span = masked_vector_memory_request_span(&access, base_address, base_size)?;
-        let address = request_span.address;
-        let mut size = request_span.size;
-        let mut request_byte_offset = request_span.byte_offset;
-        let line_layout = data
-            .line_layout_for_access(address, size)
-            .map_err(RiscvCpuError::Memory)?;
-        let line_offset = line_layout.line_offset(address);
-        let mut data_access_validated = false;
-        if line_offset + size.bytes() > line_layout.bytes() {
-            let access_error =
-                match self.check_pmp_data_access(fetch_request, &access, size, address) {
-                    Ok(()) => match self.check_pma_data_access(
-                        fetch_request,
-                        &access,
-                        size,
-                        address,
-                        request_byte_offset,
-                    ) {
-                        Ok(()) => {
-                            if supports_cross_line_data_access(&access, address, size, line_layout)
-                            {
-                                data_access_validated = true;
-                                None
-                            } else {
-                                Some(RiscvCpuError::DataAccessCrossesLine {
+            let base_size = access_size(&access)?;
+            let base_address = Address::new(access_address(&access));
+            let request_span = masked_vector_memory_request_span(&access, base_address, base_size)?;
+            let address = request_span.address;
+            let mut size = request_span.size;
+            let mut request_byte_offset = request_span.byte_offset;
+            let line_layout = data
+                .line_layout_for_access(address, size)
+                .map_err(RiscvCpuError::Memory)?;
+            let line_offset = line_layout.line_offset(address);
+            let mut data_access_validated = false;
+            if line_offset + size.bytes() > line_layout.bytes() {
+                let access_error =
+                    match self.check_pmp_data_access(fetch_request, &access, size, address) {
+                        Ok(()) => match self.check_pma_data_access(
+                            fetch_request,
+                            &access,
+                            size,
+                            address,
+                            request_byte_offset,
+                        ) {
+                            Ok(()) => {
+                                if supports_cross_line_data_access(
+                                    &access,
                                     address,
                                     size,
-                                    line_size: line_layout.bytes(),
-                                })
+                                    line_layout,
+                                ) {
+                                    data_access_validated = true;
+                                    None
+                                } else {
+                                    Some(RiscvCpuError::DataAccessCrossesLine {
+                                        address,
+                                        size,
+                                        line_size: line_layout.bytes(),
+                                    })
+                                }
                             }
-                        }
+                            Err(error) => Some(error),
+                        },
                         Err(error) => Some(error),
-                    },
-                    Err(error) => Some(error),
-                };
-            if let Some(error) = access_error {
-                if let Some(prefix) = fault_only_first_line_prefix(
-                    &access,
-                    address,
-                    size,
-                    request_byte_offset,
-                    line_layout,
-                )? {
-                    access = prefix.access;
-                    size = prefix.size;
-                    request_byte_offset = prefix.byte_offset;
-                } else {
-                    return Err(error);
+                    };
+                if let Some(error) = access_error {
+                    if let Some(prefix) = fault_only_first_line_prefix(
+                        &access,
+                        address,
+                        size,
+                        request_byte_offset,
+                        line_layout,
+                    )? {
+                        access = prefix.access;
+                        size = prefix.size;
+                        request_byte_offset = prefix.byte_offset;
+                    } else {
+                        return Err(error);
+                    }
                 }
             }
-        }
-        if !data_access_validated {
-            self.check_pmp_data_access(fetch_request, &access, size, address)?;
-            self.check_pma_data_access(fetch_request, &access, size, address, request_byte_offset)?;
-        }
-        let store_load_forwarding_plan = self.scalar_load_forwarding_plan(fetch_request, &access);
-        let forwarded_load_data = store_load_forwarding_plan
-            .filter(|plan| !plan.is_partial())
-            .map(O3StoreLoadForwardingPlan::data);
+            if !data_access_validated {
+                self.check_pmp_data_access(fetch_request, &access, size, address)?;
+                self.check_pma_data_access(
+                    fetch_request,
+                    &access,
+                    size,
+                    address,
+                    request_byte_offset,
+                )?;
+            }
+            let store_load_forwarding_plan =
+                self.scalar_load_forwarding_plan(fetch_request, &access);
+            let forwarded_load_data = store_load_forwarding_plan
+                .filter(|plan| !plan.is_partial())
+                .map(O3StoreLoadForwardingPlan::data);
+            let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
 
-        let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
-
-        Ok(Some(PreparedDataAccess::New(OutstandingDataAccess {
-            tick,
-            partition: self.core.partition(),
-            target: RiscvDataAccessTarget::Memory {
-                route: data.route(),
-                endpoint: data.endpoint().clone(),
-            },
-            request_id,
-            fetch_request,
-            access,
-            size,
-            physical_address: address,
-            request_byte_offset,
-            line_layout: Some(line_layout),
-            forwarded_load_data,
-            store_load_forwarding_plan,
-        })))
+            Ok(OutstandingDataAccess {
+                tick,
+                partition: self.core.partition(),
+                target: RiscvDataAccessTarget::Memory {
+                    route: data.route(),
+                    endpoint: data.endpoint().clone(),
+                },
+                request_id,
+                fetch_request,
+                access,
+                size,
+                physical_address: address,
+                request_byte_offset,
+                line_layout: Some(line_layout),
+                forwarded_load_data,
+                store_load_forwarding_plan,
+            })
+        })();
+        let issue = match prepared {
+            Ok(issue) => issue,
+            Err(error)
+                if self.pending_address_preparation_failure_is_replay(fetch_request, &error) =>
+            {
+                self.replay_pending_address_before_submit(fetch_request);
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        };
+        match self.validate_pending_address_pre_submit(&issue) {
+            PendingAddressPreSubmit::NotPending | PendingAddressPreSubmit::Ready => {
+                Ok(Some(PreparedDataAccess::New(issue)))
+            }
+            PendingAddressPreSubmit::Replay => {
+                self.replay_pending_address_before_submit(fetch_request);
+                Ok(None)
+            }
+        }
     }
 
     fn prepare_mmio_data_access(
@@ -447,6 +479,10 @@ impl RiscvCore {
         let Some((fetch_request, access)) = self.next_unissued_data_access() else {
             return Ok(None);
         };
+        if self.pending_address_owns_fetch(fetch_request) {
+            self.replay_pending_address_before_submit(fetch_request);
+            return Ok(None);
+        }
         let base_size = access_size(&access)?;
         let base_address = Address::new(access_address(&access));
         let request_span = masked_vector_memory_request_span(&access, base_address, base_size)?;
@@ -715,18 +751,36 @@ impl RiscvCore {
             O3DataAccessWindowPolicy::None
         };
         let execution = state.data_access_execution(issue.fetch_request).cloned();
-        if o3_data_access {
+        let pending_consumed = if o3_data_access {
             let Some(execution) = execution.as_ref() else {
                 return false;
             };
-            if !state.o3_runtime.stage_live_data_access_issue(
+            let consumed = state.o3_runtime.bind_pending_data_address_issue(
                 execution,
                 issue.request_id,
+                issue.physical_address,
                 issue.tick,
-                younger_window_policy,
-            ) {
+            );
+            if consumed.is_none()
+                && !state.o3_runtime.stage_live_data_access_issue(
+                    execution,
+                    issue.request_id,
+                    issue.tick,
+                    younger_window_policy,
+                )
+            {
                 return false;
             }
+            consumed
+        } else {
+            None
+        };
+        let pending_bound = pending_consumed.is_some();
+        if let Some(consumed) = pending_consumed {
+            state
+                .events
+                .push(execution.as_ref().expect("validated O3 execution").clone());
+            state.executed_fetches.extend(consumed);
         }
         state
             .translated_scalar_load_window_fetches
@@ -738,7 +792,10 @@ impl RiscvCore {
         state
             .outstanding_data
             .insert(issue.request_id, issue.clone_without_layout());
-        if o3_data_access && younger_window_policy != O3DataAccessWindowPolicy::None {
+        if o3_data_access
+            && !pending_bound
+            && younger_window_policy != O3DataAccessWindowPolicy::None
+        {
             stage_o3_data_access_younger_window(
                 &mut state,
                 execution.as_ref().expect("validated O3 execution"),

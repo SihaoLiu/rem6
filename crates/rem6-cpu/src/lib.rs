@@ -1122,6 +1122,11 @@ impl RiscvCoreState {
                     .filter(|pending| pending.owns_fetch(fetch_request))
                     .map(riscv_live_retire_window::RiscvPendingTerminalMemoryResult::execution)
             })
+            .or_else(|| {
+                self.o3_runtime
+                    .pending_data_address_execution()
+                    .filter(|event| event.fetch().request_id() == fetch_request)
+            })
     }
 
     fn data_access_execution_mut(
@@ -1135,10 +1140,16 @@ impl RiscvCoreState {
         {
             return self.events.get_mut(index);
         }
-        self.pending_terminal_memory_result
+        if let Some(pending) = self
+            .pending_terminal_memory_result
             .as_mut()
             .filter(|pending| pending.owns_fetch(fetch_request))
-            .map(riscv_live_retire_window::RiscvPendingTerminalMemoryResult::execution_mut)
+        {
+            return Some(pending.execution_mut());
+        }
+        self.o3_runtime
+            .pending_data_address_execution_mut()
+            .filter(|event| event.fetch().request_id() == fetch_request)
     }
 
     fn discard_return_address_stack_speculations(&mut self) {

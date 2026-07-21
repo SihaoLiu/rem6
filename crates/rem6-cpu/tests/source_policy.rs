@@ -34,6 +34,9 @@ const MAX_RISCV_DATA_ACCESS_RESULT_PAIR_POLICY_LINES: usize = 100;
 const MAX_RISCV_DATA_ACCESS_RESULT_EFFECT_POLICY_LINES: usize = 120;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_LINES: usize = 200;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_FETCH_TEST_LINES: usize = 450;
+const MAX_RISCV_UNISSUED_DATA_LINES: usize = 110;
+const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_ISSUE_LINES: usize = 350;
+const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_ISSUE_TEST_LINES: usize = 550;
 const MAX_RISCV_RETAINED_DATA_ACCESS_RESULT_LINES: usize = 100;
 const MAX_RISCV_MEMORY_RESULT_AUTHORIZATION_LINES: usize = 150;
 const MAX_RISCV_BUFFERED_EFFECT_LINES: usize = 220;
@@ -963,6 +966,137 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
             1,
             "missing or duplicated pending-address scheduling test `{anchor}`"
         );
+    }
+}
+
+#[test]
+fn task5_dependent_result_address_data_issue_stays_focused() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let translation_root_path = crate_dir.join("src/riscv_translation.rs");
+    let unissued_path = crate_dir.join("src/riscv_translation/unissued_data.rs");
+    let issue_root_path = crate_dir.join("src/riscv_data_issue.rs");
+    let issue_child_path = crate_dir.join("src/riscv_data_issue/dependent_result_address.rs");
+    let issue_test_root_path = crate_dir.join("src/riscv_data_issue_tests.rs");
+    let issue_test_path = crate_dir.join("src/riscv_data_issue_tests/dependent_result_address.rs");
+    let pending_path = crate_dir.join("src/o3_runtime_pending_address.rs");
+    let lib_path = crate_dir.join("src/lib.rs");
+    for path in [
+        &translation_root_path,
+        &unissued_path,
+        &issue_root_path,
+        &issue_child_path,
+        &issue_test_root_path,
+        &issue_test_path,
+        &pending_path,
+        &lib_path,
+    ] {
+        assert!(path.is_file(), "missing Task 5 file {}", path.display());
+    }
+
+    let translation_root = fs::read_to_string(&translation_root_path).unwrap();
+    let unissued = fs::read_to_string(&unissued_path).unwrap();
+    let issue_root = fs::read_to_string(&issue_root_path).unwrap();
+    let issue_child = fs::read_to_string(&issue_child_path).unwrap();
+    let issue_test_root = fs::read_to_string(&issue_test_root_path).unwrap();
+    let issue_test = fs::read_to_string(&issue_test_path).unwrap();
+    let pending = fs::read_to_string(&pending_path).unwrap();
+    let lib = fs::read_to_string(&lib_path).unwrap();
+
+    assert_eq!(
+        rust_code_without_comments_and_literals(&translation_root)
+            .matches("mod unissued_data;")
+            .count(),
+        1
+    );
+    assert_eq!(
+        rust_code_without_comments_and_literals(&issue_root)
+            .matches("mod dependent_result_address;")
+            .count(),
+        1
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &issue_test_root,
+            "riscv_data_issue_tests/dependent_result_address.rs",
+            "dependent_result_address",
+        ),
+        1
+    );
+    assert!(include_macro_lines(&unissued).is_empty());
+    assert!(include_macro_lines(&issue_child).is_empty());
+    assert!(include_macro_lines(&issue_test).is_empty());
+    assert!(
+        external_module_declaration_lines(&unissued).is_empty()
+            && path_attribute_lines(&unissued).is_empty()
+            && external_module_declaration_lines(&issue_child).is_empty()
+            && path_attribute_lines(&issue_child).is_empty()
+            && external_module_declaration_lines(&issue_test).is_empty()
+            && path_attribute_lines(&issue_test).is_empty()
+    );
+    assert!(line_count(&unissued_path) <= MAX_RISCV_UNISSUED_DATA_LINES);
+    assert!(line_count(&issue_child_path) <= MAX_RISCV_DEPENDENT_RESULT_ADDRESS_ISSUE_LINES);
+    assert!(line_count(&issue_test_path) <= MAX_RISCV_DEPENDENT_RESULT_ADDRESS_ISSUE_TEST_LINES);
+
+    let translation_code = production_rust_source(&translation_root);
+    let unissued_code = production_rust_source(&unissued);
+    let issue_root_code = production_rust_source(&issue_root);
+    let issue_child_code = production_rust_source(&issue_child);
+    let pending_code = production_rust_source(&pending);
+    let lib_code = production_rust_source(&lib);
+    assert!(production_defines_exact_function(
+        &unissued_code,
+        "next_unissued_data_access"
+    ));
+    assert!(!production_defines_exact_function(
+        &translation_code,
+        "next_unissued_data_access"
+    ));
+    for helper in [
+        "validate_pending_address_pre_submit",
+        "replay_pending_address_before_submit",
+    ] {
+        assert!(production_defines_exact_function(&issue_child_code, helper));
+        assert!(!production_defines_exact_function(&issue_root_code, helper));
+        assert!(!production_defines_exact_function(&lib_code, helper));
+    }
+    assert!(production_defines_exact_function(
+        &pending_code,
+        "bind_pending_data_address_issue"
+    ));
+    assert!(!production_defines_exact_function(
+        &issue_root_code,
+        "bind_pending_data_address_issue"
+    ));
+    assert!(!production_defines_exact_function(
+        &lib_code,
+        "bind_pending_data_address_issue"
+    ));
+    for source in [&translation_code, &issue_root_code, &lib_code] {
+        assert!(!source.contains("struct O3PendingDataAddress"));
+    }
+
+    let expected_tests = [
+        "dependent_result_address_pre_submit_validation_binds_serial_request",
+        "dependent_result_address_parallel_transaction_binds_after_submit",
+        "dependent_result_address_forwarded_load_binds_without_transport",
+        "dependent_result_address_pmp_denial_replays_without_request",
+        "dependent_result_address_pma_uncacheable_replays_without_request",
+        "dependent_result_address_cross_line_replays_without_request",
+        "dependent_result_address_mmio_route_replays_without_mmio_request",
+        "dependent_result_address_unknown_memory_route_replays_without_request",
+        "dependent_result_address_atomic_overlap_replays_without_request",
+        "dependent_result_address_dropped_parallel_prepare_discards_pending_suffix",
+        "dependent_result_address_submit_failure_discards_pending_suffix",
+        "pending_address_bind_reuses_sequence_and_resolves_lsq_address",
+        "pending_address_bind_publishes_one_execution_event",
+    ];
+    let issue_test_code = rust_code_without_comments_and_literals(&issue_test);
+    assert_eq!(
+        issue_test_code.matches("#[test]").count(),
+        expected_tests.len()
+    );
+    for test in expected_tests {
+        assert_eq!(rust_function_definition_count(&issue_test_code, test), 1);
     }
 }
 
