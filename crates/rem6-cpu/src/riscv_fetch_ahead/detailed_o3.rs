@@ -37,6 +37,8 @@ pub(super) use data_access_result::{
     data_access_result_window_candidate, DataAccessResultHeadPhysicalProbe,
 };
 pub(super) use dependent_result_address::dependent_result_address_authorization;
+#[cfg(test)]
+pub(super) use dependent_result_address::DependentResultAddressAuthorizer;
 pub(super) use retained_data_access_result::retained_data_access_result_window_candidate;
 
 pub(super) enum DetailedFetchAheadCandidate {

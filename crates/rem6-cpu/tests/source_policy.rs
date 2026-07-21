@@ -34,6 +34,7 @@ const MAX_RISCV_DATA_ACCESS_RESULT_PAIR_POLICY_LINES: usize = 100;
 const MAX_RISCV_DATA_ACCESS_RESULT_EFFECT_POLICY_LINES: usize = 120;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_LINES: usize = 200;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_FETCH_TEST_LINES: usize = 450;
+const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_TWO_PENDING_FETCH_TEST_LINES: usize = 350;
 const MAX_RISCV_UNISSUED_DATA_LINES: usize = 110;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_ISSUE_LINES: usize = 350;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_ISSUE_TEST_LINES: usize = 550;
@@ -1519,6 +1520,8 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
     let fetch_tests_root_path = crate_dir.join("src/riscv_fetch_ahead/tests.rs");
     let dependent_address_test_path =
         crate_dir.join("src/riscv_fetch_ahead/tests/dependent_result_address.rs");
+    let dependent_address_two_pending_test_path =
+        crate_dir.join("src/riscv_fetch_ahead/tests/dependent_result_address_two_pending.rs");
     let root = fs::read_to_string(&root_path).unwrap();
     let fetch_tests_root = fs::read_to_string(&fetch_tests_root_path).unwrap();
 
@@ -1605,6 +1608,18 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
         ),
         "dependent-result address policy is missing its focused owner"
     );
+    for anchor in [
+        "pub(in crate::riscv_fetch_ahead) struct DependentResultAddressAuthorizer",
+        "pub(in crate::riscv_fetch_ahead) fn from_head(",
+        "pub(in crate::riscv_fetch_ahead) fn try_authorize_next(",
+        "pub(in crate::riscv_fetch_ahead) fn result_destinations(",
+        "pub(in crate::riscv_fetch_ahead) const fn dependent_rows(",
+    ] {
+        assert!(
+            dependent_address.contains(anchor),
+            "dependent-result address policy is missing `{anchor}`"
+        );
+    }
     let dependent_address_code = rust_code_without_comments_and_literals(&dependent_address);
     assert_eq!(
         rust_function_definition_count(
@@ -1614,6 +1629,23 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
         1,
         "dependent-result address policy must own exactly one helper definition"
     );
+    assert!(
+        root.contains(
+            "pub(super) use dependent_result_address::dependent_result_address_authorization;\n#[cfg(test)]\npub(super) use dependent_result_address::DependentResultAddressAuthorizer;"
+        ),
+        "detailed_o3.rs must keep the authorizer re-export test-only beside the normal compatibility helper"
+    );
+    for (label, source) in [
+        ("detailed_o3.rs", root.as_str()),
+        ("dependent_result_address.rs", dependent_address.as_str()),
+    ] {
+        for suppression in ["#[allow(dead_code)]", "#[allow(unused_imports)]"] {
+            assert!(
+                !source.contains(suppression),
+                "{label} must not use production warning suppression `{suppression}`"
+            );
+        }
+    }
     assert!(
         external_module_declaration_lines(&dependent_address).is_empty()
             && path_attribute_lines(&dependent_address).is_empty(),
@@ -1658,6 +1690,13 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
         1,
         "fetch-ahead tests must attach dependent_result_address exactly once"
     );
+    assert_eq!(
+        rust_code_without_comments_and_literals(&fetch_tests_root)
+            .matches("mod dependent_result_address_two_pending;")
+            .count(),
+        1,
+        "fetch-ahead tests must attach dependent_result_address_two_pending exactly once"
+    );
     assert!(dependent_address_test_path.is_file());
     let dependent_address_test_source = fs::read_to_string(&dependent_address_test_path).unwrap();
     assert!(include_macro_lines(&dependent_address_test_source).is_empty());
@@ -1694,6 +1733,39 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
             rust_function_definition_count(&dependent_address_test, anchor),
             1,
             "missing or duplicated dependent-result address fetch test `{anchor}`"
+        );
+    }
+    assert!(dependent_address_two_pending_test_path.is_file());
+    let two_pending_test_source =
+        fs::read_to_string(&dependent_address_two_pending_test_path).unwrap();
+    assert!(include_macro_lines(&two_pending_test_source).is_empty());
+    assert!(
+        line_count(&dependent_address_two_pending_test_path)
+            <= MAX_RISCV_DEPENDENT_RESULT_ADDRESS_TWO_PENDING_FETCH_TEST_LINES,
+        "dependent_result_address_two_pending.rs exceeds {MAX_RISCV_DEPENDENT_RESULT_ADDRESS_TWO_PENDING_FETCH_TEST_LINES} lines"
+    );
+    let two_pending_test = rust_code_without_comments_and_literals(&two_pending_test_source);
+    assert!(
+        external_module_declaration_lines(&two_pending_test_source).is_empty()
+            && path_attribute_lines(&two_pending_test_source).is_empty(),
+        "two-pending dependent-result address fetch tests must remain a leaf child"
+    );
+    let expected_two_pending_tests = [
+        "dependent_address_two_pending_authorizes_sibling_loads_before_suffix",
+        "dependent_address_two_pending_authorizes_one_deep_chain_before_suffix",
+        "dependent_address_two_pending_rejects_third_unresolved_load",
+        "dependent_address_two_pending_rejects_duplicate_self_cycle_and_unrelated_graphs",
+    ];
+    assert_eq!(
+        two_pending_test.matches("#[test]").count(),
+        expected_two_pending_tests.len(),
+        "two-pending dependent-result address fetch tests must expose exactly the focused inventory"
+    );
+    for anchor in expected_two_pending_tests {
+        assert_eq!(
+            rust_function_definition_count(&two_pending_test, anchor),
+            1,
+            "missing or duplicated two-pending dependent-result address fetch test `{anchor}`"
         );
     }
 

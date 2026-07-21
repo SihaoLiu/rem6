@@ -29,6 +29,7 @@ mod data_access_result;
 mod data_access_result_effect;
 mod data_access_result_pair;
 mod dependent_result_address;
+mod dependent_result_address_two_pending;
 mod detailed_o3_control;
 mod producer_forwarded_chain_validation;
 mod producer_forwarded_control_validation;
