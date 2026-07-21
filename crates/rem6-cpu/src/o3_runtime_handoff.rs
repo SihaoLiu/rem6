@@ -15,7 +15,9 @@ impl O3RuntimeState {
         Vec<RiscvCompletedPartialScalarLoadHandoff>,
         usize,
     )> {
-        if self.deferred_live_data_access_execution.is_some() || self.live_data_accesses.is_empty()
+        if self.deferred_live_data_access_execution.is_some()
+            || self.live_data_accesses.is_empty()
+            || self.has_pending_data_address()
         {
             return None;
         }

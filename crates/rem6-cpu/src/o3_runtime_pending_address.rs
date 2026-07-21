@@ -88,6 +88,14 @@ impl O3RuntimeState {
             .and_then(|pending| pending.materialized.as_mut())
     }
 
+    pub(crate) fn pending_data_address_decoded(
+        &self,
+        fetch_request: MemoryRequestId,
+    ) -> Option<RiscvDecodedInstruction> {
+        let pending = self.pending_data_address.as_ref()?;
+        (pending.fetch.request_id() == fetch_request).then_some(pending.decoded)
+    }
+
     pub(crate) fn pending_data_address_issue_matches(
         &self,
         fetch_request: MemoryRequestId,

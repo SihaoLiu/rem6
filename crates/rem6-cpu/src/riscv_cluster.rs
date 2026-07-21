@@ -415,15 +415,16 @@ impl RiscvCluster {
                         data_responder(*cpu),
                     )
                     .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
-                push_prepared_data_action(
+                if push_prepared_data_action(
                     *cpu,
                     core,
                     prepared,
                     &mut prepared_actions,
                     &mut transaction_cpus,
                     &mut transactions,
-                );
-                continue;
+                ) {
+                    continue;
+                }
             }
             if !pending_data_blocks && core.has_pending_fetch() {
                 if can_retire_completed_fetch_while_fetch_pending(*cpu, core)?
@@ -549,15 +550,16 @@ impl RiscvCluster {
                         data_responder(*cpu),
                     )
                     .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
-                push_prepared_data_action(
+                if push_prepared_data_action(
                     *cpu,
                     core,
                     prepared,
                     &mut prepared_actions,
                     &mut transaction_cpus,
                     &mut transactions,
-                );
-                continue;
+                ) {
+                    continue;
+                }
             }
             let instruction_budget_exhausted = committed_instructions >= instruction_budget;
             if !pending_data_blocks && core.has_pending_fetch() {
@@ -1073,10 +1075,9 @@ impl RiscvCluster {
                             *cpu,
                             RiscvCoreDriveAction::DataAccessIssued { event },
                         ));
+                        continue;
                     }
-                    continue;
-                }
-                if let Some(event) = core
+                } else if let Some(event) = core
                     .issue_next_data_access_parallel(
                         scheduler,
                         transport,
@@ -1089,8 +1090,8 @@ impl RiscvCluster {
                         *cpu,
                         RiscvCoreDriveAction::DataAccessIssued { event },
                     ));
+                    continue;
                 }
-                continue;
             }
             if !pending_data_blocks && core.has_pending_fetch() {
                 if can_retire_mmio_fetch_pending(*cpu, core, bus)?
@@ -1200,10 +1201,9 @@ impl RiscvCluster {
                             *cpu,
                             RiscvCoreDriveAction::DataAccessIssued { event },
                         ));
+                        continue;
                     }
-                    continue;
-                }
-                if let Some(event) = core
+                } else if let Some(event) = core
                     .issue_next_data_access_parallel(
                         scheduler,
                         transport,
@@ -1216,8 +1216,8 @@ impl RiscvCluster {
                         *cpu,
                         RiscvCoreDriveAction::DataAccessIssued { event },
                     ));
+                    continue;
                 }
-                continue;
             }
             let instruction_budget_exhausted = committed_instructions >= instruction_budget;
             if !pending_data_blocks && core.has_pending_fetch() {

@@ -451,6 +451,7 @@ fn detailed_mode_disable_discards_pending_address_state() {
 fn pending_address_keeps_live_data_handoff_nonquiescent() {
     let (mut runtime, _, _) = staged_lifecycle_fixture();
     stage_future_pending_wake(&mut runtime);
+    assert!(runtime.live_scalar_memory_handoff().is_none());
     let core = core_with_runtime(runtime);
 
     assert!(!core.o3_live_data_access_lifecycle_is_quiescent());

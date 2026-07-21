@@ -1,4 +1,5 @@
 use super::*;
+use syn::visit::Visit;
 
 const WRITEBACK_ROOT: &str = "tests/cli_run/m5_host_actions/o3/writeback_port.rs";
 const FIXED_FU: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/fixed_fu.rs";
@@ -20,7 +21,11 @@ const YOUNGER_ATOMIC_RESULT: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/younger_atomic_result.rs";
 const YOUNGER_ATOMIC_BOUNDARIES: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/younger_atomic_result/boundaries.rs";
-const WRITEBACK_ROOT_MODULES: [ExpectedModuleDeclaration; 6] = [
+const DEPENDENT_RESULT_ADDRESS: &str =
+    "tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address.rs";
+const DEPENDENT_RESULT_ADDRESS_BOUNDARIES: &str =
+    "tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/boundaries.rs";
+const WRITEBACK_ROOT_MODULES: [ExpectedModuleDeclaration; 7] = [
     ExpectedModuleDeclaration {
         name: "result_support",
         path: "writeback_port/result_support.rs",
@@ -42,6 +47,10 @@ const WRITEBACK_ROOT_MODULES: [ExpectedModuleDeclaration; 6] = [
         path: "writeback_port/younger_atomic_result.rs",
     },
     ExpectedModuleDeclaration {
+        name: "dependent_result_address",
+        path: "writeback_port/dependent_result_address.rs",
+    },
+    ExpectedModuleDeclaration {
         name: "fixed_fu",
         path: "writeback_port/fixed_fu.rs",
     },
@@ -50,6 +59,11 @@ const YOUNGER_ATOMIC_CHILD_MODULES: [ExpectedModuleDeclaration; 1] = [ExpectedMo
     name: "boundaries",
     path: "younger_atomic_result/boundaries.rs",
 }];
+const DEPENDENT_RESULT_ADDRESS_CHILD_MODULES: [ExpectedModuleDeclaration; 1] =
+    [ExpectedModuleDeclaration {
+        name: "boundaries",
+        path: "dependent_result_address/boundaries.rs",
+    }];
 const RESULT_BOUNDARY_SUPPORT_MODULES: [ExpectedModuleDeclaration; 1] =
     [ExpectedModuleDeclaration {
         name: "support",
@@ -122,6 +136,13 @@ const YOUNGER_ATOMIC_RESULT_ANCHORS: [&str; 3] = [
 ];
 const YOUNGER_ATOMIC_BOUNDARY_ANCHORS: [&str; 1] =
     ["rem6_run_o3_younger_atomic_result_boundaries_and_live_actions"];
+const DEPENDENT_RESULT_ADDRESS_ANCHORS: [&str; 3] = [
+    "rem6_run_o3_dependent_result_address_matrix_direct",
+    "rem6_run_o3_dependent_result_address_matrix_cache_fabric_dram",
+    "rem6_run_timing_suppresses_o3_dependent_result_address",
+];
+const DEPENDENT_RESULT_ADDRESS_BOUNDARY_ANCHORS: [&str; 1] =
+    ["rem6_run_o3_dependent_result_address_boundaries_and_live_actions"];
 const RESULT_SUPPORT_HELPERS: [&str; 12] = [
     "data_trace",
     "event_str",
@@ -170,6 +191,9 @@ const STORE_CONDITIONAL_RESULT_MAX_LINES: usize = 650;
 const YOUNGER_ATOMIC_RESULT_MAX_LINES: usize = 450;
 const YOUNGER_ATOMIC_BOUNDARIES_MAX_LINES: usize = 350;
 const YOUNGER_ATOMIC_AGGREGATE_MAX_LINES: usize = 750;
+const DEPENDENT_RESULT_ADDRESS_MAX_LINES: usize = 650;
+const DEPENDENT_RESULT_ADDRESS_BOUNDARIES_MAX_LINES: usize = 450;
+const DEPENDENT_RESULT_ADDRESS_AGGREGATE_MAX_LINES: usize = 1000;
 
 #[derive(Clone, Copy)]
 struct ExpectedModuleDeclaration {
@@ -199,6 +223,9 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let store_conditional_path = crate_dir.join(STORE_CONDITIONAL_RESULT);
     let younger_atomic_path = crate_dir.join(YOUNGER_ATOMIC_RESULT);
     let younger_atomic_boundaries_path = crate_dir.join(YOUNGER_ATOMIC_BOUNDARIES);
+    let dependent_result_address_path = crate_dir.join(DEPENDENT_RESULT_ADDRESS);
+    let dependent_result_address_boundaries_path =
+        crate_dir.join(DEPENDENT_RESULT_ADDRESS_BOUNDARIES);
     let root = fs::read_to_string(&root_path).unwrap();
     let fixed_fu = fs::read_to_string(&fixed_fu_path);
     let child = fs::read_to_string(&child_path).unwrap();
@@ -210,6 +237,9 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let store_conditional = fs::read_to_string(&store_conditional_path);
     let younger_atomic = fs::read_to_string(&younger_atomic_path);
     let younger_atomic_boundaries = fs::read_to_string(&younger_atomic_boundaries_path);
+    let dependent_result_address = fs::read_to_string(&dependent_result_address_path);
+    let dependent_result_address_boundaries =
+        fs::read_to_string(&dependent_result_address_boundaries_path);
 
     let root_functions = top_level_function_names(WRITEBACK_ROOT, &root);
     let mut boundary_failures = Vec::new();
@@ -290,6 +320,12 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     if younger_atomic_boundaries.is_err() {
         boundary_failures.push(format!("{YOUNGER_ATOMIC_BOUNDARIES} must exist"));
     }
+    if dependent_result_address.is_err() {
+        boundary_failures.push(format!("{DEPENDENT_RESULT_ADDRESS} must exist"));
+    }
+    if dependent_result_address_boundaries.is_err() {
+        boundary_failures.push(format!("{DEPENDENT_RESULT_ADDRESS_BOUNDARIES} must exist"));
+    }
     match &boundary {
         Ok(boundary) => {
             boundary_failures.extend(boundary_support_module_failures(
@@ -346,6 +382,30 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
             ));
         }
     }
+    if let Ok(dependent_result_address) = &dependent_result_address {
+        boundary_failures.extend(module_declaration_failures(
+            DEPENDENT_RESULT_ADDRESS,
+            dependent_result_address,
+            &DEPENDENT_RESULT_ADDRESS_CHILD_MODULES,
+        ));
+        let includes = top_level_include_paths(DEPENDENT_RESULT_ADDRESS, dependent_result_address);
+        if !includes.is_empty() {
+            boundary_failures.push(format!(
+                "{DEPENDENT_RESULT_ADDRESS} must not contain top-level include! fragments: {includes:?}"
+            ));
+        }
+    }
+    if let Ok(dependent_result_address_boundaries) = &dependent_result_address_boundaries {
+        let includes = top_level_include_paths(
+            DEPENDENT_RESULT_ADDRESS_BOUNDARIES,
+            dependent_result_address_boundaries,
+        );
+        if !includes.is_empty() {
+            boundary_failures.push(format!(
+                "{DEPENDENT_RESULT_ADDRESS_BOUNDARIES} must not contain top-level include! fragments: {includes:?}"
+            ));
+        }
+    }
     assert!(
         boundary_failures.is_empty(),
         "writeback result ownership boundary is incomplete:\n{}",
@@ -360,6 +420,8 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let store_conditional = store_conditional.unwrap();
     let younger_atomic = younger_atomic.unwrap();
     let younger_atomic_boundaries = younger_atomic_boundaries.unwrap();
+    let dependent_result_address = dependent_result_address.unwrap();
+    let dependent_result_address_boundaries = dependent_result_address_boundaries.unwrap();
 
     assert!(
         line_count(&fixed_fu_path) <= FIXED_FU_MAX_LINES,
@@ -423,6 +485,21 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
             <= YOUNGER_ATOMIC_AGGREGATE_MAX_LINES,
         "younger-atomic result evidence must remain at or below {YOUNGER_ATOMIC_AGGREGATE_MAX_LINES} aggregate lines"
     );
+    assert!(
+        line_count(&dependent_result_address_path) <= DEPENDENT_RESULT_ADDRESS_MAX_LINES,
+        "{DEPENDENT_RESULT_ADDRESS} must remain at or below {DEPENDENT_RESULT_ADDRESS_MAX_LINES} lines"
+    );
+    assert!(
+        line_count(&dependent_result_address_boundaries_path)
+            <= DEPENDENT_RESULT_ADDRESS_BOUNDARIES_MAX_LINES,
+        "{DEPENDENT_RESULT_ADDRESS_BOUNDARIES} must remain at or below {DEPENDENT_RESULT_ADDRESS_BOUNDARIES_MAX_LINES} lines"
+    );
+    assert!(
+        line_count(&dependent_result_address_path)
+            + line_count(&dependent_result_address_boundaries_path)
+            <= DEPENDENT_RESULT_ADDRESS_AGGREGATE_MAX_LINES,
+        "dependent result-address evidence must remain at or below {DEPENDENT_RESULT_ADDRESS_AGGREGATE_MAX_LINES} aggregate lines"
+    );
     let support_leaf_failures = support_leaf_failures(RESULT_SUPPORT, &support);
     assert!(
         support_leaf_failures.is_empty(),
@@ -455,6 +532,14 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     assert!(
         top_level_module_names(YOUNGER_ATOMIC_BOUNDARIES, &younger_atomic_boundaries).is_empty(),
         "{YOUNGER_ATOMIC_BOUNDARIES} must remain a leaf module"
+    );
+    assert!(
+        top_level_module_names(
+            DEPENDENT_RESULT_ADDRESS_BOUNDARIES,
+            &dependent_result_address_boundaries,
+        )
+        .is_empty(),
+        "{DEPENDENT_RESULT_ADDRESS_BOUNDARIES} must remain a leaf module"
     );
 
     let child_functions = top_level_function_names(RESULT_CLASSES, &child);
@@ -513,6 +598,11 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
                 YOUNGER_ATOMIC_BOUNDARIES,
                 younger_atomic_boundaries.as_str(),
             ),
+            (DEPENDENT_RESULT_ADDRESS, dependent_result_address.as_str()),
+            (
+                DEPENDENT_RESULT_ADDRESS_BOUNDARIES,
+                dependent_result_address_boundaries.as_str(),
+            ),
         ] {
             assert_eq!(
                 source.matches(anchor).count(),
@@ -559,6 +649,11 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
                 YOUNGER_ATOMIC_BOUNDARIES,
                 younger_atomic_boundaries.as_str(),
             ),
+            (DEPENDENT_RESULT_ADDRESS, dependent_result_address.as_str()),
+            (
+                DEPENDENT_RESULT_ADDRESS_BOUNDARIES,
+                dependent_result_address_boundaries.as_str(),
+            ),
         ] {
             assert_eq!(
                 source.matches(anchor).count(),
@@ -593,6 +688,11 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
                 YOUNGER_ATOMIC_BOUNDARIES,
                 younger_atomic_boundaries.as_str(),
             ),
+            (DEPENDENT_RESULT_ADDRESS, dependent_result_address.as_str()),
+            (
+                DEPENDENT_RESULT_ADDRESS_BOUNDARIES,
+                dependent_result_address_boundaries.as_str(),
+            ),
         ] {
             assert_eq!(
                 source.matches(anchor).count(),
@@ -626,6 +726,11 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
             (
                 YOUNGER_ATOMIC_BOUNDARIES,
                 younger_atomic_boundaries.as_str(),
+            ),
+            (DEPENDENT_RESULT_ADDRESS, dependent_result_address.as_str()),
+            (
+                DEPENDENT_RESULT_ADDRESS_BOUNDARIES,
+                dependent_result_address_boundaries.as_str(),
             ),
         ] {
             assert_eq!(
@@ -662,6 +767,11 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
                 YOUNGER_ATOMIC_BOUNDARIES,
                 younger_atomic_boundaries.as_str(),
             ),
+            (DEPENDENT_RESULT_ADDRESS, dependent_result_address.as_str()),
+            (
+                DEPENDENT_RESULT_ADDRESS_BOUNDARIES,
+                dependent_result_address_boundaries.as_str(),
+            ),
         ] {
             assert_eq!(
                 source.matches(anchor).count(),
@@ -696,6 +806,11 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
                 YOUNGER_ATOMIC_BOUNDARIES,
                 younger_atomic_boundaries.as_str(),
             ),
+            (DEPENDENT_RESULT_ADDRESS, dependent_result_address.as_str()),
+            (
+                DEPENDENT_RESULT_ADDRESS_BOUNDARIES,
+                dependent_result_address_boundaries.as_str(),
+            ),
         ] {
             assert_eq!(
                 source.matches(anchor).count(),
@@ -728,11 +843,95 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
             (RESULT_BOUNDARIES_SUPPORT, boundary_support.as_str()),
             (STORE_CONDITIONAL_RESULT, store_conditional.as_str()),
             (YOUNGER_ATOMIC_RESULT, younger_atomic.as_str()),
+            (DEPENDENT_RESULT_ADDRESS, dependent_result_address.as_str()),
+            (
+                DEPENDENT_RESULT_ADDRESS_BOUNDARIES,
+                dependent_result_address_boundaries.as_str(),
+            ),
         ] {
             assert_eq!(
                 source.matches(anchor).count(),
                 0,
                 "{relative} must not contain younger-atomic boundary anchor `{anchor}`"
+            );
+        }
+    }
+
+    let dependent_result_address_tests =
+        top_level_test_names(DEPENDENT_RESULT_ADDRESS, &dependent_result_address);
+    assert_eq!(
+        dependent_result_address_tests, DEPENDENT_RESULT_ADDRESS_ANCHORS,
+        "{DEPENDENT_RESULT_ADDRESS} must own exactly the required dependent-address anchors in order"
+    );
+    for anchor in DEPENDENT_RESULT_ADDRESS_ANCHORS {
+        assert_eq!(
+            dependent_result_address.matches(anchor).count(),
+            1,
+            "{DEPENDENT_RESULT_ADDRESS} must contain dependent-address anchor `{anchor}` exactly once"
+        );
+        for (relative, source) in [
+            (WRITEBACK_ROOT, root.as_str()),
+            (FIXED_FU, fixed_fu.as_str()),
+            (RESULT_CLASSES, child.as_str()),
+            (RESULT_SCALAR_SUFFIX, scalar_suffix.as_str()),
+            (RESULT_PAIRS, pairs.as_str()),
+            (RESULT_SUPPORT, support.as_str()),
+            (RESULT_BOUNDARIES, boundary.as_str()),
+            (RESULT_BOUNDARIES_SUPPORT, boundary_support.as_str()),
+            (STORE_CONDITIONAL_RESULT, store_conditional.as_str()),
+            (YOUNGER_ATOMIC_RESULT, younger_atomic.as_str()),
+            (
+                YOUNGER_ATOMIC_BOUNDARIES,
+                younger_atomic_boundaries.as_str(),
+            ),
+            (
+                DEPENDENT_RESULT_ADDRESS_BOUNDARIES,
+                dependent_result_address_boundaries.as_str(),
+            ),
+        ] {
+            assert_eq!(
+                source.matches(anchor).count(),
+                0,
+                "{relative} must not contain dependent-address anchor `{anchor}`"
+            );
+        }
+    }
+
+    let dependent_result_address_boundary_tests = top_level_test_names(
+        DEPENDENT_RESULT_ADDRESS_BOUNDARIES,
+        &dependent_result_address_boundaries,
+    );
+    assert_eq!(
+        dependent_result_address_boundary_tests, DEPENDENT_RESULT_ADDRESS_BOUNDARY_ANCHORS,
+        "{DEPENDENT_RESULT_ADDRESS_BOUNDARIES} must own exactly the required boundary anchor"
+    );
+    for anchor in DEPENDENT_RESULT_ADDRESS_BOUNDARY_ANCHORS {
+        assert_eq!(
+            dependent_result_address_boundaries.matches(anchor).count(),
+            1,
+            "{DEPENDENT_RESULT_ADDRESS_BOUNDARIES} must contain boundary anchor `{anchor}` exactly once"
+        );
+        for (relative, source) in [
+            (WRITEBACK_ROOT, root.as_str()),
+            (FIXED_FU, fixed_fu.as_str()),
+            (RESULT_CLASSES, child.as_str()),
+            (RESULT_SCALAR_SUFFIX, scalar_suffix.as_str()),
+            (RESULT_PAIRS, pairs.as_str()),
+            (RESULT_SUPPORT, support.as_str()),
+            (RESULT_BOUNDARIES, boundary.as_str()),
+            (RESULT_BOUNDARIES_SUPPORT, boundary_support.as_str()),
+            (STORE_CONDITIONAL_RESULT, store_conditional.as_str()),
+            (YOUNGER_ATOMIC_RESULT, younger_atomic.as_str()),
+            (
+                YOUNGER_ATOMIC_BOUNDARIES,
+                younger_atomic_boundaries.as_str(),
+            ),
+            (DEPENDENT_RESULT_ADDRESS, dependent_result_address.as_str()),
+        ] {
+            assert_eq!(
+                source.matches(anchor).count(),
+                0,
+                "{relative} must not contain dependent-address boundary anchor `{anchor}`"
             );
         }
     }
@@ -747,6 +946,8 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     assert_rustfmt_clean(&store_conditional_path);
     assert_rustfmt_clean(&younger_atomic_path);
     assert_rustfmt_clean(&younger_atomic_boundaries_path);
+    assert_rustfmt_clean(&dependent_result_address_path);
+    assert_rustfmt_clean(&dependent_result_address_boundaries_path);
 }
 
 #[test]
@@ -764,6 +965,8 @@ mod result_boundaries;
 mod store_conditional_result;
 #[path = "writeback_port/younger_atomic_result.rs"]
 mod younger_atomic_result;
+#[path = "writeback_port/dependent_result_address.rs"]
+mod dependent_result_address;
 #[path = "writeback_port/fixed_fu.rs"]
 mod fixed_fu;
 "#;
@@ -783,6 +986,8 @@ mod result_boundaries;
 mod store_conditional_result;
 #[path = "writeback_port/younger_atomic_result.rs"]
 mod younger_atomic_result;
+#[path = "writeback_port/dependent_result_address.rs"]
+mod dependent_result_address;
 #[path = "writeback_port/fixed_fu.rs"]
 mod fixed_fu;
 "#,
@@ -799,6 +1004,8 @@ mod result_boundaries;
 mod store_conditional_result;
 #[path = "writeback_port/younger_atomic_result.rs"]
 mod younger_atomic_result;
+#[path = "writeback_port/dependent_result_address.rs"]
+mod dependent_result_address;
 #[path = "writeback_port/fixed_fu.rs"]
 mod fixed_fu;
 "#,
@@ -817,6 +1024,8 @@ mod result_boundaries;
 mod store_conditional_result;
 #[path = "writeback_port/younger_atomic_result.rs"]
 mod younger_atomic_result;
+#[path = "writeback_port/dependent_result_address.rs"]
+mod dependent_result_address;
 #[path = "writeback_port/fixed_fu.rs"]
 mod fixed_fu;
 "#,
@@ -834,6 +1043,8 @@ mod result_boundaries;
 mod store_conditional_result;
 #[path = "writeback_port/younger_atomic_result.rs"]
 mod younger_atomic_result;
+#[path = "writeback_port/dependent_result_address.rs"]
+mod dependent_result_address;
 #[path = "writeback_port/fixed_fu.rs"]
 mod fixed_fu;
 "#,
@@ -851,6 +1062,27 @@ mod result_boundaries;
 mod store_conditional_result;
 #[path = "writeback_port/younger_atomic_result.rs"]
 mod younger_atomic_result;
+#[path = "writeback_port/dependent_result_address.rs"]
+mod dependent_result_address;
+#[path = "writeback_port/fixed_fu.rs"]
+mod fixed_fu;
+"#,
+        ),
+        (
+            "wrong dependent-address path",
+            r#"
+#[path = "writeback_port/result_support.rs"]
+mod result_support;
+#[path = "writeback_port/result_classes.rs"]
+mod result_classes;
+#[path = "writeback_port/result_boundaries.rs"]
+mod result_boundaries;
+#[path = "writeback_port/store_conditional_result.rs"]
+mod store_conditional_result;
+#[path = "writeback_port/younger_atomic_result.rs"]
+mod younger_atomic_result;
+#[path = "writeback_port/wrong.rs"]
+mod dependent_result_address;
 #[path = "writeback_port/fixed_fu.rs"]
 mod fixed_fu;
 "#,
@@ -884,6 +1116,33 @@ mod boundaries;
             "synthetic.rs",
             source,
             &YOUNGER_ATOMIC_CHILD_MODULES
+        )
+        .is_empty());
+    }
+}
+
+#[test]
+fn writeback_dependent_result_address_boundary_module_policy_rejects_wrong_ownership() {
+    let valid = r#"
+#[path = "dependent_result_address/boundaries.rs"]
+mod boundaries;
+"#;
+    assert!(module_declaration_failures(
+        "synthetic.rs",
+        valid,
+        &DEPENDENT_RESULT_ADDRESS_CHILD_MODULES,
+    )
+    .is_empty());
+
+    for source in [
+        "mod boundaries;",
+        "#[path = \"wrong.rs\"]\nmod boundaries;",
+        "#[path = \"dependent_result_address/boundaries.rs\"]\nmod boundaries {}",
+    ] {
+        assert!(!module_declaration_failures(
+            "synthetic.rs",
+            source,
+            &DEPENDENT_RESULT_ADDRESS_CHILD_MODULES,
         )
         .is_empty());
     }
@@ -939,6 +1198,15 @@ fn writeback_result_support_leaf_policy_rejects_includes_and_child_modules() {
     assert!(support_leaf_failures("synthetic.rs", "use super::*;\nfn helper() {}\n").is_empty());
     assert!(!support_leaf_failures("synthetic.rs", "mod nested;\n").is_empty());
     assert!(!support_leaf_failures("synthetic.rs", "include!(\"nested.rs\");\n").is_empty());
+    assert!(
+        !support_leaf_failures("synthetic.rs", "fn helper() { include!(\"nested.rs\"); }\n")
+            .is_empty()
+    );
+    assert!(!support_leaf_failures(
+        "synthetic.rs",
+        "macro_rules! hidden { () => { include!(\"nested.rs\"); } }\n"
+    )
+    .is_empty());
     assert!(
         !support_leaf_failures("synthetic.rs", "include!(concat!(\"nested\", \".rs\"));\n")
             .is_empty()
@@ -1010,19 +1278,47 @@ fn top_level_function_names(relative: &str, source: &str) -> Vec<String> {
 }
 
 fn top_level_include_paths(relative: &str, source: &str) -> Vec<String> {
-    parsed_source(relative, source)
-        .items
-        .into_iter()
-        .filter_map(|item| {
-            let syn::Item::Macro(item) = item else {
-                return None;
-            };
-            item.mac
-                .path
-                .is_ident("include")
-                .then(|| top_level_include_argument(item.mac.tokens))
-        })
-        .collect()
+    let syntax = parsed_source(relative, source);
+    let mut visitor = IncludeMacroVisitor::default();
+    visitor.visit_file(&syntax);
+    visitor.paths
+}
+
+#[derive(Default)]
+struct IncludeMacroVisitor {
+    paths: Vec<String>,
+}
+
+impl<'ast> Visit<'ast> for IncludeMacroVisitor {
+    fn visit_macro(&mut self, item: &'ast syn::Macro) {
+        if item.path.is_ident("include") {
+            self.paths
+                .push(top_level_include_argument(item.tokens.clone()));
+        }
+        nested_include_arguments(item.tokens.clone(), &mut self.paths);
+        syn::visit::visit_macro(self, item);
+    }
+}
+
+fn nested_include_arguments(tokens: proc_macro2::TokenStream, paths: &mut Vec<String>) {
+    let tokens = tokens.into_iter().collect::<Vec<_>>();
+    for (index, token) in tokens.iter().enumerate() {
+        if let proc_macro2::TokenTree::Group(group) = token {
+            nested_include_arguments(group.stream(), paths);
+        }
+        let Some(proc_macro2::TokenTree::Ident(ident)) = tokens.get(index) else {
+            continue;
+        };
+        let Some(proc_macro2::TokenTree::Punct(bang)) = tokens.get(index + 1) else {
+            continue;
+        };
+        let Some(proc_macro2::TokenTree::Group(arguments)) = tokens.get(index + 2) else {
+            continue;
+        };
+        if ident == "include" && bang.as_char() == '!' {
+            paths.push(top_level_include_argument(arguments.stream()));
+        }
+    }
 }
 
 fn top_level_include_argument(tokens: proc_macro2::TokenStream) -> String {

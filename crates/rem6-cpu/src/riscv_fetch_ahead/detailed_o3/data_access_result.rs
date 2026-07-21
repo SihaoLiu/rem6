@@ -234,11 +234,9 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
         head_authorization.integer_destination(),
         row_limit,
     );
-    let mut result_rows = 1;
-    let mut scalar_started = false;
+    let (mut result_rows, mut dependent_result_address, mut scalar_started) = (1, false, false);
     let mut previous_request = current.last_consumed_request();
     let mut next_pc = completed_instruction_sequential_pc(current);
-
     while !window.is_full() {
         let younger = match completed_window_instruction_or_candidate(
             state,
@@ -274,7 +272,7 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
                 row_limit,
             ) {
                 authorizations.push((younger.first_consumed_request(), younger_authorization));
-                result_rows = 2;
+                (result_rows, dependent_result_address) = (2, true);
                 window = RiscvScalarIntegerLiveWindow::from_memory_results(
                     authorizations
                         .iter()
@@ -330,7 +328,14 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
             }
         }
 
-        match window.classify_younger(younger.decoded().instruction()) {
+        let mut decision = window.classify_younger(younger.decoded().instruction());
+        if dependent_result_address
+            && decision == RiscvScalarIntegerYoungerDecision::AdmitStop
+            && !window.is_full()
+        {
+            decision = RiscvScalarIntegerYoungerDecision::AdmitContinue;
+        }
+        match decision {
             RiscvScalarIntegerYoungerDecision::AdmitContinue => {
                 scalar_started = true;
                 previous_request = younger.last_consumed_request();
@@ -365,12 +370,8 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
 }
 
 fn completed_instruction_sequential_pc(instruction: &RiscvCompletedFetchInstruction) -> Address {
-    Address::new(
-        instruction
-            .pc()
-            .get()
-            .wrapping_add(u64::from(instruction.decoded().bytes())),
-    )
+    let bytes = u64::from(instruction.decoded().bytes());
+    Address::new(instruction.pc().get().wrapping_add(bytes))
 }
 
 struct DataAccessResultHeadProbe {

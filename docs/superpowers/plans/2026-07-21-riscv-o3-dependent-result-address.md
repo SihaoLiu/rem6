@@ -1388,7 +1388,8 @@ assert_eq!(event_u64(scalar, "issue_tick"), event_u64(dependent, "issue_tick"));
 For every row assert the dependent Data/Memory request-sent tick is at or
 after its O3 issue tick, the event's `lsq_load_address` equals the exact
 pointer plus offset, the fan-in issue is at or after the dependent load
-writeback, commit ticks are strictly ordered, and final register/memory
+writeback, O3 sequences are strictly ordered, commit ticks are nondecreasing
+to permit same-cycle bounded-prefix retirement, and final register/memory
 witnesses match.
 
 Direct rows must show transport activity and zero cache/fabric/DRAM activity.
@@ -1449,7 +1450,18 @@ timing suppression all pass within the new caps.
 - [ ] **Step 8: Run the per-task review gate, then commit and push**
 
 ```bash
-git add crates/rem6/tests/cli_run/m5_host_actions/o3/writeback_port.rs \
+git add docs/superpowers/plans/2026-07-21-riscv-o3-dependent-result-address.md \
+  crates/rem6-cpu/src/o3_runtime_handoff.rs \
+  crates/rem6-cpu/src/o3_runtime_pending_address.rs \
+  crates/rem6-cpu/src/o3_runtime_pending_address_tests/lifecycle.rs \
+  crates/rem6-cpu/src/riscv_cluster.rs \
+  crates/rem6-cpu/src/riscv_data_issue.rs \
+  crates/rem6-cpu/src/riscv_data_issue/dependent_result_address.rs \
+  crates/rem6-cpu/src/riscv_data_issue_tests/dependent_result_address.rs \
+  crates/rem6-cpu/src/riscv_fetch_ahead/detailed_o3/data_access_result.rs \
+  crates/rem6-cpu/src/riscv_fetch_ahead/tests/dependent_result_address.rs \
+  crates/rem6-cpu/tests/source_policy.rs \
+  crates/rem6/tests/cli_run/m5_host_actions/o3/writeback_port.rs \
   crates/rem6/tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address.rs \
   crates/rem6/tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/boundaries.rs \
   crates/rem6/tests/source_policy/writeback_ownership.rs

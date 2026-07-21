@@ -42,6 +42,22 @@ impl RiscvCore {
             .pending_data_address_owns_fetch(fetch_request)
     }
 
+    pub(super) fn pending_address_architectural_decoded(
+        state: &RiscvCoreState,
+        fetch_request: MemoryRequestId,
+    ) -> Option<rem6_isa_riscv::RiscvDecodedInstruction> {
+        let decoded = state
+            .o3_runtime
+            .pending_data_address_decoded(fetch_request)?;
+        let mut architectural = state.hart.clone();
+        let execution = architectural.execute_decoded(decoded).ok()?;
+        state
+            .o3_runtime
+            .pending_data_address_execution()
+            .is_some_and(|pending| pending.execution() == &execution)
+            .then_some(decoded)
+    }
+
     pub(super) fn validate_pending_address_pre_submit(
         &self,
         issue: &OutstandingDataAccess,
@@ -53,13 +69,16 @@ impl RiscvCore {
         {
             return PendingAddressPreSubmit::NotPending;
         }
+        let architectural_materialization_matches =
+            Self::pending_address_architectural_decoded(&state, issue.fetch_request).is_some();
         if !state.o3_runtime.pending_data_address_issue_matches(
             issue.fetch_request,
             &issue.access,
             issue.physical_address,
             issue.size,
             issue.tick,
-        ) || !matches!(issue.target, RiscvDataAccessTarget::Memory { .. })
+        ) || !architectural_materialization_matches
+            || !matches!(issue.target, RiscvDataAccessTarget::Memory { .. })
             || issue.request_byte_offset != 0
             || state
                 .events

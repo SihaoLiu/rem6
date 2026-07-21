@@ -498,5 +498,8 @@ mod store_conditional_result;
 #[path = "writeback_port/younger_atomic_result.rs"]
 mod younger_atomic_result;
 
+#[path = "writeback_port/dependent_result_address.rs"]
+mod dependent_result_address;
+
 #[path = "writeback_port/fixed_fu.rs"]
 mod fixed_fu;

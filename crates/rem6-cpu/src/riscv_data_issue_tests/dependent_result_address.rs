@@ -86,6 +86,8 @@ impl PendingIssueFixture {
         state
             .o3_runtime
             .set_pending_data_address_materialized_for_test(ISSUE_TICK, materialized);
+        state.hart.write(reg(5), address);
+        state.hart.set_pc(PENDING_PC);
         drop(state);
         Self {
             core,
@@ -182,6 +184,7 @@ impl PendingIssueFixture {
 #[test]
 fn dependent_result_address_pre_submit_validation_binds_serial_request() {
     let mut fixture = PendingIssueFixture::load(0x9000);
+    fixture.core.enable_checker_cpu();
     let calls = Arc::new(AtomicU64::new(0));
     let responder_calls = calls.clone();
 
@@ -204,6 +207,10 @@ fn dependent_result_address_pre_submit_validation_binds_serial_request() {
     assert_eq!(state.outstanding_data.len(), 1);
     assert_eq!(state.o3_runtime.live_data_access_count_for_test(), 2);
     assert_eq!(calls.load(Ordering::Relaxed), 0);
+    assert_eq!(state.hart.pc(), FIRST_SUFFIX_PC);
+    let checker = state.checker.as_ref().expect("checker CPU").snapshot();
+    assert_eq!(checker.checked_instructions(), 1);
+    assert!(checker.mismatches().is_empty());
 }
 
 #[test]

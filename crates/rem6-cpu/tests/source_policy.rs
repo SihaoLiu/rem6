@@ -1482,6 +1482,7 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
     );
     let expected_tests = [
         "dependent_scalar_ld_authorizes_addressless_younger_read",
+        "dependent_address_fetches_second_scalar_suffix_after_first_dependency",
         "dependent_address_fetch_rejects_non_exact_load_shapes",
         "dependent_address_authorization_requires_integer_result_head",
         "dependent_address_atomic_head_rejects_ordering_and_allows_unordered",

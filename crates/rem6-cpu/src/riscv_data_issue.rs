@@ -751,6 +751,8 @@ impl RiscvCore {
             O3DataAccessWindowPolicy::None
         };
         let execution = state.data_access_execution(issue.fetch_request).cloned();
+        let pending_architectural_decoded =
+            Self::pending_address_architectural_decoded(&state, issue.fetch_request);
         let pending_consumed = if o3_data_access {
             let Some(execution) = execution.as_ref() else {
                 return false;
@@ -777,9 +779,28 @@ impl RiscvCore {
         };
         let pending_bound = pending_consumed.is_some();
         if let Some(consumed) = pending_consumed {
-            state
-                .events
-                .push(execution.as_ref().expect("validated O3 execution").clone());
+            let execution = execution.as_ref().expect("validated O3 execution");
+            let decoded = pending_architectural_decoded
+                .expect("submitted pending data address matches the architectural hart");
+            let architectural = state
+                .hart
+                .execute_decoded(decoded)
+                .expect("validated dependent load executes architecturally");
+            assert_eq!(architectural, *execution.execution());
+            let primary_hart = state.hart.clone();
+            if let Some(checker) = &mut state.checker {
+                checker
+                    .check_execution(
+                        true,
+                        execution.fetch().request_id().sequence(),
+                        execution.fetch().pc(),
+                        decoded,
+                        &architectural,
+                        &primary_hart,
+                    )
+                    .expect("validated dependent load executes on the checker CPU");
+            }
+            state.events.push(execution.clone());
             state.executed_fetches.extend(consumed);
         }
         state

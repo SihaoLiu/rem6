@@ -127,24 +127,15 @@ fn dependent_scalar_ld_authorizes_addressless_younger_read() {
     let authorization =
         dependent_authorization(&core, &head, &younger).expect("dependent address authority");
 
-    assert_eq!(
-        authorization.role(),
-        O3MemoryResultWindowRole::YoungerDependentRead
-    );
+    let expected_role = O3MemoryResultWindowRole::YoungerDependentRead;
+    let producer = Register::new(5).unwrap();
+    let destination = Register::new(6).unwrap();
+    assert_eq!(authorization.role(), expected_role);
     assert_eq!(authorization.route(), O3MemoryResultWindowRoute::Memory);
-    assert_eq!(
-        authorization.integer_destination(),
-        Some(Register::new(6).unwrap())
-    );
+    assert_eq!(authorization.integer_destination(), Some(destination));
     assert_eq!(authorization.resolved_range(), None);
-    assert_eq!(
-        authorization.dependent_source(),
-        Some((
-            Register::new(5).unwrap(),
-            MemoryWidth::Doubleword,
-            Immediate::new(16)
-        ))
-    );
+    let expected_source = (producer, MemoryWidth::Doubleword, Immediate::new(16));
+    assert_eq!(authorization.dependent_source(), Some(expected_source));
     assert!(!authorization.matches_resolved_range(
         O3MemoryResultWindowRoute::Memory,
         Address::new(0x9000),
@@ -163,8 +154,23 @@ fn dependent_scalar_ld_authorizes_addressless_younger_read() {
             .get(&request(1))
             .copied()
             .map(O3MemoryResultWindowAuthorization::role),
-        Some(O3MemoryResultWindowRole::YoungerDependentRead)
+        Some(expected_role)
     );
+}
+
+#[test]
+fn dependent_address_fetches_second_scalar_suffix_after_first_dependency() {
+    let core = core_with_completed_fetches([
+        (0, 0x8000, ld(5, 2, 0).to_le_bytes().to_vec()),
+        (1, 0x8004, ld(6, 5, 0).to_le_bytes().to_vec()),
+        (2, 0x8008, i_type(8, 5, 0, 7, 0x13).to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+    core.write_register(Register::new(2).unwrap(), 0x9000);
+
+    let next = core.next_fetch_ahead_before_retire().expect("fetch ahead");
+    assert_eq!(next.pc(), Address::new(0x800c));
 }
 
 #[test]
