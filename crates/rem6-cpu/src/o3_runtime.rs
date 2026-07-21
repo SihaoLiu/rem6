@@ -537,31 +537,6 @@ impl O3RuntimeState {
         }
     }
 
-    fn prepare_ready_live_data_access_forwarding_matcher(
-        &mut self,
-        execution: &RiscvCpuExecutionEvent,
-    ) {
-        if !matches!(
-            execution.execution().memory_access(),
-            Some(MemoryAccessKind::Load { .. })
-        ) {
-            return;
-        }
-        let forwarding_plan = self
-            .live_data_accesses
-            .iter()
-            .find(|live| {
-                live.fetch_request == execution.fetch().request_id()
-                    && live.outcome == O3LiveDataAccessOutcome::Completed
-            })
-            .and_then(|live| live.forwarding_plan);
-        let observation = self.record_store_forwarding_window(execution, None, forwarding_plan);
-        self.store_forwarding_window.prepared_load = Some(O3PreparedLoadForwarding {
-            fetch_request: execution.fetch().request_id(),
-            observation,
-        });
-    }
-
     fn take_prepared_store_forwarding_observation(
         &mut self,
         execution: &RiscvCpuExecutionEvent,

@@ -707,6 +707,8 @@ impl RiscvCore {
                 });
         let younger_window_policy = if eligible_memory_result_window {
             O3DataAccessWindowPolicy::MemoryResultWindow
+        } else if eligible_scalar_load && state.data_translation.is_none() {
+            O3DataAccessWindowPolicy::UntranslatedScalarMemoryPrefix
         } else if eligible_scalar_load {
             O3DataAccessWindowPolicy::ScalarMemoryPrefix
         } else {

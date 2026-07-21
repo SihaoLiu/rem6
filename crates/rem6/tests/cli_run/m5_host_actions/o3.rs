@@ -20,6 +20,8 @@ mod fu_latency;
 mod fu_live_window;
 #[path = "o3/live_retire_gate.rs"]
 mod live_retire_gate;
+#[path = "o3/live_window_depth.rs"]
+mod live_window_depth;
 #[path = "o3/lsq.rs"]
 mod lsq;
 #[path = "o3/lsq_fu_branch.rs"]

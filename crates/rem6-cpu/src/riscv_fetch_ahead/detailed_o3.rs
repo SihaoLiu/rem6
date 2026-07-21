@@ -840,10 +840,14 @@ fn scalar_memory_window_candidate(
     fetch_events: &[CpuFetchEvent],
     current: &RiscvCompletedFetchInstruction,
 ) -> DetailedFetchAheadCandidate {
-    let limit = state.o3_runtime.scalar_memory_window_limit();
+    let scalar_memory_window_limit = state.o3_runtime.scalar_memory_window_limit();
+    let scalar_live_window_limit = state.o3_runtime.scalar_live_window_limit();
     let Some(window) = state.o3_runtime.scalar_memory_fetch_window_state() else {
         return DetailedFetchAheadCandidate::Blocked;
     };
+    if window.rows() >= scalar_memory_window_limit || window.rows() >= scalar_live_window_limit {
+        return DetailedFetchAheadCandidate::Blocked;
+    }
     let mut destinations = window.load_destinations().to_vec();
     if !admit_scalar_memory_prefix_instruction(
         state,
@@ -862,7 +866,7 @@ fn scalar_memory_window_candidate(
     let mut window_rows = window.rows().saturating_add(1);
 
     loop {
-        if window_rows >= limit {
+        if window_rows >= scalar_live_window_limit {
             return DetailedFetchAheadCandidate::Blocked;
         }
         let next = match completed_window_instruction_or_candidate(
@@ -879,6 +883,10 @@ fn scalar_memory_window_candidate(
             instruction,
             RiscvInstruction::Load { .. } | RiscvInstruction::Store { .. }
         ) {
+            if window_rows >= scalar_memory_window_limit || window_rows >= scalar_live_window_limit
+            {
+                return DetailedFetchAheadCandidate::Blocked;
+            }
             if !admit_scalar_memory_prefix_instruction(state, instruction, &mut destinations) {
                 return DetailedFetchAheadCandidate::Blocked;
             }
@@ -892,11 +900,13 @@ fn scalar_memory_window_candidate(
             continue;
         }
 
-        let Some(mut alu_window) = RiscvScalarIntegerLiveWindow::from_scalar_memory_prefix(
-            destinations.iter().copied(),
-            window_rows,
-            limit,
-        ) else {
+        let Some(mut alu_window) =
+            RiscvScalarIntegerLiveWindow::from_untranslated_scalar_memory_prefix(
+                destinations.iter().copied(),
+                window_rows,
+                scalar_live_window_limit,
+            )
+        else {
             return DetailedFetchAheadCandidate::Blocked;
         };
         let prediction_request = next.first_consumed_request();

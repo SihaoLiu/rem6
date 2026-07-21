@@ -28,7 +28,17 @@ pub(super) struct O3LiveDataAccess {
 pub(crate) enum O3DataAccessWindowPolicy {
     None,
     ScalarMemoryPrefix,
+    UntranslatedScalarMemoryPrefix,
     MemoryResultWindow,
+}
+
+impl O3DataAccessWindowPolicy {
+    pub(crate) const fn is_scalar_memory_prefix(self) -> bool {
+        matches!(
+            self,
+            Self::ScalarMemoryPrefix | Self::UntranslatedScalarMemoryPrefix
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -169,10 +179,10 @@ fn live_data_access_younger_window_policy_matches(
 ) -> bool {
     match policy {
         O3DataAccessWindowPolicy::None => true,
-        O3DataAccessWindowPolicy::ScalarMemoryPrefix => matches!(
-            access,
-            MemoryAccessKind::Load { rd, .. } if !rd.is_zero()
-        ),
+        O3DataAccessWindowPolicy::ScalarMemoryPrefix
+        | O3DataAccessWindowPolicy::UntranslatedScalarMemoryPrefix => {
+            matches!(access, MemoryAccessKind::Load { rd, .. } if !rd.is_zero())
+        }
         O3DataAccessWindowPolicy::MemoryResultWindow => {
             o3_memory_result_window_destination(access).is_some()
         }
@@ -387,6 +397,31 @@ impl O3RuntimeState {
         true
     }
 
+    pub(super) fn prepare_ready_live_data_access_forwarding_matcher(
+        &mut self,
+        execution: &RiscvCpuExecutionEvent,
+    ) {
+        if !matches!(
+            execution.execution().memory_access(),
+            Some(MemoryAccessKind::Load { .. })
+        ) {
+            return;
+        }
+        let forwarding_plan = self
+            .live_data_accesses
+            .iter()
+            .find(|live| {
+                live.fetch_request == execution.fetch().request_id()
+                    && live.outcome == O3LiveDataAccessOutcome::Completed
+            })
+            .and_then(|live| live.forwarding_plan);
+        let observation = self.record_store_forwarding_window(execution, None, forwarding_plan);
+        self.store_forwarding_window.prepared_load = Some(O3PreparedLoadForwarding {
+            fetch_request: execution.fetch().request_id(),
+            observation,
+        });
+    }
+
     pub(crate) fn defer_live_data_access_execution(
         &mut self,
         execution: &RiscvCpuExecutionEvent,
@@ -455,14 +490,19 @@ impl O3RuntimeState {
         {
             return false;
         }
-        let scalar_window = matches!(access, MemoryAccessKind::Store { .. })
-            || younger_window_policy == O3DataAccessWindowPolicy::ScalarMemoryPrefix;
+        let scalar_memory_window = matches!(access, MemoryAccessKind::Store { .. })
+            || younger_window_policy.is_scalar_memory_prefix();
+        let deep_scalar_window = matches!(access, MemoryAccessKind::Store { .. })
+            || younger_window_policy == O3DataAccessWindowPolicy::UntranslatedScalarMemoryPrefix;
         let result_window = younger_window_policy == O3DataAccessWindowPolicy::MemoryResultWindow;
-        if scalar_window && !self.has_scalar_memory_window_capacity() {
+        if scalar_memory_window && !self.has_scalar_memory_window_capacity() {
+            return false;
+        }
+        if deep_scalar_window && !self.has_scalar_live_window_capacity() {
             return false;
         }
         if !self.live_data_accesses.is_empty()
-            && !((scalar_window && self.can_stage_scalar_memory(execution))
+            && !((scalar_memory_window && self.can_stage_scalar_memory(execution))
                 || (result_window && self.can_stage_memory_result_window(execution)))
         {
             return false;

@@ -92,7 +92,6 @@ impl O3RuntimeState {
         self.scalar_memory_window_limit
     }
 
-    #[cfg(test)]
     pub(crate) const fn scalar_live_window_limit(&self) -> usize {
         self.scalar_live_window_limit
     }
@@ -121,8 +120,7 @@ impl O3RuntimeState {
                     stores.push(access.clone());
                 }
                 MemoryAccessKind::Load { .. }
-                    if live.younger_window_policy
-                        == O3DataAccessWindowPolicy::ScalarMemoryPrefix =>
+                    if live.younger_window_policy.is_scalar_memory_prefix() =>
                 {
                     let destination = independent_scalar_load_destination(
                         live.execution.instruction(),
@@ -165,6 +163,14 @@ impl O3RuntimeState {
                     window.load_destinations.iter().copied(),
                     window.rows,
                     self.scalar_memory_window_limit,
+                )
+            }
+            O3DataAccessWindowPolicy::UntranslatedScalarMemoryPrefix => {
+                let window = self.scalar_memory_window_state()?;
+                RiscvScalarIntegerLiveWindow::from_untranslated_scalar_memory_prefix(
+                    window.load_destinations.iter().copied(),
+                    window.rows,
+                    self.scalar_live_window_limit,
                 )
             }
             O3DataAccessWindowPolicy::MemoryResultWindow => {
@@ -262,9 +268,14 @@ impl O3RuntimeState {
         self.live_data_accesses.len() < self.scalar_memory_window_limit
     }
 
+    pub(super) fn has_scalar_live_window_capacity(&self) -> bool {
+        self.snapshot.reorder_buffer.len() < self.scalar_live_window_limit
+    }
+
     pub(crate) fn can_consider_scalar_memory_younger(&self) -> bool {
         !self.live_data_accesses.is_empty()
             && self.has_scalar_memory_window_capacity()
+            && self.has_scalar_live_window_capacity()
             && self.scalar_memory_window_state().is_some()
     }
 
@@ -462,6 +473,56 @@ mod tests {
         assert_eq!(runtime.scalar_memory_window_limit(), 1);
         assert_eq!(runtime.scalar_live_window_limit(), 1);
         assert!(runtime.window_depths_explicit());
+    }
+
+    #[test]
+    fn scalar_memory_four_live_eight_admits_four_memory_plus_four_scalar_rows() {
+        let mut runtime = O3RuntimeState::default();
+        assert!(runtime.set_window_depths(4, 8));
+        let loads = [
+            scalar_load_event(0x8000, 10, 12, 10, 0x9000),
+            scalar_load_event(0x8004, 11, 13, 10, 0x9040),
+            scalar_load_event(0x8008, 12, 14, 10, 0x9080),
+            scalar_load_event(0x800c, 13, 15, 10, 0x90c0),
+            scalar_load_event(0x8010, 14, 16, 10, 0x9100),
+        ];
+        for (index, load) in loads[..4].iter().enumerate() {
+            assert!(runtime.stage_live_data_access_issue(
+                load,
+                memory_request(20 + index as u64),
+                31 + index as u64,
+                O3DataAccessWindowPolicy::UntranslatedScalarMemoryPrefix,
+            ));
+        }
+        assert!(!runtime.stage_live_data_access_issue(
+            &loads[4],
+            memory_request(24),
+            35,
+            O3DataAccessWindowPolicy::UntranslatedScalarMemoryPrefix,
+        ));
+        let window = runtime
+            .data_access_integer_window(loads[3].fetch().request_id())
+            .unwrap();
+        assert_eq!(window.remaining_rows(), 4);
+        assert_eq!(
+            runtime.stage_live_data_access_younger_window(
+                loads[3].fetch().request_id(),
+                [
+                    (Address::new(0x8020), addi(17, 0)),
+                    (Address::new(0x8024), addi(18, 0)),
+                    (Address::new(0x8028), addi(19, 0)),
+                    (Address::new(0x802c), addi(20, 0)),
+                ],
+            ),
+            4
+        );
+        let snapshot = runtime.snapshot();
+        assert_eq!(snapshot.reorder_buffer().len(), 8);
+        assert_eq!(snapshot.load_store_queue().len(), 4);
+        assert!(!snapshot
+            .reorder_buffer()
+            .iter()
+            .any(|entry| entry.pc() == Address::new(0x8010)));
     }
 
     #[test]
@@ -1421,6 +1482,14 @@ mod tests {
 
     fn memory_request(sequence: u64) -> MemoryRequestId {
         MemoryRequestId::new(AgentId::new(7), sequence)
+    }
+
+    fn addi(rd: u8, rs1: u8) -> RiscvInstruction {
+        RiscvInstruction::Addi {
+            rd: reg(rd),
+            rs1: reg(rs1),
+            imm: Immediate::new(1),
+        }
     }
 
     fn reg(index: u8) -> Register {

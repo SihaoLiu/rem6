@@ -1,4 +1,7 @@
 use super::*;
+use rem6_memory::{
+    TranslationAccessKind, TranslationAddressSpaceId, TranslationRequest, TranslationRequestId,
+};
 
 #[path = "result_younger_window/terminal_ownership.rs"]
 mod terminal_ownership;
@@ -1252,14 +1255,14 @@ fn disabling_detailed_mode_preserves_executed_result_suffix_authority() {
 }
 
 #[test]
-fn detailed_cacheable_scalar_load_keeps_the_only_younger_prefix_policy() {
+fn detailed_cacheable_untranslated_scalar_load_uses_untranslated_prefix_policy() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
     let core = RiscvCore::with_data(
         cpu_core(fetch_route, 0x8000),
         CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
     );
     core.set_detailed_live_retire_gate_enabled(true);
-    core.set_o3_scalar_memory_depth(4);
+    core.set_o3_window_depths(4, 8);
     core.write_register(reg(2), 0x9000);
     fetch_and_execute(
         &core,
@@ -1276,7 +1279,96 @@ fn detailed_cacheable_scalar_load_keeps_the_only_younger_prefix_policy() {
     )
     .unwrap()
     .expect("cacheable scalar load issues");
+    assert_younger_window_policy(
+        &core,
+        O3DataAccessWindowPolicy::UntranslatedScalarMemoryPrefix,
+    );
+}
+
+#[test]
+fn detailed_cacheable_translated_scalar_load_keeps_scalar_memory_prefix_policy() {
+    let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = RiscvCore::with_data_translation(
+        cpu_core(fetch_route, 0x8000),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+        CpuTranslationFrontend::with_tlb(
+            TranslationQueueConfig::new(4, 0).unwrap(),
+            TranslationTlbConfig::new(4).unwrap(),
+        ),
+    );
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_window_depths(4, 8);
+    install_cached_scalar_load_translation(&core, 0x4000, 0x9000);
+    core.write_register(reg(2), 0x4008);
+    let raw = i_type(0, 2, 0b011, 12, 0x03);
+    core.issue_next_fetch(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        move |delivery, _context| {
+            TargetOutcome::Respond(
+                MemoryResponse::completed(delivery.request(), Some(raw.to_le_bytes().to_vec()))
+                    .unwrap(),
+            )
+        },
+    )
+    .unwrap();
+    scheduler.run_until_idle_conservative();
+    assert_eq!(
+        core.next_cached_translated_memory_fetch_ahead_before_retire()
+            .expect("cached translated scalar load should authorize a younger window")
+            .pc(),
+        Address::new(0x8004)
+    );
+    core.execute_next_completed_fetch()
+        .unwrap()
+        .expect("translated scalar load executes");
+    let page_map = scalar_load_translation_page_map(0x4000, 0x9000);
+
+    core.issue_next_translated_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        &page_map,
+        |_delivery, _context| TargetOutcome::NoResponse,
+    )
+    .unwrap()
+    .expect("cacheable translated scalar load issues");
     assert_younger_window_policy(&core, O3DataAccessWindowPolicy::ScalarMemoryPrefix);
+}
+
+fn install_cached_scalar_load_translation(core: &RiscvCore, virtual_base: u64, physical_base: u64) {
+    let page_map = scalar_load_translation_page_map(virtual_base, physical_base);
+    let request = TranslationRequest::new(
+        TranslationRequestId::new(AgentId::new(7), 99),
+        Address::new(virtual_base),
+        AccessSize::new(4).unwrap(),
+        TranslationAccessKind::Load,
+    )
+    .unwrap();
+    let mut state = core.state.lock().expect("riscv core lock");
+    let address_space = TranslationAddressSpaceId::new(state.hart.translation_address_space());
+    state
+        .data_translation
+        .as_mut()
+        .expect("test core has data translation")
+        .tlb_mut()
+        .expect("test translation frontend has a TLB")
+        .translate_in_address_space(address_space, &request, &page_map)
+        .unwrap();
+}
+
+fn scalar_load_translation_page_map(virtual_base: u64, physical_base: u64) -> TranslationPageMap {
+    let mut page_map = TranslationPageMap::new(TranslationPageSize::new(4096).unwrap());
+    page_map
+        .map(
+            Address::new(virtual_base),
+            Address::new(physical_base),
+            1,
+            TranslationPagePermissions::read_write_execute(),
+        )
+        .unwrap();
+    page_map
 }
 
 #[test]

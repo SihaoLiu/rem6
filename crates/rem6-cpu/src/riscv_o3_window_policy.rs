@@ -11,6 +11,7 @@ use crate::{
 };
 
 pub(crate) const O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS: usize = 4;
+pub(crate) const O3_UNTRANSLATED_SCALAR_LIVE_WINDOW_ROWS: usize = 8;
 const MAX_PREDICTED_CONTROL_DEPTH: usize = MAX_RISCV_BRANCH_LOOKAHEAD;
 
 const fn scalar_integer_fu_live_window_head(instruction: RiscvInstruction) -> bool {
@@ -32,6 +33,7 @@ pub(crate) struct RiscvScalarIntegerLiveWindow {
     forwardable_ras_push: Option<ForwardableRasPush>,
     rows: usize,
     row_limit: usize,
+    control_row_limit: usize,
     admits_terminal_control: bool,
     control_depth: usize,
     control_closed: bool,
@@ -73,6 +75,7 @@ impl RiscvScalarIntegerLiveWindow {
                     .collect(),
                 1,
                 O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS,
+                O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS,
                 false,
             )
         })
@@ -84,6 +87,33 @@ impl RiscvScalarIntegerLiveWindow {
         row_limit: usize,
     ) -> Option<Self> {
         let row_limit = row_limit.clamp(1, O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS);
+        Self::from_scalar_memory_prefix_with_bounds(
+            load_destinations,
+            occupied_rows,
+            row_limit,
+            O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS,
+        )
+    }
+
+    pub(crate) fn from_untranslated_scalar_memory_prefix(
+        load_destinations: impl IntoIterator<Item = Register>,
+        occupied_rows: usize,
+        row_limit: usize,
+    ) -> Option<Self> {
+        Self::from_scalar_memory_prefix_with_bounds(
+            load_destinations,
+            occupied_rows,
+            row_limit.clamp(1, O3_UNTRANSLATED_SCALAR_LIVE_WINDOW_ROWS),
+            O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS,
+        )
+    }
+
+    fn from_scalar_memory_prefix_with_bounds(
+        load_destinations: impl IntoIterator<Item = Register>,
+        occupied_rows: usize,
+        row_limit: usize,
+        control_row_limit: usize,
+    ) -> Option<Self> {
         if occupied_rows == 0 || occupied_rows > row_limit {
             return None;
         }
@@ -96,8 +126,15 @@ impl RiscvScalarIntegerLiveWindow {
                 unresolved_destinations.push(destination);
             }
         }
-        (!unresolved_destinations.is_empty())
-            .then(|| Self::new(unresolved_destinations, occupied_rows, row_limit, true))
+        (!unresolved_destinations.is_empty()).then(|| {
+            Self::new(
+                unresolved_destinations,
+                occupied_rows,
+                row_limit,
+                control_row_limit,
+                true,
+            )
+        })
     }
 
     pub(crate) fn from_memory_result(
@@ -130,6 +167,7 @@ impl RiscvScalarIntegerLiveWindow {
             unresolved_destinations,
             occupied_rows,
             row_limit,
+            O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS,
             false,
         ))
     }
@@ -138,6 +176,7 @@ impl RiscvScalarIntegerLiveWindow {
         unresolved_destinations: Vec<Register>,
         rows: usize,
         row_limit: usize,
+        control_row_limit: usize,
         admits_terminal_control: bool,
     ) -> Self {
         let live_destinations = unresolved_destinations.clone();
@@ -146,7 +185,8 @@ impl RiscvScalarIntegerLiveWindow {
             live_destinations,
             forwardable_ras_push: None,
             rows,
-            row_limit: row_limit.clamp(1, O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS),
+            row_limit,
+            control_row_limit,
             admits_terminal_control,
             control_depth: 0,
             control_closed: false,
@@ -155,6 +195,10 @@ impl RiscvScalarIntegerLiveWindow {
 
     pub(crate) fn is_full(&self) -> bool {
         self.rows >= self.row_limit
+    }
+
+    pub(crate) const fn remaining_rows(&self) -> usize {
+        self.row_limit.saturating_sub(self.rows)
     }
 
     pub(crate) fn classify_younger(
@@ -191,6 +235,12 @@ impl RiscvScalarIntegerLiveWindow {
                     ras_push_sequence: None,
                 };
             };
+            if self.rows >= self.control_row_limit {
+                return RiscvSequencedScalarIntegerYoungerDecision {
+                    decision: RiscvScalarIntegerYoungerDecision::Reject,
+                    ras_push_sequence: None,
+                };
+            }
             if self.control_depth >= MAX_PREDICTED_CONTROL_DEPTH {
                 return RiscvSequencedScalarIntegerYoungerDecision {
                     decision: RiscvScalarIntegerYoungerDecision::Reject,
@@ -276,6 +326,9 @@ impl RiscvScalarIntegerLiveWindow {
         instruction: RiscvInstruction,
     ) -> RiscvScalarIntegerYoungerDecision {
         if self.control_depth > 0 {
+            if self.rows >= self.control_row_limit {
+                return RiscvScalarIntegerYoungerDecision::Reject;
+            }
             let Some((destination, sources)) = o3_predicted_scalar_descendant_operands(instruction)
             else {
                 return RiscvScalarIntegerYoungerDecision::Reject;
@@ -453,6 +506,64 @@ mod tests {
             width: MemoryWidth::Word,
             signed: false,
         }
+    }
+
+    #[test]
+    fn untranslated_scalar_memory_window_accepts_eight_total_rows() {
+        let mut window = RiscvScalarIntegerLiveWindow::from_untranslated_scalar_memory_prefix(
+            [Register::new(4).unwrap()],
+            1,
+            8,
+        )
+        .unwrap();
+        for rd in 5..=11 {
+            assert_eq!(
+                window.classify_younger(addi(rd, 0)),
+                RiscvScalarIntegerYoungerDecision::AdmitContinue
+            );
+        }
+        assert_eq!(window.remaining_rows(), 0);
+        assert!(window.is_full());
+    }
+
+    #[test]
+    fn translated_result_and_fu_windows_remain_capped_at_four() {
+        let translated = RiscvScalarIntegerLiveWindow::from_scalar_memory_prefix(
+            [Register::new(4).unwrap()],
+            1,
+            8,
+        )
+        .unwrap();
+        let result =
+            RiscvScalarIntegerLiveWindow::from_memory_result(Some(Register::new(4).unwrap()), 8);
+        let fu = RiscvScalarIntegerLiveWindow::from_fu_head(mul(4, 1, 2)).unwrap();
+        assert_eq!(translated.remaining_rows(), 3);
+        assert_eq!(result.remaining_rows(), 3);
+        assert_eq!(fu.remaining_rows(), 3);
+    }
+
+    #[test]
+    fn deep_scalar_row_cannot_open_a_fifth_row_control_chain() {
+        let mut window = RiscvScalarIntegerLiveWindow::from_untranslated_scalar_memory_prefix(
+            [Register::new(4).unwrap()],
+            1,
+            8,
+        )
+        .unwrap();
+        for rd in 5..=7 {
+            assert_eq!(
+                window.classify_younger(addi(rd, 0)),
+                RiscvScalarIntegerYoungerDecision::AdmitContinue
+            );
+        }
+        assert_eq!(
+            window.classify_younger(jal_with_destination(0)),
+            RiscvScalarIntegerYoungerDecision::Reject
+        );
+        assert_eq!(
+            window.classify_younger(addi(8, 0)),
+            RiscvScalarIntegerYoungerDecision::AdmitContinue
+        );
     }
 
     #[test]

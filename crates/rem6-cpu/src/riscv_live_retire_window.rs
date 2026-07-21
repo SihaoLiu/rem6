@@ -733,23 +733,20 @@ pub(crate) fn stage_o3_data_access_younger_window(
     {
         return;
     }
-    let row_limit = state
-        .o3_runtime
-        .scalar_memory_window_limit()
-        .min(O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS);
     let Some(window) = state
         .o3_runtime
         .data_access_integer_window(execution.fetch().request_id())
     else {
         return;
     };
+    let remaining_rows = window.remaining_rows();
     let younger = completed_scalar_integer_younger_window(
         state,
         fetch_events,
         execution.fetch().request_id(),
         Address::new(execution.execution().next_pc()),
         window,
-        row_limit.saturating_sub(1),
+        remaining_rows,
     );
     let staged_rows = state.o3_runtime.stage_live_data_access_younger_window(
         execution.fetch().request_id(),
