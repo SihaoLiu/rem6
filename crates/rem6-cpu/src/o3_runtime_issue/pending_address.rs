@@ -82,7 +82,7 @@ impl O3RuntimeState {
             .map(O3ReorderBufferEntry::pc)
             .collect::<Vec<_>>();
         (younger_pcs.len() == self.live_data_access_younger_sequences.len())
-            .then_some((pending.producer_fetch, younger_pcs))
+            .then_some((pending.fetch_predecessor_request, younger_pcs))
     }
 
     pub(crate) fn pending_data_address_wake_tick(&self) -> Option<u64> {

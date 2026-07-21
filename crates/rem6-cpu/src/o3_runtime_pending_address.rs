@@ -8,19 +8,26 @@ use crate::CpuFetchEvent;
 
 pub(super) const PENDING_DATA_ADDRESS_LSQ_BYTES: u32 = 8;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct O3PendingDataAddressRootHead {
+    pub(super) sequence: u64,
+    pub(super) fetch_request: MemoryRequestId,
+    pub(super) range: AddressRange,
+    pub(super) atomic_head: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct O3PendingDataAddress {
     pub(super) sequence: u64,
     pub(super) fetch: CpuFetchEvent,
     pub(super) consumed_requests: Vec<MemoryRequestId>,
     pub(super) decoded: RiscvDecodedInstruction,
+    pub(super) fetch_predecessor_request: MemoryRequestId,
     pub(super) producer_register: Register,
     pub(super) producer_sequence: u64,
-    pub(super) producer_fetch: MemoryRequestId,
+    pub(super) root_head: O3PendingDataAddressRootHead,
     pub(super) destination: O3RenameMapEntry,
     pub(super) expected_lsq_bytes: u32,
-    pub(super) head_range: AddressRange,
-    pub(super) atomic_head: bool,
     pub(super) requested_wake_tick: Option<u64>,
     pub(super) selected_issue_tick: Option<u64>,
     pub(super) materialized: Option<RiscvCpuExecutionEvent>,
@@ -28,6 +35,7 @@ pub(super) struct O3PendingDataAddress {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct O3PendingDataAddressRequest {
+    pub(crate) fetch_predecessor_request: MemoryRequestId,
     pub(crate) fetch: CpuFetchEvent,
     pub(crate) consumed_requests: Vec<MemoryRequestId>,
     pub(crate) decoded: RiscvDecodedInstruction,
@@ -40,16 +48,9 @@ impl O3PendingDataAddress {
     }
 
     pub(super) fn is_consistent_with(&self, runtime: &O3RuntimeState) -> bool {
-        let Some((head_range, atomic_head)) = runtime
-            .pending_data_address_head_metadata_for_sequence(
-                self.producer_sequence,
-                self.producer_register,
-            )
-        else {
-            return false;
-        };
-        head_range == self.head_range
-            && atomic_head == self.atomic_head
+        self.root_head.sequence <= self.producer_sequence
+            && self.producer_sequence < self.sequence
+            && runtime.pending_data_address_producer_is_consistent(self)
             && self.expected_lsq_bytes == PENDING_DATA_ADDRESS_LSQ_BYTES
             && self.materialized.is_some() == self.selected_issue_tick.is_some()
             && !(self.materialized.is_some() && self.requested_wake_tick.is_some())
@@ -77,12 +78,14 @@ impl O3PendingDataAddress {
 
 impl O3PendingDataAddressRequest {
     pub(crate) fn new(
+        fetch_predecessor_request: MemoryRequestId,
         fetch: CpuFetchEvent,
         consumed_requests: Vec<MemoryRequestId>,
         decoded: RiscvDecodedInstruction,
         producer_register: Register,
     ) -> Self {
         Self {
+            fetch_predecessor_request,
             fetch,
             consumed_requests,
             decoded,
@@ -180,35 +183,52 @@ impl O3RuntimeState {
         })
     }
 
-    pub(super) fn pending_data_address_head_metadata_for_sequence(
-        &self,
-        producer_sequence: u64,
-        producer_register: Register,
-    ) -> Option<(AddressRange, bool)> {
-        let live = self.live_data_accesses.iter().find(|live| {
-            live.sequence == producer_sequence
-                && live.outcome == O3LiveDataAccessOutcome::Resident
-                && live.younger_window_policy == O3DataAccessWindowPolicy::MemoryResultWindow
-        })?;
-        let access = live.execution.execution().memory_access()?;
-        let (destination, atomic_head) = match access {
-            MemoryAccessKind::Load {
-                rd,
-                width: MemoryWidth::Doubleword,
-                ..
-            } if !rd.is_zero() => (*rd, false),
-            MemoryAccessKind::AtomicMemory {
-                rd,
-                acquire: false,
-                release: false,
-                ..
-            } if !rd.is_zero() => (*rd, true),
-            _ => return None,
-        };
-        if destination != producer_register {
-            return None;
+    fn pending_data_address_producer_is_consistent(&self, pending: &O3PendingDataAddress) -> bool {
+        if self
+            .pending_data_addresses
+            .find_sequence(pending.producer_sequence)
+            .is_some_and(|producer| {
+                producer.sequence < pending.sequence
+                    && producer.destination.register_class() == O3RegisterClass::Integer
+                    && producer.destination.architectural()
+                        == u32::from(pending.producer_register.index())
+                    && producer.root_head == pending.root_head
+            })
+        {
+            return true;
         }
-        Some((o3_memory_result_range(access)?, atomic_head))
+        self.live_data_accesses.iter().any(|live| {
+            if live.sequence != pending.producer_sequence
+                || live.outcome != O3LiveDataAccessOutcome::Resident
+                || live.younger_window_policy != O3DataAccessWindowPolicy::MemoryResultWindow
+            {
+                return false;
+            }
+            let Some(access) = live.execution.execution().memory_access() else {
+                return false;
+            };
+            let producer_matches = o3_memory_result_destination(access).is_some_and(
+                |(register_class, architectural)| {
+                    register_class == O3RegisterClass::Integer
+                        && architectural == u32::from(pending.producer_register.index())
+                },
+            );
+            if pending.producer_sequence != pending.root_head.sequence {
+                return producer_matches;
+            }
+            let atomic_head = matches!(
+                access,
+                MemoryAccessKind::AtomicMemory {
+                    acquire: false,
+                    release: false,
+                    ..
+                }
+            );
+            producer_matches
+                && live.fetch_request == pending.root_head.fetch_request
+                && o3_memory_result_range(access) == Some(pending.root_head.range)
+                && atomic_head == pending.root_head.atomic_head
+        })
     }
 
     #[cfg(test)]

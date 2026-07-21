@@ -10,7 +10,6 @@ const SECOND_SUFFIX_PC: u64 = 0x800c;
 const HEAD_ADDRESS: u64 = 0x8800;
 const ISSUE_TICK: u64 = 41;
 const SUBMIT_TICK: u64 = 43;
-
 pub(super) struct PendingIssueFixture {
     pub(super) core: RiscvCore,
     pub(super) scheduler: PartitionedScheduler,
@@ -24,11 +23,9 @@ impl PendingIssueFixture {
     pub(super) fn load(address: u64) -> Self {
         Self::new(address, false)
     }
-
     fn atomic(address: u64) -> Self {
         Self::new(address, true)
     }
-
     fn new(address: u64, atomic_head: bool) -> Self {
         let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
         scheduler
@@ -69,7 +66,13 @@ impl PendingIssueFixture {
         assert_eq!(
             state.o3_runtime.stage_pending_data_address_window(
                 head.fetch().request_id(),
-                O3PendingDataAddressRequest::new(fetch, vec![fetch_request], decoded, reg(5)),
+                vec![O3PendingDataAddressRequest::new(
+                    head.fetch().request_id(),
+                    fetch,
+                    vec![fetch_request],
+                    decoded,
+                    reg(5),
+                )],
                 [
                     (
                         Address::new(FIRST_SUFFIX_PC),

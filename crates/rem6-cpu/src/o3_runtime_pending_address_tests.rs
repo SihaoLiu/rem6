@@ -12,21 +12,26 @@ use rem6_isa_riscv::{
     RiscvExecutionRecord, RiscvInstruction,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
-use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryRequestId};
+use rem6_memory::{AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryRequestId};
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
 #[path = "o3_runtime_pending_address_tests/lifecycle.rs"]
 mod lifecycle;
+#[path = "o3_runtime_pending_address_tests/multiple.rs"]
+mod multiple;
 #[path = "o3_runtime_pending_address_tests/scheduling.rs"]
 mod scheduling;
 #[path = "o3_runtime_pending_address_tests/staging.rs"]
 mod staging;
 
 const HEAD_PC: u64 = 0x8000;
-const PENDING_PC: u64 = 0x8004;
-const FIRST_SUFFIX_PC: u64 = 0x8008;
-const SECOND_SUFFIX_PC: u64 = 0x800c;
+const FIRST_PENDING_PC: u64 = 0x8004;
+const SECOND_PENDING_PC: u64 = 0x8008;
+const SCALAR_SUFFIX_PC: u64 = 0x800c;
 const EXTRA_SUFFIX_PC: u64 = 0x8010;
+const PENDING_PC: u64 = FIRST_PENDING_PC;
+const FIRST_SUFFIX_PC: u64 = SECOND_PENDING_PC;
+const SECOND_SUFFIX_PC: u64 = SCALAR_SUFFIX_PC;
 
 #[derive(Clone)]
 struct PendingAddressFixture {
@@ -50,7 +55,7 @@ impl PendingAddressFixture {
         Self {
             runtime,
             head_fetch: head.fetch().request_id(),
-            pending: pending_request(11, PENDING_PC, ld(6, 5, 0), reg(5)),
+            pending: pending_request(request(10), 11, PENDING_PC, ld(6, 5, 0), reg(5)),
             suffix: vec![
                 staged_instruction(FIRST_SUFFIX_PC, addi(7, 5, 8)),
                 staged_instruction(SECOND_SUFFIX_PC, add(8, 6, 7)),
@@ -61,7 +66,7 @@ impl PendingAddressFixture {
     fn stage_default(&mut self) -> usize {
         self.runtime.stage_pending_data_address_window(
             self.head_fetch,
-            self.pending.clone(),
+            vec![self.pending.clone()],
             self.suffix.clone(),
         )
     }
@@ -175,17 +180,33 @@ fn load_event(pc: u64, sequence: u64, rd: u8, rs1: u8, address: u64) -> RiscvCpu
 }
 
 fn pending_request(
+    fetch_predecessor_request: MemoryRequestId,
     sequence: u64,
     pc: u64,
     raw: u32,
     producer_register: Register,
 ) -> O3PendingDataAddressRequest {
     O3PendingDataAddressRequest::new(
+        fetch_predecessor_request,
         fetch_event_with_raw(pc, sequence, raw),
         vec![request(sequence)],
         decoded(raw),
         producer_register,
     )
+}
+
+fn sibling_pending_requests() -> Vec<O3PendingDataAddressRequest> {
+    vec![
+        pending_request(request(10), 11, FIRST_PENDING_PC, ld(6, 5, 0), reg(5)),
+        pending_request(request(11), 12, SECOND_PENDING_PC, ld(7, 5, 8), reg(5)),
+    ]
+}
+
+fn chained_pending_requests() -> Vec<O3PendingDataAddressRequest> {
+    vec![
+        pending_request(request(10), 11, FIRST_PENDING_PC, ld(6, 5, 0), reg(5)),
+        pending_request(request(11), 12, SECOND_PENDING_PC, ld(7, 6, 8), reg(6)),
+    ]
 }
 
 fn staged_instruction(pc: u64, raw: u32) -> (Address, RiscvInstruction) {

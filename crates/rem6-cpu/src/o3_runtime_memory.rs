@@ -366,7 +366,7 @@ impl O3RuntimeState {
 
     pub(crate) fn pending_live_data_access_retirement_count(&self) -> usize {
         self.live_data_accesses.len()
-            + usize::from(self.has_pending_data_address())
+            + self.pending_data_address_count()
             + usize::from(self.deferred_live_data_access_execution.is_some())
     }
 

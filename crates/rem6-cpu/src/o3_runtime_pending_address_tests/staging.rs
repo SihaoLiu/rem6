@@ -105,7 +105,13 @@ fn pending_address_rejects_a_second_owner() {
     assert_eq!(
         fixture.runtime.stage_pending_data_address_window(
             fixture.head_fetch,
-            pending_request(14, EXTRA_SUFFIX_PC, ld(9, 5, 0), reg(5)),
+            vec![pending_request(
+                request(13),
+                14,
+                EXTRA_SUFFIX_PC,
+                ld(9, 5, 0),
+                reg(5),
+            )],
             [],
         ),
         0

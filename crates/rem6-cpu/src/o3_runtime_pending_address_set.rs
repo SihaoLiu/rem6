@@ -15,7 +15,6 @@ impl O3PendingDataAddresses {
     pub(super) fn len(&self) -> usize {
         self.rows.len()
     }
-
     pub(super) fn is_empty(&self) -> bool {
         self.rows.is_empty()
     }
@@ -26,6 +25,14 @@ impl O3PendingDataAddresses {
 
     pub(super) fn first_mut(&mut self) -> Option<&mut O3PendingDataAddress> {
         self.rows.first_mut()
+    }
+
+    pub(super) fn last(&self) -> Option<&O3PendingDataAddress> {
+        self.rows.last()
+    }
+
+    pub(super) fn iter(&self) -> impl Iterator<Item = &O3PendingDataAddress> {
+        self.rows.iter()
     }
 
     pub(super) fn find_sequence(&self, sequence: u64) -> Option<&O3PendingDataAddress> {
@@ -50,11 +57,9 @@ impl O3PendingDataAddresses {
         });
         if self.rows.len() >= O3_PENDING_DATA_ADDRESS_CAPACITY
             || self
-                .rows
                 .iter()
                 .any(|existing| existing.sequence == row.sequence)
             || self
-                .rows
                 .last()
                 .is_some_and(|existing| existing.sequence >= row.sequence)
             || duplicate_fetch
@@ -69,6 +74,30 @@ impl O3PendingDataAddresses {
 
     fn take_first(&mut self) -> O3PendingDataAddress {
         self.rows.remove(0)
+    }
+
+    fn take_from(&mut self, sequence: u64) -> Vec<O3PendingDataAddress> {
+        let first_removed = self.rows.partition_point(|row| row.sequence < sequence);
+        self.rows.drain(first_removed..).collect()
+    }
+
+    fn is_consistent_with(&self, runtime: &O3RuntimeState) -> bool {
+        self.rows.len() <= O3_PENDING_DATA_ADDRESS_CAPACITY
+            && self.iter().all(|row| row.is_consistent_with(runtime))
+            && self.iter().enumerate().all(|(index, row)| {
+                self.rows[..index].iter().all(|older| {
+                    older.destination.architectural() != row.destination.architectural()
+                })
+            })
+            && self.rows.windows(2).all(|rows| {
+                let (older, younger) = (&rows[0], &rows[1]);
+                older.sequence < younger.sequence
+                    && older.root_head == younger.root_head
+                    && older.consumed_requests.last().copied()
+                        == Some(younger.fetch_predecessor_request)
+                    && (younger.producer_sequence == younger.root_head.sequence
+                        || younger.producer_sequence == older.sequence)
+            })
     }
 }
 
@@ -161,7 +190,7 @@ impl O3RuntimeState {
             && physical_address.get() == *address
             && size.bytes() == u64::from(pending.expected_lsq_bytes)
             && request_tick >= issue_tick
-            && (!pending.atomic_head || !pending.head_range.overlaps(range))
+            && (!pending.root_head.atomic_head || !pending.root_head.range.overlaps(range))
             && self.live_staged_fetch_identity_matches(
                 pending.sequence,
                 pending.decoded.instruction(),
@@ -169,36 +198,44 @@ impl O3RuntimeState {
             )
     }
 
-    fn discard_pending_data_address_at_internal(&mut self, now: Option<u64>) {
-        if self.pending_data_addresses.is_empty() {
+    fn discard_pending_data_address_at_internal(&mut self, sequence: u64, now: Option<u64>) {
+        let removed = self.pending_data_addresses.take_from(sequence);
+        let Some(first_removed) = removed.first().map(O3PendingDataAddress::sequence) else {
             return;
-        }
-        let pending = self.pending_data_addresses.take_first();
+        };
         self.snapshot
             .load_store_queue
-            .retain(|entry| entry.sequence() != pending.sequence);
+            .retain(|entry| !removed.iter().any(|row| row.sequence == entry.sequence()));
         match now {
-            Some(now) => self.discard_live_staged_window_from_at(pending.sequence, now),
-            None => self.discard_live_staged_window_from(pending.sequence),
+            Some(now) => self.discard_live_staged_window_from_at(first_removed, now),
+            None => self.discard_live_staged_window_from(first_removed),
         }
     }
 
     pub(super) fn discard_pending_data_address_from(&mut self, sequence: u64) {
-        if self
-            .pending_data_addresses
-            .first()
-            .is_some_and(|pending| pending.sequence >= sequence)
-        {
-            self.discard_pending_data_address_at_internal(None);
-        }
+        self.discard_pending_data_address_at_internal(sequence, None);
     }
 
     pub(crate) fn discard_pending_data_address(&mut self) {
-        self.discard_pending_data_address_at_internal(None);
+        let Some(sequence) = self
+            .pending_data_addresses
+            .first()
+            .map(O3PendingDataAddress::sequence)
+        else {
+            return;
+        };
+        self.discard_pending_data_address_at_internal(sequence, None);
     }
 
     pub(crate) fn discard_pending_data_address_at(&mut self, now: u64) {
-        self.discard_pending_data_address_at_internal(Some(now));
+        let Some(sequence) = self
+            .pending_data_addresses
+            .first()
+            .map(O3PendingDataAddress::sequence)
+        else {
+            return;
+        };
+        self.discard_pending_data_address_at_internal(sequence, Some(now));
     }
 
     pub(crate) fn bind_pending_data_address_issue(
@@ -277,9 +314,7 @@ impl O3RuntimeState {
     }
 
     pub(super) fn pending_data_address_owner_is_consistent(&self) -> bool {
-        self.pending_data_addresses
-            .first()
-            .map_or(true, |pending| pending.is_consistent_with(self))
+        self.pending_data_addresses.is_consistent_with(self)
     }
 
     #[cfg(test)]

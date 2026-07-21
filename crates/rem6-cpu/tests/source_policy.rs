@@ -49,7 +49,8 @@ const MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FACADE_LINES: usize = 300;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_STAGING_TEST_LINES: usize = 450;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_SCHEDULING_TEST_LINES: usize = 550;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_LIFECYCLE_TEST_LINES: usize = 650;
-const MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FAMILY_LINES: usize = 1600;
+const MAX_O3_RUNTIME_PENDING_ADDRESS_MULTIPLE_TEST_LINES: usize = 550;
+const MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FAMILY_LINES: usize = 2100;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_STAGE_LINES: usize = 250;
 const MAX_RISCV_DETAILED_O3_CONTROL_TEST_ROOT_LINES: usize = 450;
 const MAX_RISCV_DETAILED_O3_LINKED_CONTROL_TEST_LINES: usize = 1500;
@@ -707,6 +708,7 @@ fn task3_sequence_span_lsq_span_and_retire_ownership_stay_focused() {
 fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let runtime_path = crate_dir.join("src/o3_runtime.rs");
+    let memory_path = crate_dir.join("src/o3_runtime_memory.rs");
     let retire_path = crate_dir.join("src/riscv_live_retire_window.rs");
     let pending_path = crate_dir.join("src/o3_runtime_pending_address.rs");
     let pending_set_path = crate_dir.join("src/o3_runtime_pending_address_set.rs");
@@ -717,6 +719,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let staging_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/staging.rs");
     let scheduling_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/scheduling.rs");
     let lifecycle_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/lifecycle.rs");
+    let multiple_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/multiple.rs");
     let stage_child_path =
         crate_dir.join("src/riscv_live_retire_window/dependent_result_address.rs");
 
@@ -730,6 +733,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         &staging_test_path,
         &scheduling_test_path,
         &lifecycle_test_path,
+        &multiple_test_path,
         &stage_child_path,
     ] {
         assert!(
@@ -740,6 +744,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     }
 
     let runtime = fs::read_to_string(&runtime_path).unwrap();
+    let memory = fs::read_to_string(&memory_path).unwrap();
     let retire = fs::read_to_string(&retire_path).unwrap();
     let pending = fs::read_to_string(&pending_path).unwrap();
     let pending_set = fs::read_to_string(&pending_set_path).unwrap();
@@ -750,6 +755,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let staging_test = fs::read_to_string(&staging_test_path).unwrap();
     let scheduling_test = fs::read_to_string(&scheduling_test_path).unwrap();
     let lifecycle_test = fs::read_to_string(&lifecycle_test_path).unwrap();
+    let multiple_test = fs::read_to_string(&multiple_test_path).unwrap();
     let stage_child = fs::read_to_string(&stage_child_path).unwrap();
 
     assert_eq!(
@@ -825,6 +831,15 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "pending-address tests must use the focused scheduling child exactly once"
     );
     assert_eq!(
+        path_owned_module_declaration_count(
+            &test_root,
+            "o3_runtime_pending_address_tests/multiple.rs",
+            "multiple"
+        ),
+        1,
+        "pending-address tests must use the focused multiple-row child exactly once"
+    );
+    assert_eq!(
         rust_code_without_comments_and_literals(&retire)
             .matches("mod dependent_result_address;")
             .count(),
@@ -840,6 +855,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     assert!(include_macro_lines(&staging_test).is_empty());
     assert!(include_macro_lines(&scheduling_test).is_empty());
     assert!(include_macro_lines(&lifecycle_test).is_empty());
+    assert!(include_macro_lines(&multiple_test).is_empty());
     assert!(include_macro_lines(&stage_child).is_empty());
     assert!(
         external_module_declaration_lines(&pending).is_empty()
@@ -856,6 +872,8 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
             && path_attribute_lines(&scheduling_test).is_empty()
             && external_module_declaration_lines(&lifecycle_test).is_empty()
             && path_attribute_lines(&lifecycle_test).is_empty()
+            && external_module_declaration_lines(&multiple_test).is_empty()
+            && path_attribute_lines(&multiple_test).is_empty()
             && external_module_declaration_lines(&stage_child).is_empty()
             && path_attribute_lines(&stage_child).is_empty(),
         "Task 3 leaf owners must not declare child modules"
@@ -894,10 +912,15 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "o3_runtime_pending_address_tests/lifecycle.rs exceeds {MAX_O3_RUNTIME_PENDING_ADDRESS_LIFECYCLE_TEST_LINES} lines"
     );
     assert!(
+        line_count(&multiple_test_path) <= MAX_O3_RUNTIME_PENDING_ADDRESS_MULTIPLE_TEST_LINES,
+        "o3_runtime_pending_address_tests/multiple.rs exceeds {MAX_O3_RUNTIME_PENDING_ADDRESS_MULTIPLE_TEST_LINES} lines"
+    );
+    assert!(
         line_count(&test_root_path)
             + line_count(&staging_test_path)
             + line_count(&scheduling_test_path)
             + line_count(&lifecycle_test_path)
+            + line_count(&multiple_test_path)
             < MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FAMILY_LINES,
         "pending-address test family must remain below {MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FAMILY_LINES} lines"
     );
@@ -912,6 +935,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let issue_root_code = production_rust_source(&issue_root);
     let issue_pending_code = production_rust_source(&issue_pending);
     let runtime_code = production_rust_source(&runtime);
+    let memory_code = production_rust_source(&memory);
     let retire_code = production_rust_source(&retire);
     let lib_code =
         production_rust_source(&fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap());
@@ -936,7 +960,15 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         1,
         "pending-address request must retain its exact crate-visible type"
     );
+    assert_eq!(
+        pending_code
+            .matches("pub(super) struct O3PendingDataAddressRootHead {")
+            .count(),
+        1,
+        "pending-address owner must define one root-head metadata type"
+    );
     for field in [
+        "pub(crate) fetch_predecessor_request: MemoryRequestId,",
         "pub(crate) fetch: CpuFetchEvent,",
         "pub(crate) consumed_requests: Vec<MemoryRequestId>,",
         "pub(crate) decoded: RiscvDecodedInstruction,",
@@ -946,6 +978,31 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
             pending_code.matches(field).count(),
             1,
             "pending-address request is missing exact field `{field}`"
+        );
+    }
+    for field in [
+        "pub(super) fetch_predecessor_request: MemoryRequestId,",
+        "pub(super) producer_register: Register,",
+        "pub(super) producer_sequence: u64,",
+        "pub(super) root_head: O3PendingDataAddressRootHead,",
+        "pub(super) fetch_request: MemoryRequestId,",
+        "pub(super) range: AddressRange,",
+        "pub(super) atomic_head: bool,",
+    ] {
+        assert_eq!(
+            pending_code.matches(field).count(),
+            1,
+            "pending-address metadata is missing exact field `{field}`"
+        );
+    }
+    assert_eq!(pending_code.matches("pub(super) sequence: u64,").count(), 2);
+    for stale in [
+        "pub(super) producer_fetch: MemoryRequestId,",
+        "pub(super) head_range: AddressRange,",
+    ] {
+        assert!(
+            !pending_code.contains(stale),
+            "pending-address row retains coupled metadata `{stale}`"
         );
     }
     assert_eq!(
@@ -1011,17 +1068,23 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let staging_definition =
         rust_function_definition(&pending_staging_code, "stage_pending_data_address_window")
             .expect("pending-address staging owner must define stage_pending_data_address_window");
-    let try_push_failure = staging_definition
-        .split_once("if !self.pending_data_addresses.try_push")
-        .expect("pending-address staging must use guarded collection insertion")
-        .1
-        .split_once("let mut staged")
-        .expect("pending-address insertion failure must precede suffix staging")
-        .0;
-    assert!(
-        try_push_failure.contains(".retain(|entry| entry.sequence() != sequence)"),
-        "pending-address insertion failure must remove its already-added LSQ row"
-    );
+    for anchor in [
+        "pending: impl IntoIterator<Item = O3PendingDataAddressRequest>",
+        "let pending = pending.into_iter().collect::<Vec<_>>();",
+        "let mut staged = self.clone();",
+        "staged.try_stage_pending_data_address_window(",
+        "*self = staged;",
+    ] {
+        assert!(
+            staging_definition.contains(anchor),
+            "pending-address staging is missing transactional anchor `{anchor}`"
+        );
+    }
+    assert!(production_defines_exact_function(
+        &pending_staging_code,
+        "try_stage_pending_data_address_window"
+    ));
+    assert!(!pending_staging_code.contains("discard_live_staged_window_from"));
     for source in [&pending_code, &pending_set_code, &runtime_code] {
         assert!(!production_defines_exact_function(
             source,
@@ -1060,15 +1123,40 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "is_empty",
         "first",
         "first_mut",
+        "last",
+        "iter",
         "find_sequence",
         "find_fetch",
         "try_push",
+        "take_from",
     ] {
         assert!(
             production_defines_exact_function(&pending_set_code, helper),
             "pending-address set owner is missing bounded collection API `{helper}`"
         );
     }
+    let count_definition =
+        rust_function_definition(&pending_set_code, "pending_data_address_count").unwrap();
+    assert!(count_definition.contains("self.pending_data_addresses.len()"));
+    let retirement_count =
+        rust_function_definition(&memory_code, "pending_live_data_access_retirement_count")
+            .unwrap();
+    assert!(retirement_count.contains("+ self.pending_data_address_count()"));
+    assert!(!retirement_count.contains("usize::from(self.has_pending_data_address())"));
+    let discard_definition = rust_function_definition(
+        &pending_set_code,
+        "discard_pending_data_address_at_internal",
+    )
+    .unwrap();
+    let remove_position = discard_definition
+        .find("self.pending_data_addresses.take_from(sequence)")
+        .expect("boundary discard must take all matching collection rows");
+    let cleanup_position = discard_definition
+        .find("discard_live_staged_window_from")
+        .expect("boundary discard must clean the staged suffix");
+    assert!(remove_position < cleanup_position);
+    assert!(issue_pending_code.contains("pending.fetch_predecessor_request"));
+    assert!(!production_code.contains("producer_fetch"));
     for helper in [
         "record_pending_data_address_materialization",
         "pending_data_address_materialization_matches",
@@ -1141,6 +1229,19 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         !production_defines_exact_function(&retire_code, "stage_dependent_result_address_window"),
         "src/riscv_live_retire_window.rs must not own dependent-address staging"
     );
+    let stage_child_definition =
+        rust_function_definition(&stage_child_code, "stage_dependent_result_address_window")
+            .unwrap();
+    let request_constructor = stage_child_definition
+        .split_once("O3PendingDataAddressRequest::new(")
+        .expect("live-retire staging must construct a pending-address request")
+        .1;
+    assert!(
+        request_constructor
+            .trim_start()
+            .starts_with("head_completed.last_consumed_request(),"),
+        "live-retire staging must pass the reconstructed head's last consumed request"
+    );
 
     let expected_tests = [
         "pending_address_stages_addressless_lsq_and_live_rename_once",
@@ -1209,6 +1310,29 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
             rust_function_definition_count(&lifecycle_test_code, anchor),
             1,
             "missing or duplicated pending-address lifecycle test `{anchor}`"
+        );
+    }
+
+    let expected_multiple_tests = [
+        "two_pending_collection_orders_by_sequence_and_rejects_third",
+        "two_pending_sibling_stages_two_addressless_lsq_rows_and_one_suffix",
+        "two_pending_chain_stages_second_with_first_as_immediate_producer",
+        "two_pending_staging_failure_rolls_back_both_rows_and_rename",
+        "two_pending_discard_from_second_preserves_first_row",
+        "two_pending_retirement_accounting_counts_zero_one_two_rows",
+    ];
+    let multiple_test_code = rust_code_without_comments_and_literals(&multiple_test);
+    assert!(multiple_test_code.contains("use super::*;"));
+    assert_eq!(
+        multiple_test_code.matches("#[test]").count(),
+        expected_multiple_tests.len(),
+        "pending-address multiple-row tests must expose exactly the Task 3 inventory"
+    );
+    for anchor in expected_multiple_tests {
+        assert_eq!(
+            rust_function_definition_count(&multiple_test_code, anchor),
+            1,
+            "missing or duplicated pending-address multiple-row test `{anchor}`"
         );
     }
 }

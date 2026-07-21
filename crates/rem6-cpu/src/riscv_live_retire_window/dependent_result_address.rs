@@ -13,10 +13,20 @@ pub(super) fn stage_dependent_result_address_window(
     issue_tick: u64,
     fetch_events: &[CpuFetchEvent],
 ) -> bool {
-    let next_pc = Address::new(head.execution().next_pc());
-    let Some(dependent) =
-        completed_fetch_instruction_at(state, fetch_events, head.fetch().request_id(), next_pc)
-    else {
+    let Some(head_completed) = completed_fetch_instruction_starting_with(
+        &state.executed_fetches,
+        fetch_events,
+        head.fetch(),
+    ) else {
+        return false;
+    };
+    let next_pc = sequential_pc(&head_completed);
+    let Some(dependent) = completed_fetch_instruction_at(
+        state,
+        fetch_events,
+        head_completed.last_consumed_request(),
+        next_pc,
+    ) else {
         return false;
     };
     let Some(authorization) = dependent_authorization(state, dependent.first_consumed_request())
@@ -35,6 +45,7 @@ pub(super) fn stage_dependent_result_address_window(
     };
 
     let request = O3PendingDataAddressRequest::new(
+        head_completed.last_consumed_request(),
         dependent.fetch().clone(),
         dependent.consumed_requests().to_vec(),
         dependent.decoded(),
@@ -51,7 +62,7 @@ pub(super) fn stage_dependent_result_address_window(
     let expected_staged = suffix.len().saturating_add(1);
     let staged = state.o3_runtime.stage_pending_data_address_window(
         head.fetch().request_id(),
-        request,
+        vec![request],
         suffix
             .iter()
             .map(|instruction| (instruction.pc(), instruction.decoded().instruction())),
