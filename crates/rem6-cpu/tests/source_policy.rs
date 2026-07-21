@@ -1782,10 +1782,12 @@ fn o3_runtime_control_window_lives_in_focused_module() {
     let module = fs::read_to_string(module_path).unwrap();
     for anchor in [
         "struct O3LiveSpeculativeExecution",
+        "struct O3LiveIssueSchedulingCandidate",
         "struct O3LiveSpeculativeIssueCandidate",
         "fn live_speculative_issue_candidate",
+        "fn materialize_live_speculative_issue_candidate",
         "fn record_live_speculative_execution",
-        "fn live_speculative_source_forwarding",
+        "fn live_issue_source_producers",
         "fn invalidate_live_speculative_execution_chain",
     ] {
         assert!(
@@ -1858,7 +1860,6 @@ fn o3_live_control_operands_have_one_typed_owner() {
     let consumers = [
         "src/riscv_o3_window_policy.rs",
         "src/o3_runtime_control_window.rs",
-        "src/o3_runtime_issue.rs",
         "src/o3_runtime_live_window.rs",
     ];
     let opcode_inventory = [
@@ -1883,6 +1884,15 @@ fn o3_live_control_operands_have_one_typed_owner() {
                 "{relative} duplicates live-control opcode inventory `{opcode}`"
             );
         }
+    }
+    let issue = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/o3_runtime_issue.rs")).unwrap(),
+    );
+    for opcode in opcode_inventory {
+        assert!(
+            !issue.contains(opcode),
+            "src/o3_runtime_issue.rs duplicates live-control opcode inventory `{opcode}`"
+        );
     }
 
     let execute = production_rust_source(
@@ -3292,8 +3302,11 @@ fn o3_live_control_window_uses_one_typed_lineage_authority() {
         );
     }
 
-    let issue = rust_function_definition(&control_window, "live_speculative_issue_candidate")
-        .expect("O3 control-window authority must select issue candidates");
+    let issue = rust_function_definition(
+        &control_window,
+        "live_issue_scheduling_candidate_from_metadata",
+    )
+    .expect("O3 control-window authority must build scheduling candidates");
     assert!(
         issue.contains("pending_control_sequence"),
         "O3 issue dependencies must consume only pending control lineage"

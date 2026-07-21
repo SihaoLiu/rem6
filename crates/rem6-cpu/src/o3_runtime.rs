@@ -79,7 +79,8 @@ pub(crate) use o3_runtime_checkpoint::O3LiveRetireGateCheckpointPayload;
 pub use o3_runtime_checkpoint::O3RuntimeCheckpointPayload;
 use o3_runtime_control_window::{
     execution_writes_rename_destination, valid_live_speculative_fetch_identity,
-    O3LiveControlLineage, O3LiveSpeculativeExecution, O3LiveSpeculativeIssueCandidate,
+    O3LiveControlLineage, O3LiveIssueSchedulingCandidate, O3LiveSpeculativeExecution,
+    O3LiveSpeculativeIssueCandidate,
 };
 pub use o3_runtime_error::O3RuntimeError;
 use o3_runtime_helpers::{
@@ -87,6 +88,8 @@ use o3_runtime_helpers::{
     rob_commit_tick, validate_live_staged_rob_metadata, validate_runtime_snapshot, validate_unique,
     O3RuntimeUniqueKey,
 };
+#[cfg(test)]
+pub(crate) use o3_runtime_issue::{O3LiveIssueDependencyTable, O3PreparedLiveIssue};
 pub(crate) use o3_runtime_issue::{O3LiveIssueHeadReservation, O3LiveIssueRequest};
 use o3_runtime_live_window::{
     staged_rename_entry, O3LiveRetiredInstruction, O3LiveStagedFetchIdentity,

@@ -163,7 +163,7 @@ fn memory_result_replanning_invalidates_fu_conflict_chain_for_authoritative_reis
     assert_eq!(runtime.stats().issue_cycles(), 3);
     assert_eq!(runtime.stats().issued_rows(), 2);
     assert_eq!(runtime.stats().resource_blocked_row_cycles(), 1);
-    assert_eq!(runtime.stats().dependency_blocked_row_cycles(), 1);
+    assert_eq!(runtime.stats().dependency_blocked_row_cycles(), 2);
     assert_eq!(runtime.stats().max_rows_per_cycle(), 1);
     assert_writeback_stats(&runtime, 4, 6, 1, 1, 3, 1);
 }

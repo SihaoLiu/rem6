@@ -10,6 +10,9 @@ use super::o3_runtime_issue::{O3LiveIssueHeadReservation, O3LiveIssueRequest};
 use super::*;
 use crate::{CpuFetchEvent, CpuFetchRecord, RiscvCpuExecutionEvent};
 
+#[path = "o3_runtime_issue_tests/dependency_scopes.rs"]
+mod dependency_scopes;
+
 #[test]
 fn scoped_issue_reserves_head_width() {
     let mut fixture = ScalarIssueFixture::new(1, ScalarIssueCase::CrossResource);
@@ -195,7 +198,7 @@ fn scoped_issue_serializes_same_window_coroutine_round_trip() {
     assert_eq!(stats.issue_cycles(), 3);
     assert_eq!(stats.issued_rows(), 3);
     assert_eq!(stats.resource_blocked_row_cycles(), 1);
-    assert_eq!(stats.dependency_blocked_row_cycles(), 1);
+    assert_eq!(stats.dependency_blocked_row_cycles(), 2);
     assert_eq!(stats.max_rows_per_cycle(), 2);
 }
 
@@ -782,6 +785,7 @@ enum ScalarIssueCase {
     CrossResource,
     SameMultiply,
     Dependent,
+    FanIn,
     MixedControls,
     LinkedControls,
     SameWindowLinkReturn,
@@ -807,6 +811,7 @@ impl ScalarIssueFixture {
             ScalarIssueCase::CrossResource => [branch(), mul(14, 2, 3), addi(15, 4, 1)],
             ScalarIssueCase::SameMultiply => [branch(), mul(14, 2, 3), mul(15, 4, 5)],
             ScalarIssueCase::Dependent => [branch(), mul(14, 2, 3), addi(15, 14, 5)],
+            ScalarIssueCase::FanIn => [mul(14, 2, 3), mul(15, 4, 5), add(16, 14, 15)],
             ScalarIssueCase::MixedControls => [jal(), branch(), jalr()],
             ScalarIssueCase::LinkedControls => [jal_link(1), addi(14, 2, 3), jalr_return(5)],
             ScalarIssueCase::SameWindowLinkReturn => [jal_link(1), jalr_return(1), addi(14, 0, 7)],
@@ -945,6 +950,9 @@ fn raw(instruction: RiscvInstruction) -> u32 {
         RiscvInstruction::Addi { rd, rs1, imm } => {
             i_type(imm.value(), rs1.index(), 0x0, rd.index(), 0x13)
         }
+        RiscvInstruction::Add { rd, rs1, rs2 } => {
+            r_type(0, rs2.index(), rs1.index(), 0, rd.index(), 0x33)
+        }
         RiscvInstruction::Beq { rs1, rs2, offset } => {
             b_type(offset.value(), rs2.index(), rs1.index(), 0b000)
         }
@@ -975,6 +983,14 @@ fn addi(rd: u8, rs1: u8, immediate: i64) -> RiscvInstruction {
         rd: reg(rd),
         rs1: reg(rs1),
         imm: Immediate::new(immediate),
+    }
+}
+
+fn add(rd: u8, rs1: u8, rs2: u8) -> RiscvInstruction {
+    RiscvInstruction::Add {
+        rd: reg(rd),
+        rs1: reg(rs1),
+        rs2: reg(rs2),
     }
 }
 

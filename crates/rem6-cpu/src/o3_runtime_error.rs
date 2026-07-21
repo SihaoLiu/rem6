@@ -53,6 +53,12 @@ pub enum O3RuntimeError {
     InvalidPendingState {
         error: O3PipelineError,
     },
+    InvalidLiveIssuePlan {
+        error: O3PipelineError,
+    },
+    SelectedIssueCandidateNotExecutable {
+        sequence: u64,
+    },
     DuplicateWritebackReadySequence {
         sequence: u64,
     },
@@ -183,6 +189,13 @@ impl fmt::Display for O3RuntimeError {
             Self::InvalidPendingState { error } => {
                 write!(formatter, "O3 runtime checkpoint has invalid pending state: {error}")
             }
+            Self::InvalidLiveIssuePlan { error } => {
+                write!(formatter, "O3 live issue plan is invalid: {error}")
+            }
+            Self::SelectedIssueCandidateNotExecutable { sequence } => write!(
+                formatter,
+                "O3 selected issue candidate {sequence} could not be materialized"
+            ),
             Self::DuplicateWritebackReadySequence { sequence } => {
                 write!(formatter, "O3 runtime writeback ready row repeats sequence {sequence}")
             }

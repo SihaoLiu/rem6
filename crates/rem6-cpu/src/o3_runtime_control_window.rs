@@ -1,7 +1,9 @@
-use rem6_isa_riscv::{RegisterWrite, RiscvExecutionRecord, RiscvInstruction};
+use rem6_isa_riscv::{Register, RegisterWrite, RiscvExecutionRecord, RiscvInstruction};
 
 use super::o3_runtime_live_window::staged_rename_entry;
 use super::*;
+use crate::o3_pipeline::O3IssueOpClass;
+use crate::O3RuntimeFuLatencyClass;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct O3LiveControlLineage {
@@ -58,15 +60,30 @@ pub(super) struct O3LiveSpeculativeExecution {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct O3LiveSpeculativeIssueCandidate {
+pub(crate) struct O3LiveIssueSchedulingCandidate {
+    request_index: usize,
     sequence: u64,
     pc: Address,
     instruction: RiscvInstruction,
+    consumed_requests: Vec<MemoryRequestId>,
     kind: O3LiveSpeculativeIssueKind,
+    op_class: O3IssueOpClass,
     control_dependency: Option<u64>,
+    data_producers: Vec<O3LiveIssueSourceProducer>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct O3LiveIssueSourceProducer {
+    sequence: u64,
+    source: Register,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct O3LiveSpeculativeIssueCandidate {
+    scheduling: O3LiveIssueSchedulingCandidate,
     producer_sequences: Vec<u64>,
-    data_dependencies: Vec<O3LiveIssueDependency>,
     forwarded_register_writes: Vec<RegisterWrite>,
+    forwarded_ready_tick: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,39 +97,65 @@ enum O3LiveSpeculativeIssueKind {
     },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct O3LiveIssueDependency {
-    pub(super) sequence: u64,
-    pub(super) ready_tick: u64,
+impl O3LiveIssueSourceProducer {
+    pub(crate) const fn sequence(self) -> u64 {
+        self.sequence
+    }
+
+    pub(crate) const fn source(self) -> Register {
+        self.source
+    }
+}
+
+impl O3LiveIssueSchedulingCandidate {
+    pub(crate) const fn request_index(&self) -> usize {
+        self.request_index
+    }
+
+    pub(crate) const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub(crate) const fn instruction(&self) -> RiscvInstruction {
+        self.instruction
+    }
+
+    pub(crate) const fn op_class(&self) -> O3IssueOpClass {
+        self.op_class
+    }
+
+    pub(crate) const fn control_dependency(&self) -> Option<u64> {
+        self.control_dependency
+    }
+
+    pub(crate) fn data_producers(&self) -> &[O3LiveIssueSourceProducer] {
+        &self.data_producers
+    }
+
+    pub(crate) fn consumed_requests(&self) -> &[MemoryRequestId] {
+        &self.consumed_requests
+    }
 }
 
 impl O3LiveSpeculativeIssueCandidate {
     #[cfg(test)]
     pub(crate) const fn destination(&self) -> Option<O3RenameMapEntry> {
-        match self.kind {
+        match self.scheduling.kind {
             O3LiveSpeculativeIssueKind::Scalar { destination } => Some(destination),
             O3LiveSpeculativeIssueKind::Control { destination, .. } => destination,
         }
     }
 
-    pub(super) fn forwarded_register_writes(&self) -> &[RegisterWrite] {
+    pub(crate) fn forwarded_register_writes(&self) -> &[RegisterWrite] {
         &self.forwarded_register_writes
     }
 
-    pub(super) const fn sequence(&self) -> u64 {
-        self.sequence
+    pub(crate) const fn sequence(&self) -> u64 {
+        self.scheduling.sequence
     }
 
-    pub(super) const fn instruction(&self) -> RiscvInstruction {
-        self.instruction
-    }
-
-    pub(super) const fn control_dependency(&self) -> Option<u64> {
-        self.control_dependency
-    }
-
-    pub(super) fn data_dependencies(&self) -> &[O3LiveIssueDependency] {
-        &self.data_dependencies
+    pub(crate) const fn request_index(&self) -> usize {
+        self.scheduling.request_index
     }
 
     #[cfg(test)]
@@ -120,21 +163,17 @@ impl O3LiveSpeculativeIssueCandidate {
         &self.producer_sequences
     }
 
-    pub(crate) fn issue_tick(&self, earliest_tick: u64) -> u64 {
-        self.data_dependencies
-            .iter()
-            .fold(earliest_tick, |tick, producer| {
-                tick.max(producer.ready_tick)
-            })
+    pub(crate) const fn instruction(&self) -> RiscvInstruction {
+        self.scheduling.instruction
     }
-}
 
-impl O3LiveIssueDependency {
-    pub(super) const fn new(sequence: u64, ready_tick: u64) -> Self {
-        Self {
-            sequence,
-            ready_tick,
-        }
+    #[cfg(test)]
+    pub(crate) const fn control_dependency(&self) -> Option<u64> {
+        self.scheduling.control_dependency
+    }
+
+    pub(crate) fn issue_tick(&self, earliest_tick: u64) -> u64 {
+        earliest_tick.max(self.forwarded_ready_tick)
     }
 }
 
@@ -172,11 +211,49 @@ impl O3RuntimeState {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn live_speculative_issue_candidate(
         &self,
         pc: Address,
         instruction: RiscvInstruction,
     ) -> Option<O3LiveSpeculativeIssueCandidate> {
+        let scheduling = self.live_issue_scheduling_candidate_from_metadata(
+            usize::MAX,
+            pc,
+            instruction,
+            Vec::new(),
+        )?;
+        self.materialize_live_speculative_issue_candidate(&scheduling)
+    }
+
+    pub(crate) fn live_issue_scheduling_candidate(
+        &self,
+        request_index: usize,
+        pc: Address,
+        instruction: RiscvInstruction,
+        consumed_requests: &[MemoryRequestId],
+    ) -> Option<O3LiveIssueSchedulingCandidate> {
+        let candidate = self.live_issue_scheduling_candidate_from_metadata(
+            request_index,
+            pc,
+            instruction,
+            consumed_requests.to_vec(),
+        )?;
+        self.live_staged_fetch_identity_matches(
+            candidate.sequence(),
+            candidate.instruction(),
+            consumed_requests,
+        )
+        .then_some(candidate)
+    }
+
+    fn live_issue_scheduling_candidate_from_metadata(
+        &self,
+        request_index: usize,
+        pc: Address,
+        instruction: RiscvInstruction,
+        consumed_requests: Vec<MemoryRequestId>,
+    ) -> Option<O3LiveIssueSchedulingCandidate> {
         let (scalar_destination, control, sources) = if let Some((destination, sources)) =
             o3_predicted_scalar_descendant_operands(instruction)
         {
@@ -242,22 +319,50 @@ impl O3RuntimeState {
         };
 
         let control_sequence = self.pending_control_sequence_for(entry.sequence());
-        let (mut producer_sequences, data_dependencies, forwarded_register_writes) =
-            self.live_speculative_source_forwarding(index, &sources)?;
-        if let Some(control_sequence) = control_sequence {
+        Some(O3LiveIssueSchedulingCandidate {
+            request_index,
+            sequence: entry.sequence(),
+            pc,
+            instruction,
+            consumed_requests,
+            kind,
+            op_class: live_issue_op_class(instruction),
+            control_dependency: control_sequence,
+            data_producers: self.live_issue_source_producers(index, &sources),
+        })
+    }
+
+    pub(crate) fn materialize_live_speculative_issue_candidate(
+        &self,
+        scheduling: &O3LiveIssueSchedulingCandidate,
+    ) -> Option<O3LiveSpeculativeIssueCandidate> {
+        let mut producer_sequences = Vec::new();
+        let mut forwarded_register_writes = Vec::new();
+        let mut forwarded_ready_tick = 0;
+        for producer in scheduling.data_producers.iter().copied() {
+            let (write, ready_tick) =
+                self.live_issue_source_value(producer.sequence(), producer.source())?;
+            if !producer_sequences.contains(&producer.sequence()) {
+                producer_sequences.push(producer.sequence());
+            }
+            if !forwarded_register_writes
+                .iter()
+                .any(|forwarded: &RegisterWrite| forwarded.register() == producer.source())
+            {
+                forwarded_register_writes.push(write);
+            }
+            forwarded_ready_tick = forwarded_ready_tick.max(ready_tick);
+        }
+        if let Some(control_sequence) = scheduling.control_dependency {
             if !producer_sequences.contains(&control_sequence) {
                 producer_sequences.push(control_sequence);
             }
         }
         Some(O3LiveSpeculativeIssueCandidate {
-            sequence: entry.sequence(),
-            pc,
-            instruction,
-            kind,
-            control_dependency: control_sequence,
+            scheduling: scheduling.clone(),
             producer_sequences,
-            data_dependencies,
             forwarded_register_writes,
+            forwarded_ready_tick,
         })
     }
 
@@ -268,13 +373,22 @@ impl O3RuntimeState {
         issue_tick: u64,
         execution: RiscvExecutionRecord,
     ) -> Result<bool, O3RuntimeError> {
-        let issue_tick = candidate.issue_tick(issue_tick);
+        let issue_tick = if candidate.request_index() == usize::MAX {
+            candidate.issue_tick(issue_tick)
+        } else {
+            issue_tick
+        };
+        if !candidate.scheduling.consumed_requests.is_empty()
+            && candidate.scheduling.consumed_requests != consumed_requests
+        {
+            return Ok(false);
+        }
         if !self.live_staged_fetch_identity_matches(
-            candidate.sequence,
-            candidate.instruction,
+            candidate.sequence(),
+            candidate.instruction(),
             consumed_requests,
-        ) || Address::new(execution.pc()) != candidate.pc
-            || execution.instruction() != candidate.instruction
+        ) || Address::new(execution.pc()) != candidate.scheduling.pc
+            || execution.instruction() != candidate.instruction()
             || execution.trap().is_some()
             || execution.system_event().is_some()
             || execution.memory_access().is_some()
@@ -282,7 +396,7 @@ impl O3RuntimeState {
         {
             return Ok(false);
         }
-        let valid_kind = match candidate.kind {
+        let valid_kind = match candidate.scheduling.kind {
             O3LiveSpeculativeIssueKind::Scalar { destination } => {
                 execution.next_pc()
                     == execution
@@ -311,8 +425,8 @@ impl O3RuntimeState {
             return Ok(false);
         }
         if !self.bind_live_staged_fetch_identity_at_sequence(
-            candidate.sequence,
-            candidate.instruction,
+            candidate.sequence(),
+            candidate.instruction(),
             consumed_requests,
         ) {
             return Ok(false);
@@ -323,7 +437,7 @@ impl O3RuntimeState {
             ))
             .ok_or(O3RuntimeError::WritebackTickOverflow { tick: issue_tick })?;
         let consumes_writeback_slot = matches!(
-            candidate.kind,
+            candidate.scheduling.kind,
             O3LiveSpeculativeIssueKind::Scalar { .. }
                 | O3LiveSpeculativeIssueKind::Control {
                     destination: Some(_),
@@ -331,7 +445,7 @@ impl O3RuntimeState {
                 }
         );
         let (admitted_writeback_tick, writeback_slot) = self.reserve_fixed_fu_writeback(
-            candidate.sequence,
+            candidate.sequence(),
             raw_ready_tick,
             consumes_writeback_slot,
         )?;
@@ -339,7 +453,7 @@ impl O3RuntimeState {
         self.live_speculative_executions
             .push(O3LiveSpeculativeExecution {
                 consumed_requests: consumed_requests.to_vec(),
-                sequence: candidate.sequence,
+                sequence: candidate.sequence(),
                 producer_sequences: candidate.producer_sequences,
                 issue_tick,
                 raw_ready_tick,
@@ -364,14 +478,12 @@ impl O3RuntimeState {
         Some(issued.admitted_writeback_tick)
     }
 
-    fn live_speculative_source_forwarding(
+    fn live_issue_source_producers(
         &self,
         consumer_index: usize,
-        sources: &[rem6_isa_riscv::Register],
-    ) -> Option<(Vec<u64>, Vec<O3LiveIssueDependency>, Vec<RegisterWrite>)> {
-        let mut producer_sequences = Vec::new();
-        let mut data_dependencies = Vec::new();
-        let mut forwarded_register_writes = Vec::new();
+        sources: &[Register],
+    ) -> Vec<O3LiveIssueSourceProducer> {
+        let mut producers = Vec::new();
         for source in sources.iter().copied().filter(|source| !source.is_zero()) {
             let producer = self.snapshot.reorder_buffer[..consumer_index]
                 .iter()
@@ -382,57 +494,40 @@ impl O3RuntimeState {
                         && producer.rename_destination()
                             == Some((O3RegisterClass::Integer, u32::from(source.index())))
                 });
-            let Some(producer) = producer else {
-                continue;
-            };
-            let speculative = self
-                .live_speculative_executions
-                .iter()
-                .find(|issued| issued.sequence == producer.sequence())
-                .and_then(|issued| {
-                    issued
-                        .execution
-                        .register_writes()
-                        .iter()
-                        .find(|write| write.register() == source)
-                        .cloned()
-                        .map(|write| (write, issued.admitted_writeback_tick))
-                });
-            let (write, producer_ready_tick) = speculative
-                .or_else(|| self.completed_live_data_access_source(producer.sequence(), source))?;
-            if !producer_sequences.contains(&producer.sequence()) {
-                producer_sequences.push(producer.sequence());
-            }
-            if !data_dependencies
-                .iter()
-                .any(|dependency: &O3LiveIssueDependency| {
-                    dependency.sequence == producer.sequence()
-                })
-            {
-                data_dependencies.push(O3LiveIssueDependency::new(
-                    producer.sequence(),
-                    producer_ready_tick,
-                ));
-            }
-            if !forwarded_register_writes
-                .iter()
-                .any(|forwarded: &RegisterWrite| forwarded.register() == source)
-            {
-                forwarded_register_writes.push(write);
+            if let Some(producer) = producer {
+                let source_producer = O3LiveIssueSourceProducer {
+                    sequence: producer.sequence(),
+                    source,
+                };
+                if !producers.contains(&source_producer) {
+                    producers.push(source_producer);
+                }
             }
         }
-        Some((
-            producer_sequences,
-            data_dependencies,
-            forwarded_register_writes,
-        ))
+        producers
     }
 
-    fn completed_live_data_access_source(
+    fn live_issue_source_value(
         &self,
         sequence: u64,
-        source: rem6_isa_riscv::Register,
+        source: Register,
     ) -> Option<(RegisterWrite, u64)> {
+        self.live_speculative_executions
+            .iter()
+            .find(|issued| issued.sequence == sequence)
+            .and_then(|issued| {
+                issued
+                    .execution
+                    .register_writes()
+                    .iter()
+                    .find(|write| write.register() == source)
+                    .cloned()
+                    .map(|write| (write, issued.admitted_writeback_tick))
+            })
+            .or_else(|| self.completed_live_data_access_source(sequence, source))
+    }
+
+    pub(super) fn completed_live_data_access_ready_tick(&self, sequence: u64) -> Option<u64> {
         let live = self.live_data_accesses.iter().find(|live| {
             live.sequence == sequence && live.outcome == O3LiveDataAccessOutcome::Completed
         })?;
@@ -444,6 +539,21 @@ impl O3RuntimeState {
         if !rob.is_live_staged() || !rob.is_ready() {
             return None;
         }
+        Some(
+            self.memory_result_writeback_reservation(live.sequence)?
+                .admitted_tick(),
+        )
+    }
+
+    fn completed_live_data_access_source(
+        &self,
+        sequence: u64,
+        source: Register,
+    ) -> Option<(RegisterWrite, u64)> {
+        let ready_tick = self.completed_live_data_access_ready_tick(sequence)?;
+        let live = self.live_data_accesses.iter().find(|live| {
+            live.sequence == sequence && live.outcome == O3LiveDataAccessOutcome::Completed
+        })?;
         let data = live.load_data.as_deref()?;
         let writeback = live
             .execution
@@ -454,11 +564,7 @@ impl O3RuntimeState {
         if writeback.integer_register() != Some(source) {
             return None;
         }
-        Some((
-            RegisterWrite::new(source, writeback.value()),
-            self.memory_result_writeback_reservation(live.sequence)?
-                .admitted_tick(),
-        ))
+        Some((RegisterWrite::new(source, writeback.value()), ready_tick))
     }
 
     pub(super) fn take_live_speculative_issue_timing_at(
@@ -626,6 +732,20 @@ impl O3RuntimeState {
         });
         self.live_serializing_control_sequences
             .retain(|sequence| !invalidated.contains(sequence));
+    }
+}
+
+pub(super) fn live_issue_op_class(instruction: RiscvInstruction) -> O3IssueOpClass {
+    if o3_live_control_operands(instruction).is_some() {
+        return O3IssueOpClass::Branch;
+    }
+    if matches!(
+        o3_fu_latency_class(instruction),
+        Some(O3RuntimeFuLatencyClass::ScalarIntegerMul | O3RuntimeFuLatencyClass::ScalarIntegerDiv)
+    ) {
+        O3IssueOpClass::IntMult
+    } else {
+        O3IssueOpClass::IntAlu
     }
 }
 
