@@ -41,7 +41,11 @@ pub(super) fn scalar_live_window_binary(name: &str, dump_stats: bool) -> std::pa
         s_type(8, 17, 10, 0b011),
     ];
     if dump_stats {
-        words.push(m5op(M5_DUMP_STATS));
+        words.extend([
+            i_type(0, 0, 0x0, 10, 0x13),
+            i_type(0, 0, 0x0, 11, 0x13),
+            m5op(M5_DUMP_STATS),
+        ]);
     }
     words.extend([m5op(M5_EXIT), m5op(M5_FAIL)]);
     while words.len() * 4 < 96 {
@@ -104,17 +108,37 @@ pub(super) fn scalar_live_window_json(
     issue_width: usize,
     max_tick: u64,
 ) -> Value {
-    let output = scalar_live_window_command(
+    scalar_live_window_json_with_mode_and_args(
         path,
         memory_system,
         live_depth,
         issue_width,
         max_tick,
         "detailed",
-        "json",
+        &[],
     )
-    .output()
-    .unwrap();
+}
+
+pub(super) fn scalar_live_window_json_with_mode_and_args(
+    path: &Path,
+    memory_system: &str,
+    live_depth: usize,
+    issue_width: usize,
+    max_tick: u64,
+    mode: &str,
+    extra_args: &[&str],
+) -> Value {
+    let mut command = scalar_live_window_command(
+        path,
+        memory_system,
+        live_depth,
+        issue_width,
+        max_tick,
+        mode,
+        "json",
+    );
+    command.args(extra_args);
+    let output = command.output().unwrap();
     assert!(
         output.status.success(),
         "stderr: {}",

@@ -7,6 +7,9 @@ use rem6_memory::{Address, AgentId, MemoryRequestId};
 use rem6_mmio::MmioRoute;
 use rem6_transport::MemoryRouteId;
 
+use crate::riscv_defaults::{
+    MAX_RISCV_O3_SCALAR_LIVE_WINDOW_DEPTH, MAX_RISCV_O3_SCALAR_MEMORY_DEPTH,
+};
 use crate::{RiscvCore, RiscvCoreState};
 
 mod codec;
@@ -46,7 +49,8 @@ pub use partial_overlay::{
 
 pub const RISCV_O3_LIVE_DATA_HANDOFF_CHUNK: &str = "o3-live-data-handoff";
 
-const MAX_ROWS: usize = 4;
+const MAX_MEMORY_ROWS: usize = MAX_RISCV_O3_SCALAR_MEMORY_DEPTH;
+const MAX_TOTAL_ROWS: usize = MAX_RISCV_O3_SCALAR_LIVE_WINDOW_DEPTH;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RiscvO3LiveDataHandoffCapture {
@@ -217,10 +221,11 @@ impl RiscvO3LiveDataHandoff {
     fn new(entries: Vec<RiscvO3LiveDataHandoffEntry>, younger_rows: usize) -> Option<Self> {
         let row_count = entries.len().checked_add(younger_rows)?;
         (!entries.is_empty()
+            && entries.len() <= MAX_MEMORY_ROWS
             && entries
                 .iter()
                 .all(|entry| entry.operation == RiscvO3LiveDataHandoffOperation::Load)
-            && row_count <= MAX_ROWS)
+            && row_count <= MAX_TOTAL_ROWS)
             .then_some(Self {
                 entries,
                 forwarded_rows: Vec::new(),
@@ -242,7 +247,7 @@ impl RiscvO3LiveDataHandoff {
             .len()
             .checked_add(forwarded_rows.len())?
             .checked_add(younger_rows)?;
-        (!entries.is_empty() && row_count <= MAX_ROWS).then_some(Self {
+        (!entries.is_empty() && row_count <= MAX_TOTAL_ROWS).then_some(Self {
             entries,
             forwarded_rows,
             partial_overlays: Vec::new(),
@@ -257,7 +262,7 @@ impl RiscvO3LiveDataHandoff {
         younger_rows: usize,
     ) -> Option<Self> {
         let load = entries.last()?;
-        if !(2..=MAX_ROWS).contains(&entries.len())
+        if !(2..=MAX_MEMORY_ROWS).contains(&entries.len())
             || younger_rows != 0
             || load.operation != RiscvO3LiveDataHandoffOperation::Load
             || load.ownership != RiscvO3LiveDataHandoffOwnership::Transport
@@ -739,7 +744,7 @@ fn build_completed_partial_overlay_handoff(
             .iter()
             .any(|issued| issued.partial_overlay.is_some())
         || entries.is_empty()
-        || entries.len() >= MAX_ROWS
+        || entries.len() >= MAX_MEMORY_ROWS
         || younger_rows != 0
     {
         return None;
@@ -929,7 +934,7 @@ impl RiscvCore {
         if !partial_rows.is_empty() {
             if partial_rows.len() != 1
                 || !forwarded_rows.is_empty()
-                || !(2..=MAX_ROWS).contains(&entries.len())
+                || !(2..=MAX_MEMORY_ROWS).contains(&entries.len())
                 || younger_rows != 0
             {
                 return None;
@@ -1713,10 +1718,23 @@ mod tests {
     #[test]
     fn live_data_handoff_rejects_duplicate_requests() {
         let duplicate = RiscvO3LiveDataHandoff::new(vec![entry(1), entry(1)], 0).unwrap();
-
         assert!(matches!(
             RiscvO3LiveDataHandoff::decode(&duplicate.encode()),
             Err(RiscvO3LiveDataHandoffError::DuplicateFetchRequest { .. })
+        ));
+    }
+
+    #[test]
+    fn live_data_handoff_allows_eight_total_rows_without_widening_memory_rows() {
+        assert!(RiscvO3LiveDataHandoff::new((1..=5).map(entry).collect(), 0).is_none());
+        let deep = RiscvO3LiveDataHandoff::new(vec![entry(1)], 7).unwrap();
+        let mut widened_memory = deep.clone();
+        assert!(RiscvO3LiveDataHandoff::decode(&deep.encode()) == Ok(deep));
+        widened_memory.entries = (1..=5).map(entry).collect();
+        widened_memory.younger_rows = 0;
+        assert!(matches!(
+            RiscvO3LiveDataHandoff::decode(&widened_memory.encode()),
+            Err(RiscvO3LiveDataHandoffError::InvalidCurrentShape { .. })
         ));
     }
 
@@ -1727,7 +1745,7 @@ mod tests {
             .encode();
         let mut too_many_rows = payload.clone();
         too_many_rows[MAGIC.len() + 1 + 4..HEADER_BYTES]
-            .copy_from_slice(&(MAX_ROWS as u32).to_le_bytes());
+            .copy_from_slice(&(MAX_TOTAL_ROWS as u32).to_le_bytes());
         assert!(matches!(
             RiscvO3LiveDataHandoff::decode(&too_many_rows),
             Err(RiscvO3LiveDataHandoffError::TooManyRows { .. })

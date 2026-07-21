@@ -1,7 +1,7 @@
 use super::{
     Address, MemoryRequestId, RiscvIssuedScalarMemoryHandoff, RiscvO3LiveDataHandoffEntry,
     RiscvO3LiveDataHandoffError, RiscvO3LiveDataHandoffOperation, RiscvO3LiveDataHandoffOwnership,
-    RiscvO3LiveDataHandoffTarget, Tick, MAX_ROWS,
+    RiscvO3LiveDataHandoffTarget, Tick, MAX_MEMORY_ROWS,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -326,7 +326,10 @@ pub(super) fn completed_partial_overlay_is_valid(
     entries: &[RiscvO3LiveDataHandoffEntry],
     overlay: &RiscvO3LiveDataHandoffCompletedPartialOverlay,
 ) -> bool {
-    if entries.is_empty() || entries.len() >= MAX_ROWS || !matches!(overlay.bytes, 1 | 2 | 4 | 8) {
+    if entries.is_empty()
+        || entries.len() >= MAX_MEMORY_ROWS
+        || !matches!(overlay.bytes, 1 | 2 | 4 | 8)
+    {
         return false;
     }
     let scalar_mask = scalar_byte_mask(overlay.bytes);

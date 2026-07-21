@@ -22,6 +22,8 @@ use crate::{
 
 #[path = "o3_runtime_writeback_tests/core.rs"]
 mod core;
+#[path = "o3_runtime_writeback_tests/deep_scalar_cleanup.rs"]
+mod deep_scalar_cleanup;
 #[path = "o3_runtime_writeback_tests/ownership.rs"]
 mod ownership;
 

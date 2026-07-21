@@ -271,20 +271,27 @@ impl RiscvO3LiveDataHandoff {
             .ok_or(RiscvO3LiveDataHandoffError::TooManyRows {
                 entries: usize::MAX,
                 younger_rows,
-                maximum: MAX_ROWS,
+                maximum: MAX_TOTAL_ROWS,
             })?;
+        if resident_rows > MAX_MEMORY_ROWS {
+            return Err(RiscvO3LiveDataHandoffError::TooManyRows {
+                entries: resident_rows,
+                younger_rows: 0,
+                maximum: MAX_MEMORY_ROWS,
+            });
+        }
         let row_count = resident_rows.checked_add(younger_rows as usize).ok_or(
             RiscvO3LiveDataHandoffError::TooManyRows {
                 entries: resident_rows,
                 younger_rows,
-                maximum: MAX_ROWS,
+                maximum: MAX_TOTAL_ROWS,
             },
         )?;
-        if row_count > MAX_ROWS {
+        if row_count > MAX_TOTAL_ROWS {
             return Err(RiscvO3LiveDataHandoffError::TooManyRows {
                 entries: resident_rows,
                 younger_rows,
-                maximum: MAX_ROWS,
+                maximum: MAX_TOTAL_ROWS,
             });
         }
         if version == VERSION_MEMORY_ROUTE {
@@ -617,7 +624,7 @@ impl RiscvO3LiveDataHandoff {
                 }]
             } else {
                 let source_count = read_u32(payload, &mut offset)? as usize;
-                let expected_sources = entries.len().saturating_sub(1).min(MAX_ROWS - 1);
+                let expected_sources = entries.len().saturating_sub(1).min(MAX_MEMORY_ROWS - 1);
                 if source_count == 0 || source_count != expected_sources {
                     return Err(
                         RiscvO3LiveDataHandoffError::InvalidPartialOverlaySourceCount {
@@ -1006,7 +1013,7 @@ fn single_source_count_shape_is_valid(
     younger_rows: u32,
 ) -> bool {
     match (forwarded_rows, partial_overlays) {
-        (0, 0) => entries > 0,
+        (0, 0) => (1..=MAX_MEMORY_ROWS).contains(&entries),
         (1, 0) => entries == 1 && younger_rows == 0,
         (0, 1) => entries == 2 && younger_rows == 0,
         _ => false,
@@ -1021,10 +1028,10 @@ fn current_count_shape_is_valid(
     younger_rows: u32,
 ) -> bool {
     match (forwarded_rows, partial_overlays, completed_partial_overlays) {
-        (0, 0, 0) => entries > 0,
+        (0, 0, 0) => (1..=MAX_MEMORY_ROWS).contains(&entries),
         (1, 0, 0) => entries == 1 && younger_rows == 0,
-        (0, 1, 0) => (2..=MAX_ROWS).contains(&entries) && younger_rows == 0,
-        (0, 0, 1) => (1..MAX_ROWS).contains(&entries) && younger_rows == 0,
+        (0, 1, 0) => (2..=MAX_MEMORY_ROWS).contains(&entries) && younger_rows == 0,
+        (0, 0, 1) => (1..MAX_MEMORY_ROWS).contains(&entries) && younger_rows == 0,
         _ => false,
     }
 }
@@ -1036,10 +1043,13 @@ fn single_source_shape_is_valid(
     younger_rows: u32,
 ) -> bool {
     match (forwarded_rows, partial_overlays) {
-        (0, 0) => entries.iter().all(|entry| {
-            entry.operation == RiscvO3LiveDataHandoffOperation::Load
-                && entry.ownership == RiscvO3LiveDataHandoffOwnership::Transport
-        }),
+        (0, 0) => {
+            entries.len() <= MAX_MEMORY_ROWS
+                && entries.iter().all(|entry| {
+                    entry.operation == RiscvO3LiveDataHandoffOperation::Load
+                        && entry.ownership == RiscvO3LiveDataHandoffOwnership::Transport
+                })
+        }
         (1, 0) => {
             entries.len() == 1
                 && younger_rows == 0
@@ -1068,9 +1078,12 @@ fn current_shape_is_valid(
         partial_overlays.len(),
         completed_partial_overlays.len(),
     ) {
-        (0, 0, 0) => entries
-            .iter()
-            .all(|entry| entry.operation == RiscvO3LiveDataHandoffOperation::Load),
+        (0, 0, 0) => {
+            entries.len() <= MAX_MEMORY_ROWS
+                && entries
+                    .iter()
+                    .all(|entry| entry.operation == RiscvO3LiveDataHandoffOperation::Load)
+        }
         (1, 0, 0) => {
             entries.len() == 1
                 && younger_rows == 0
@@ -1079,7 +1092,7 @@ fn current_shape_is_valid(
         (0, 1, 0) => {
             let overlay = &partial_overlays[0];
             younger_rows == 0
-                && (2..=MAX_ROWS).contains(&entries.len())
+                && (2..=MAX_MEMORY_ROWS).contains(&entries.len())
                 && entries[..entries.len() - 1]
                     .iter()
                     .all(|entry| entry.operation == RiscvO3LiveDataHandoffOperation::Store)
