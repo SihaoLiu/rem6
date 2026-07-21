@@ -1149,6 +1149,199 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
 }
 
 #[test]
+fn task8_dependent_result_address_production_ownership_is_final() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source_root = crate_dir.join("src");
+    let pending_owner_path = Path::new("src/o3_runtime_pending_address.rs");
+    let authorization_owner_path =
+        Path::new("src/riscv_fetch_ahead/memory_result_authorization.rs");
+    let issue_owner_path = Path::new("src/riscv_data_issue/dependent_result_address.rs");
+    let production = rust_source_files(&source_root)
+        .into_iter()
+        .filter_map(|path| {
+            let relative = path.strip_prefix(crate_dir).unwrap().to_path_buf();
+            (!is_test_only_rust_source(&relative)).then(|| {
+                let source = fs::read_to_string(path).unwrap();
+                (relative, production_rust_source(&source))
+            })
+        })
+        .collect::<Vec<_>>();
+    let source = |path: &Path| {
+        production
+            .iter()
+            .find_map(|(candidate, source)| (candidate == path).then_some(source.as_str()))
+            .unwrap_or_else(|| panic!("missing production source {}", path.display()))
+    };
+
+    let pending_owner = source(pending_owner_path);
+    let authorization_owner = source(authorization_owner_path);
+    let issue_owner = source(issue_owner_path);
+    let production_code = production
+        .iter()
+        .map(|(_, source)| source.as_str())
+        .collect::<String>();
+
+    let pending_struct_owners = production
+        .iter()
+        .flat_map(|(path, source)| {
+            production_struct_definitions(source)
+                .into_iter()
+                .filter(|definition| {
+                    production_defines_exact_named_item(
+                        definition,
+                        "struct",
+                        "O3PendingDataAddress",
+                    )
+                })
+                .map(|_| path.display().to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        pending_struct_owners,
+        [pending_owner_path.display().to_string()],
+        "O3PendingDataAddress must have exactly one focused production owner"
+    );
+    assert_eq!(
+        production_code
+            .matches("Option<O3PendingDataAddress>")
+            .count(),
+        1,
+        "production must contain exactly one optional pending-address field"
+    );
+
+    let role = production_enum_definition(authorization_owner, "O3MemoryResultWindowRole")
+        .expect("missing O3MemoryResultWindowRole authorization enum");
+    let address_authority =
+        production_enum_definition(authorization_owner, "O3MemoryResultWindowAddressAuthority")
+            .expect("missing O3MemoryResultWindowAddressAuthority authorization enum");
+    assert!(enum_has_unit_variant(&role, "YoungerDependentRead"));
+    assert_eq!(
+        role.matches("Dependent").count(),
+        1,
+        "YoungerDependentRead must be the only dependent result role"
+    );
+    assert!(!role.contains("Pending"));
+    assert!(address_authority.contains("DependentSource {"));
+    assert_eq!(
+        address_authority.matches("Dependent").count(),
+        1,
+        "DependentSource must be the only dependent address authority"
+    );
+    assert!(!address_authority.contains("Pending"));
+
+    for helper in [
+        "stage_pending_data_address_window",
+        "record_pending_data_address_materialization",
+        "pending_data_address_materialization_matches",
+        "bind_pending_data_address_issue",
+        "discard_pending_data_address_at_internal",
+        "discard_pending_data_address_from",
+        "discard_pending_data_address",
+        "discard_pending_data_address_at",
+    ] {
+        let owners = production
+            .iter()
+            .filter_map(|(path, source)| {
+                production_defines_exact_function(source, helper)
+                    .then_some(path.display().to_string())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            owners,
+            [pending_owner_path.display().to_string()],
+            "pending-address helper `{helper}` must stay in the focused owner"
+        );
+        assert_eq!(
+            rust_function_definition_count(pending_owner, helper),
+            1,
+            "pending-address helper `{helper}` must have exactly one definition"
+        );
+    }
+
+    for helper in [
+        "validate_pending_address_pre_submit",
+        "replay_pending_address_before_submit",
+    ] {
+        let owners = production
+            .iter()
+            .filter_map(|(path, source)| {
+                production_defines_exact_function(source, helper)
+                    .then_some(path.display().to_string())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            owners,
+            [issue_owner_path.display().to_string()],
+            "pre-submit helper `{helper}` must stay in the focused data-issue owner"
+        );
+        assert_eq!(
+            rust_function_definition_count(issue_owner, helper),
+            1,
+            "pre-submit helper `{helper}` must have exactly one definition"
+        );
+    }
+
+    let mut collection_owners = Vec::new();
+    let mut compatibility_aliases = Vec::new();
+    let mut parallel_authorities = Vec::new();
+    for (path, source) in &production {
+        if ["BTreeMap", "HashMap", "BTreeSet", "HashSet"]
+            .into_iter()
+            .any(|collection| {
+                generic_type_contains_named_type(source, collection, "O3PendingDataAddress")
+            })
+        {
+            collection_owners.push(path.display().to_string());
+        }
+        let mut definitions = production_struct_definitions(source);
+        definitions.extend(production_enum_definitions(source));
+        definitions.extend(production_type_alias_definitions(source));
+        for definition in definitions {
+            if definition.starts_with("type ")
+                && (definition.contains("PendingDataAddress")
+                    || definition.contains("DependentResultAddress"))
+            {
+                compatibility_aliases.push(path.display().to_string());
+            }
+            if (definition.contains("PendingDataAddress")
+                || definition.contains("DependentResultAddress"))
+                && definition.contains("Authorization")
+            {
+                parallel_authorities.push(path.display().to_string());
+            }
+        }
+    }
+    assert!(
+        collection_owners.is_empty(),
+        "pending-address map/set ownership is forbidden: {}",
+        collection_owners.join(", ")
+    );
+    assert!(
+        compatibility_aliases.is_empty(),
+        "pending-address compatibility aliases are forbidden: {}",
+        compatibility_aliases.join(", ")
+    );
+    assert!(
+        parallel_authorities.is_empty(),
+        "parallel pending-address authorization is forbidden: {}",
+        parallel_authorities.join(", ")
+    );
+
+    assert!(line_count(&crate_dir.join("src/o3_runtime.rs")) < 1200);
+    assert!(
+        line_count(&crate_dir.join("src/riscv_fetch_ahead/detailed_o3/data_access_result.rs"))
+            <= 450
+    );
+    assert!(line_count(&crate_dir.join("src/riscv_translation.rs")) < 1800);
+    assert!(line_count(&crate_dir.join("src/riscv_data_issue.rs")) < 1800);
+    assert_eq!(
+        line_count(&crate_dir.join("src/riscv_execution_mode_handoff.rs")),
+        1800
+    );
+}
+
+#[test]
 fn generic_o3_live_data_owner_uses_data_access_names() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let stale = [
@@ -4216,9 +4409,10 @@ fn production_struct_definitions(source: &str) -> Vec<String> {
     definitions
 }
 
-fn production_enum_definition(source: &str, name: &str) -> Option<String> {
+fn production_enum_definitions(source: &str) -> Vec<String> {
     let code = production_rust_source(source);
     let chars = code.chars().collect::<Vec<_>>();
+    let mut definitions = Vec::new();
     let mut index = 0;
     while index < chars.len() {
         let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
@@ -4230,28 +4424,42 @@ fn production_enum_definition(source: &str, name: &str) -> Option<String> {
             continue;
         }
         let name_start = skip_rust_whitespace(&chars, end);
-        let Some((item_name, name_end)) = rust_identifier_at(&chars, name_start) else {
+        let Some((_, name_end)) = rust_identifier_at(&chars, name_start) else {
             index = end;
             continue;
         };
-        if item_name != name {
-            index = name_end;
-            continue;
-        }
         let mut body = skip_rust_whitespace(&chars, name_end);
         if chars.get(body) == Some(&'<') {
-            body = matching_delimiter(&chars, body, '<', '>')? + 1;
+            let Some(close) = matching_delimiter(&chars, body, '<', '>') else {
+                index = name_end;
+                continue;
+            };
+            body = close + 1;
         }
         while body < chars.len() && chars[body] != '{' {
             if chars[body] == ';' {
-                return None;
+                break;
             }
             body += 1;
         }
-        let close = matching_delimiter(&chars, body, '{', '}')?;
-        return Some(chars[index..=close].iter().collect());
+        if chars.get(body) != Some(&'{') {
+            index = body.saturating_add(1);
+            continue;
+        }
+        let Some(close) = matching_delimiter(&chars, body, '{', '}') else {
+            index = body + 1;
+            continue;
+        };
+        definitions.push(chars[index..=close].iter().collect());
+        index = close + 1;
     }
-    None
+    definitions
+}
+
+fn production_enum_definition(source: &str, name: &str) -> Option<String> {
+    production_enum_definitions(source)
+        .into_iter()
+        .find(|definition| production_defines_exact_named_item(definition, "enum", name))
 }
 
 fn production_type_alias_definitions(source: &str) -> Vec<String> {
