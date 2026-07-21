@@ -137,6 +137,16 @@ impl O3LoadStoreQueueEntry {
         self.completed = true;
     }
 
+    pub(super) fn resolve_address(&mut self, address: Address) -> bool {
+        match self.address {
+            Some(existing) => existing == address,
+            None => {
+                self.address = Some(address);
+                true
+            }
+        }
+    }
+
     pub const fn sequence(self) -> u64 {
         self.sequence
     }

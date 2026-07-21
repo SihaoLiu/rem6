@@ -287,6 +287,7 @@ impl O3RuntimeState {
     pub(crate) fn live_data_access_lifecycle_is_quiescent(&self) -> bool {
         self.deferred_live_data_access_execution.is_none()
             && self.live_data_accesses.is_empty()
+            && !self.has_pending_data_address()
             && self.live_data_access_younger_sequences.is_empty()
     }
 
@@ -296,6 +297,7 @@ impl O3RuntimeState {
 
     pub(crate) fn pending_live_data_access_retirement_count(&self) -> usize {
         self.live_data_accesses.len()
+            + usize::from(self.has_pending_data_address())
             + usize::from(self.deferred_live_data_access_execution.is_some())
     }
 
@@ -304,6 +306,7 @@ impl O3RuntimeState {
         fetch_request: MemoryRequestId,
     ) -> bool {
         self.deferred_live_data_access_execution == Some(fetch_request)
+            || self.pending_data_address_owns_fetch(fetch_request)
             || self
                 .live_data_accesses
                 .iter()
@@ -315,7 +318,9 @@ impl O3RuntimeState {
     }
 
     pub(crate) fn has_live_data_access_window(&self) -> bool {
-        !self.live_data_accesses.is_empty() || !self.live_data_access_younger_sequences.is_empty()
+        !self.live_data_accesses.is_empty()
+            || self.has_pending_data_address()
+            || !self.live_data_access_younger_sequences.is_empty()
     }
 
     pub(crate) fn has_ready_live_data_access_event(&self) -> bool {
@@ -996,6 +1001,10 @@ impl O3RuntimeState {
     pub(crate) fn discard_live_data_access_lifecycle(&mut self) {
         self.discard_live_writeback_reservations();
         self.deferred_live_data_access_execution = None;
+        let pending_sequence = self
+            .pending_data_address
+            .as_ref()
+            .map(O3PendingDataAddress::sequence);
         let live = std::mem::take(&mut self.live_data_accesses);
         for live in &live {
             self.pending_data_accesses.remove(&live.fetch_request);
@@ -1003,6 +1012,7 @@ impl O3RuntimeState {
         let boundary_sequence = live
             .first()
             .map(|live| live.sequence)
+            .or(pending_sequence)
             .or_else(|| self.live_data_access_younger_sequences.first().copied());
         if let Some(sequence) = boundary_sequence {
             self.discard_live_data_access_window_rows(sequence);
@@ -1011,6 +1021,10 @@ impl O3RuntimeState {
 
     pub(super) fn discard_live_data_access_lifecycle_at(&mut self, now: u64) {
         self.deferred_live_data_access_execution = None;
+        let pending_sequence = self
+            .pending_data_address
+            .as_ref()
+            .map(O3PendingDataAddress::sequence);
         let live = std::mem::take(&mut self.live_data_accesses);
         for live in &live {
             self.pending_data_accesses.remove(&live.fetch_request);
@@ -1018,6 +1032,7 @@ impl O3RuntimeState {
         let boundary_sequence = live
             .first()
             .map(|live| live.sequence)
+            .or(pending_sequence)
             .or_else(|| self.live_data_access_younger_sequences.first().copied());
         if let Some(sequence) = boundary_sequence {
             self.discard_live_data_access_window_rows_at(sequence, now);

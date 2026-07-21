@@ -150,6 +150,9 @@ impl O3RuntimeState {
         &self,
         fetch_request: MemoryRequestId,
     ) -> Option<RiscvScalarIntegerLiveWindow> {
+        if self.has_pending_data_address() {
+            return None;
+        }
         let tail = self.live_data_accesses.last()?;
         if tail.fetch_request != fetch_request || tail.outcome != O3LiveDataAccessOutcome::Resident
         {
@@ -187,6 +190,7 @@ impl O3RuntimeState {
     fn memory_result_window_state(&self) -> Option<O3MemoryResultWindowState> {
         if self.live_data_accesses.is_empty()
             || self.live_data_accesses.len() > 2
+            || self.has_pending_data_address()
             || !self.live_data_access_younger_sequences.is_empty()
         {
             return None;

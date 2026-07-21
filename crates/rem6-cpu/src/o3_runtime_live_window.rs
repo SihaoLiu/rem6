@@ -424,6 +424,7 @@ impl O3RuntimeState {
     pub(crate) fn discard_live_staged_instructions(&mut self) {
         self.discard_live_writeback_reservations();
         self.discard_live_data_access_lifecycle();
+        self.clear_pending_data_address_from_without_window(0);
         self.snapshot
             .reorder_buffer
             .retain(|entry| !entry.is_live_staged());
@@ -440,6 +441,7 @@ impl O3RuntimeState {
     pub(crate) fn discard_live_staged_instructions_at(&mut self, now: u64) {
         self.discard_live_writeback_reservations();
         self.discard_live_data_access_lifecycle_at(now);
+        self.clear_pending_data_address_from_without_window(0);
         self.snapshot
             .reorder_buffer
             .retain(|entry| !entry.is_live_staged());
@@ -500,6 +502,7 @@ impl O3RuntimeState {
     }
 
     fn discard_live_staged_window_rows_from_at(&mut self, sequence: u64, now: Option<u64>) {
+        self.clear_pending_data_address_from_without_window(sequence);
         self.snapshot
             .reorder_buffer
             .retain(|entry| !entry.is_live_staged() || entry.sequence() < sequence);
@@ -649,6 +652,25 @@ impl O3RuntimeState {
         instruction: RiscvInstruction,
         ready_tick: u64,
     ) -> Option<u64> {
+        let rename_destination = o3_scalar_integer_destination(instruction)
+            .filter(|register| !register.is_zero())
+            .map(|register| (O3RegisterClass::Integer, u32::from(register.index())));
+        self.stage_live_instruction_with_rename_destination(
+            pc,
+            instruction,
+            ready_tick,
+            rename_destination,
+        )
+        .map(|(sequence, _)| sequence)
+    }
+
+    pub(super) fn stage_live_instruction_with_rename_destination(
+        &mut self,
+        pc: Address,
+        instruction: RiscvInstruction,
+        ready_tick: u64,
+        rename_destination: Option<(O3RegisterClass, u32)>,
+    ) -> Option<(u64, Option<O3PhysicalRegisterId>)> {
         if self
             .snapshot
             .reorder_buffer
@@ -658,9 +680,6 @@ impl O3RuntimeState {
             return None;
         }
         let sequence = self.allocate_sequence();
-        let rename_destination = o3_scalar_integer_destination(instruction)
-            .filter(|register| !register.is_zero())
-            .map(|register| (O3RegisterClass::Integer, u32::from(register.index())));
         let destination = rename_destination.map(|_| self.allocate_physical_register());
         self.snapshot.reorder_buffer.push(
             O3ReorderBufferEntry::new(sequence, pc, destination)
@@ -669,7 +688,7 @@ impl O3RuntimeState {
         );
         self.live_staged_fetch_identities
             .insert(sequence, O3LiveStagedFetchIdentity::new(instruction));
-        Some(sequence)
+        Some((sequence, destination))
     }
 
     fn stage_or_existing_live_instruction(

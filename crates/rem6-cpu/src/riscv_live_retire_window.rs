@@ -22,6 +22,7 @@ use crate::{
     RiscvCpuExecutionEvent,
 };
 
+mod dependent_result_address;
 mod producer_forwarded_descendant;
 
 pub(crate) use producer_forwarded_descendant::{
@@ -733,6 +734,14 @@ pub(crate) fn stage_o3_data_access_younger_window(
     {
         return;
     }
+    if dependent_result_address::stage_dependent_result_address_window(
+        state,
+        execution,
+        issue_tick,
+        fetch_events,
+    ) {
+        return;
+    }
     let Some(window) = state
         .o3_runtime
         .data_access_integer_window(execution.fetch().request_id())
@@ -888,14 +897,14 @@ fn schedule_o3_live_speculative_younger_executions(
     head: O3LiveIssueHeadReservation,
     younger: &[RiscvCompletedFetchInstruction],
     issue_tick: u64,
-) -> Result<(), RiscvCpuError> {
+) -> Result<bool, RiscvCpuError> {
     for younger in younger {
         if !state.o3_runtime.bind_live_staged_fetch_identity(
             younger.pc,
             younger.decoded.instruction(),
             &younger.consumed_requests,
         ) {
-            return Ok(());
+            return Ok(false);
         }
     }
     let requests = younger
@@ -912,7 +921,8 @@ fn schedule_o3_live_speculative_younger_executions(
     state
         .o3_runtime
         .schedule_live_speculative_issues(&hart, head, issue_tick, &requests)
-        .map_err(RiscvCpuError::O3Runtime)
+        .map_err(RiscvCpuError::O3Runtime)?;
+    Ok(true)
 }
 
 fn completed_fetch_instruction_window(

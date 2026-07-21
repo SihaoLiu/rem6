@@ -37,6 +37,10 @@ const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_FETCH_TEST_LINES: usize = 450;
 const MAX_RISCV_RETAINED_DATA_ACCESS_RESULT_LINES: usize = 100;
 const MAX_RISCV_MEMORY_RESULT_AUTHORIZATION_LINES: usize = 150;
 const MAX_RISCV_BUFFERED_EFFECT_LINES: usize = 220;
+const MAX_O3_RUNTIME_PENDING_ADDRESS_LINES: usize = 650;
+const MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FACADE_LINES: usize = 300;
+const MAX_O3_RUNTIME_PENDING_ADDRESS_STAGING_TEST_LINES: usize = 450;
+const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_STAGE_LINES: usize = 250;
 const MAX_RISCV_DETAILED_O3_CONTROL_TEST_ROOT_LINES: usize = 450;
 const MAX_RISCV_DETAILED_O3_LINKED_CONTROL_TEST_LINES: usize = 1500;
 const MAX_RISCV_DETAILED_O3_LINKED_CONTROL_FETCH_RESPONSE_TEST_LINES: usize = 200;
@@ -687,6 +691,228 @@ fn task3_sequence_span_lsq_span_and_retire_ownership_stay_focused() {
         !retire.contains("Some(MemoryAccessKind::AtomicMemory"),
         "src/o3_runtime_retire.rs must not keep a legacy separate AMO sequence increment"
     );
+}
+
+#[test]
+fn task3_pending_data_address_staging_stays_in_focused_owners() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let runtime_path = crate_dir.join("src/o3_runtime.rs");
+    let retire_path = crate_dir.join("src/riscv_live_retire_window.rs");
+    let pending_path = crate_dir.join("src/o3_runtime_pending_address.rs");
+    let test_root_path = crate_dir.join("src/o3_runtime_pending_address_tests.rs");
+    let staging_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/staging.rs");
+    let stage_child_path =
+        crate_dir.join("src/riscv_live_retire_window/dependent_result_address.rs");
+
+    for path in [
+        &pending_path,
+        &test_root_path,
+        &staging_test_path,
+        &stage_child_path,
+    ] {
+        assert!(
+            path.is_file(),
+            "missing Task 3 focused file {}",
+            path.display()
+        );
+    }
+
+    let runtime = fs::read_to_string(&runtime_path).unwrap();
+    let retire = fs::read_to_string(&retire_path).unwrap();
+    let pending = fs::read_to_string(&pending_path).unwrap();
+    let test_root = fs::read_to_string(&test_root_path).unwrap();
+    let staging_test = fs::read_to_string(&staging_test_path).unwrap();
+    let stage_child = fs::read_to_string(&stage_child_path).unwrap();
+
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &runtime,
+            "o3_runtime_pending_address.rs",
+            "o3_runtime_pending_address"
+        ),
+        1,
+        "src/o3_runtime.rs must attach the pending-address owner exactly once"
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &runtime,
+            "o3_runtime_pending_address_tests.rs",
+            "o3_runtime_pending_address_tests"
+        ),
+        1,
+        "src/o3_runtime.rs must attach the pending-address test facade exactly once"
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &test_root,
+            "o3_runtime_pending_address_tests/staging.rs",
+            "staging"
+        ),
+        1,
+        "pending-address tests must use the focused staging child exactly once"
+    );
+    assert_eq!(
+        rust_code_without_comments_and_literals(&retire)
+            .matches("mod dependent_result_address;")
+            .count(),
+        1,
+        "src/riscv_live_retire_window.rs must attach the staging child exactly once"
+    );
+
+    assert!(include_macro_lines(&pending).is_empty());
+    assert!(include_macro_lines(&test_root).is_empty());
+    assert!(include_macro_lines(&staging_test).is_empty());
+    assert!(include_macro_lines(&stage_child).is_empty());
+    assert!(
+        external_module_declaration_lines(&pending).is_empty()
+            && path_attribute_lines(&pending).is_empty()
+            && external_module_declaration_lines(&staging_test).is_empty()
+            && path_attribute_lines(&staging_test).is_empty()
+            && external_module_declaration_lines(&stage_child).is_empty()
+            && path_attribute_lines(&stage_child).is_empty(),
+        "Task 3 leaf owners must not declare child modules"
+    );
+
+    assert!(
+        line_count(&pending_path) <= MAX_O3_RUNTIME_PENDING_ADDRESS_LINES,
+        "o3_runtime_pending_address.rs exceeds {MAX_O3_RUNTIME_PENDING_ADDRESS_LINES} lines"
+    );
+    assert!(
+        line_count(&test_root_path) <= MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FACADE_LINES,
+        "o3_runtime_pending_address_tests.rs exceeds {MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FACADE_LINES} lines"
+    );
+    assert!(
+        line_count(&staging_test_path) <= MAX_O3_RUNTIME_PENDING_ADDRESS_STAGING_TEST_LINES,
+        "o3_runtime_pending_address_tests/staging.rs exceeds {MAX_O3_RUNTIME_PENDING_ADDRESS_STAGING_TEST_LINES} lines"
+    );
+    assert!(
+        line_count(&stage_child_path) <= MAX_RISCV_DEPENDENT_RESULT_ADDRESS_STAGE_LINES,
+        "riscv_live_retire_window/dependent_result_address.rs exceeds {MAX_RISCV_DEPENDENT_RESULT_ADDRESS_STAGE_LINES} lines"
+    );
+
+    let pending_code = production_rust_source(&pending);
+    let runtime_code = production_rust_source(&runtime);
+    let retire_code = production_rust_source(&retire);
+    let lib_code =
+        production_rust_source(&fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap());
+    let stage_child_code = production_rust_source(&stage_child);
+    let production_code = rust_source_files(&crate_dir.join("src"))
+        .into_iter()
+        .filter(|path| !is_test_only_rust_source(path.strip_prefix(crate_dir).unwrap()))
+        .map(|path| production_rust_source(&fs::read_to_string(path).unwrap()))
+        .collect::<String>();
+
+    assert_eq!(
+        pending_code
+            .matches("pub(super) struct O3PendingDataAddress {")
+            .count(),
+        1,
+        "pending-address owner must define exactly one O3PendingDataAddress struct"
+    );
+    assert_eq!(
+        pending_code
+            .matches("pub(crate) struct O3PendingDataAddressRequest {")
+            .count(),
+        1,
+        "pending-address request must retain its exact crate-visible type"
+    );
+    for field in [
+        "pub(crate) fetch: CpuFetchEvent,",
+        "pub(crate) consumed_requests: Vec<MemoryRequestId>,",
+        "pub(crate) decoded: RiscvDecodedInstruction,",
+        "pub(crate) producer_register: Register,",
+    ] {
+        assert_eq!(
+            pending_code.matches(field).count(),
+            1,
+            "pending-address request is missing exact field `{field}`"
+        );
+    }
+    assert_eq!(
+        pending_code
+            .matches("pub(super) fn discard_pending_data_address_from")
+            .count(),
+        1,
+        "pending-address range discard must remain parent-module visible"
+    );
+    assert_eq!(
+        runtime_code
+            .matches("pending_data_address: Option<O3PendingDataAddress>,")
+            .count(),
+        1,
+        "runtime state must hold exactly one optional pending-address owner"
+    );
+    assert_eq!(
+        production_code
+            .matches("Option<O3PendingDataAddress>")
+            .count(),
+        1,
+        "production source must contain exactly one optional pending-address owner"
+    );
+    for (source_name, source) in [
+        ("o3_runtime.rs", &runtime_code),
+        ("riscv_live_retire_window.rs", &retire_code),
+        ("lib.rs", &lib_code),
+    ] {
+        assert!(
+            !source.contains("struct O3PendingDataAddress"),
+            "{source_name} must not define the pending-address struct"
+        );
+        assert!(
+            !source.contains("pending_data_addresses")
+                && !source.contains("BTreeMap<MemoryRequestId, O3PendingDataAddress")
+                && !source.contains("BTreeMap<u64, O3PendingDataAddress"),
+            "{source_name} must not grow a pending-address map"
+        );
+    }
+
+    for helper in [
+        "stage_pending_data_address_window",
+        "discard_pending_data_address_from",
+        "discard_pending_data_address",
+        "clear_pending_data_address_from_without_window",
+    ] {
+        assert!(
+            production_defines_exact_function(&pending_code, helper),
+            "pending-address owner is missing `{helper}`"
+        );
+        assert!(
+            !production_defines_exact_function(&runtime_code, helper),
+            "src/o3_runtime.rs must not own pending-address helper `{helper}`"
+        );
+    }
+    assert!(
+        production_defines_exact_function(
+            &stage_child_code,
+            "stage_dependent_result_address_window"
+        ),
+        "retire-window staging child is missing stage_dependent_result_address_window"
+    );
+    assert!(
+        !production_defines_exact_function(&retire_code, "stage_dependent_result_address_window"),
+        "src/riscv_live_retire_window.rs must not own dependent-address staging"
+    );
+
+    let expected_tests = [
+        "pending_address_stages_addressless_lsq_and_live_rename_once",
+        "pending_address_window_stages_two_scalar_suffix_rows",
+        "pending_address_rejects_a_second_owner",
+        "pending_address_window_stays_four_rows_at_scalar_live_depth_eight",
+        "pending_address_discard_restores_prior_rename_and_removes_lsq",
+    ];
+    let staging_test_code = rust_code_without_comments_and_literals(&staging_test);
+    assert_eq!(
+        staging_test_code.matches("#[test]").count(),
+        expected_tests.len(),
+        "pending-address staging tests must expose exactly the focused inventory"
+    );
+    for anchor in expected_tests {
+        assert_eq!(
+            rust_function_definition_count(&staging_test_code, anchor),
+            1,
+            "missing or duplicated pending-address staging test `{anchor}`"
+        );
+    }
 }
 
 #[test]

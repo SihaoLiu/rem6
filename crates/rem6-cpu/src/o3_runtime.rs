@@ -55,6 +55,11 @@ mod o3_runtime_memory_result_tests;
 mod o3_runtime_memory_tests;
 #[path = "o3_runtime_memory_window.rs"]
 mod o3_runtime_memory_window;
+#[path = "o3_runtime_pending_address.rs"]
+mod o3_runtime_pending_address;
+#[cfg(test)]
+#[path = "o3_runtime_pending_address_tests.rs"]
+mod o3_runtime_pending_address_tests;
 #[path = "o3_runtime_producer_forwarded_chain.rs"]
 mod o3_runtime_producer_forwarded_chain;
 #[cfg(test)]
@@ -95,14 +100,16 @@ use o3_runtime_live_window::{
     staged_rename_entry, O3LiveRetiredInstruction, O3LiveStagedFetchIdentity,
 };
 pub(crate) use o3_runtime_memory::{
-    is_deferred_o3_data_access, o3_memory_result_destination, o3_memory_result_window_destination,
-    o3_memory_result_younger_buffered_effect_destination,
+    is_deferred_o3_data_access, o3_memory_result_destination, o3_memory_result_range,
+    o3_memory_result_window_destination, o3_memory_result_younger_buffered_effect_destination,
     o3_memory_result_younger_read_destination, O3DataAccessWindowPolicy,
 };
 use o3_runtime_memory::{
     is_deferred_o3_data_instruction, is_terminal_o3_data_access_event,
     o3_instruction_sequence_span, O3LiveDataAccess, O3LiveDataAccessOutcome,
 };
+use o3_runtime_pending_address::O3PendingDataAddress;
+pub(crate) use o3_runtime_pending_address::O3PendingDataAddressRequest;
 pub(crate) use o3_runtime_producer_forwarded_chain::{
     O3ProducerForwardedControlTarget, O3ProducerForwardedReturnDescendant,
     O3ProducerForwardedScalarChain,
@@ -240,6 +247,7 @@ pub struct O3RuntimeState {
     invalidated_live_staged_fetch_identities: BTreeMap<u64, O3LiveStagedFetchIdentity>,
     deferred_live_data_access_execution: Option<MemoryRequestId>,
     live_data_accesses: Vec<O3LiveDataAccess>,
+    pending_data_address: Option<O3PendingDataAddress>,
     live_data_access_younger_sequences: BTreeSet<u64>,
     scalar_memory_window_limit: usize,
     scalar_live_window_limit: usize,
@@ -285,6 +293,7 @@ impl O3RuntimeState {
         self.invalidated_live_staged_fetch_identities.clear();
         self.deferred_live_data_access_execution = None;
         self.live_data_accesses.clear();
+        self.pending_data_address = None;
         self.live_data_access_younger_sequences.clear();
         self.last_live_commit_tick = None;
         Ok(())
@@ -664,6 +673,7 @@ impl Default for O3RuntimeState {
             invalidated_live_staged_fetch_identities: BTreeMap::new(),
             deferred_live_data_access_execution: None,
             live_data_accesses: Vec::new(),
+            pending_data_address: None,
             live_data_access_younger_sequences: BTreeSet::new(),
             scalar_memory_window_limit: 2,
             scalar_live_window_limit: 2,
@@ -917,11 +927,17 @@ fn o3_lsq_entries(sequence: u64, access: &MemoryAccessKind) -> Vec<O3LoadStoreQu
 }
 
 fn o3_lsq_load(sequence: u64, address: u64, bytes: usize) -> O3LoadStoreQueueEntry {
-    O3LoadStoreQueueEntry::load(sequence, Some(Address::new(address)), o3_lsq_bytes(bytes))
+    let mut entry = O3LoadStoreQueueEntry::load(sequence, None, o3_lsq_bytes(bytes));
+    let resolved = entry.resolve_address(Address::new(address));
+    debug_assert!(resolved);
+    entry
 }
 
 fn o3_lsq_store(sequence: u64, address: u64, bytes: usize) -> O3LoadStoreQueueEntry {
-    O3LoadStoreQueueEntry::store(sequence, Some(Address::new(address)), o3_lsq_bytes(bytes))
+    let mut entry = O3LoadStoreQueueEntry::store(sequence, None, o3_lsq_bytes(bytes));
+    let resolved = entry.resolve_address(Address::new(address));
+    debug_assert!(resolved);
+    entry
 }
 
 fn o3_lsq_bytes(bytes: usize) -> u32 {
