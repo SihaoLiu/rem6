@@ -76,6 +76,21 @@ fn assert_boundary(case: BoundaryCase) {
     } else {
         None
     };
+    if case == BoundaryCase::SecondDependentLoad {
+        let first_sequence = pending_sequence.expect("first pending dependent sequence");
+        let second_sequence = event_u64(rob_entry_at_pc(&resident, SCALAR_PC), "sequence");
+        assert!(second_sequence > first_sequence, "{case:?}: {resident}");
+        let second_lsq = resident
+            .pointer("/cores/0/o3_runtime/snapshot/lsq/entries")
+            .and_then(Value::as_array)
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|entry| event_u64(entry, "sequence") == second_sequence)
+            })
+            .expect("second pending dependent LSQ row");
+        assert!(second_lsq.pointer("/address").is_some_and(Value::is_null));
+    }
 
     let first_younger = event_at_pc(&completed, DEPENDENT_PC);
     if matches!(
@@ -348,7 +363,8 @@ impl BoundaryCase {
 
     const fn resident_rob(self) -> u64 {
         match self {
-            Self::OverlapAtomic | Self::SecondDependentLoad | Self::MmioPointer => 2,
+            Self::SecondDependentLoad => 3,
+            Self::OverlapAtomic | Self::MmioPointer => 2,
             Self::OrderedAtomic | Self::DependentStore | Self::DependentAtomic => 1,
         }
     }
@@ -357,7 +373,8 @@ impl BoundaryCase {
         match self {
             Self::OrderedAtomic => 2,
             Self::OverlapAtomic => 3,
-            Self::SecondDependentLoad | Self::MmioPointer => 2,
+            Self::SecondDependentLoad => 3,
+            Self::MmioPointer => 2,
             Self::DependentStore | Self::DependentAtomic => 1,
         }
     }

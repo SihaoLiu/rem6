@@ -8,6 +8,9 @@ use super::*;
 #[path = "dependent_result_address/boundaries.rs"]
 mod boundaries;
 
+#[path = "dependent_result_address/two_pending.rs"]
+mod two_pending;
+
 const HEAD_PC: &str = "0x80000030";
 const DEPENDENT_PC: &str = "0x80000034";
 const SCALAR_PC: &str = "0x80000038";
