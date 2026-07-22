@@ -50,25 +50,18 @@ fn deep_runtime() -> (
         ),
         7
     );
-    let requests = younger
-        .iter()
-        .copied()
-        .enumerate()
-        .map(|(index, (pc, instruction))| {
-            let consumed = vec![memory_request(100 + index as u64)];
-            assert!(runtime.bind_live_staged_issue_packet(
-                pc,
-                decoded_addi(instruction),
-                &consumed,
-            ));
-            O3LiveIssueRequest::new(pc, consumed, decoded_addi(instruction))
-        })
-        .collect::<Vec<_>>();
+    for (index, (pc, instruction)) in younger.iter().copied().enumerate() {
+        assert!(runtime.bind_live_staged_issue_packet(
+            pc,
+            decoded_addi(instruction),
+            &[memory_request(100 + index as u64)],
+        ));
+    }
     let head = runtime
         .live_data_access_head_reservation(load.fetch().request_id())
         .unwrap();
     runtime
-        .schedule_live_speculative_issues(&RiscvHartState::new(0x8000), head, 31, &requests)
+        .schedule_live_speculative_issues(&RiscvHartState::new(0x8000), head, 31)
         .unwrap();
     assert_eq!(runtime.live_speculative_executions.len(), 7);
     assert!(!runtime.writeback_reservations().is_empty());

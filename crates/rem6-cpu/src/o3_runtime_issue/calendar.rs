@@ -5,7 +5,7 @@ use crate::o3_pipeline::{
     O3ScopedIssueScheduler, O3ScopedReadyInstruction,
 };
 
-use super::queue::live_issue_op_class;
+use super::queue::{live_issue_op_class, O3LiveIssueQueueEntry};
 use super::*;
 
 pub(in crate::o3_runtime) const LIVE_ISSUE_QUEUE: O3IssueQueueId = O3IssueQueueId::new(0);
@@ -79,14 +79,14 @@ impl O3LiveIssueCalendar {
         &self,
         tick: u64,
         dependency_table: &O3LiveIssueDependencyTable,
-        candidates: &[O3LiveIssueSchedulingCandidate],
+        entries: &[O3LiveIssueQueueEntry],
     ) -> Result<O3LiveIssueCyclePlan, O3RuntimeError> {
         self.plan_scoped_at(
             tick,
             dependency_table.resolved_scopes_at(tick),
-            candidates
+            entries
                 .iter()
-                .map(|candidate| dependency_table.scoped_instruction(candidate)),
+                .map(|entry| dependency_table.scoped_instruction(entry)),
         )
     }
 

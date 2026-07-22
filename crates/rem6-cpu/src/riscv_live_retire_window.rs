@@ -10,7 +10,7 @@ use rem6_memory::{AccessSize, Address, MemoryRequestId};
 use crate::{
     o3_runtime::{
         o3_memory_result_destination, o3_scalar_integer_source_registers,
-        O3LiveIssueHeadReservation, O3LiveIssueRequest, O3RuntimeError,
+        O3LiveIssueHeadReservation, O3RuntimeError,
     },
     riscv_execute::{oldest_completed_fetch_at, RiscvLiveRetireGateWakeKind},
     riscv_live_retire_gate::{RiscvLiveRetireGateDecision, RiscvLiveRetireGateWake},
@@ -944,20 +944,10 @@ fn schedule_o3_live_speculative_younger_executions(
             return Ok(false);
         }
     }
-    let requests = younger
-        .iter()
-        .map(|younger| {
-            O3LiveIssueRequest::new(
-                younger.pc,
-                younger.consumed_requests.clone(),
-                younger.decoded,
-            )
-        })
-        .collect::<Vec<_>>();
     let hart = state.hart.clone();
     state
         .o3_runtime
-        .schedule_live_speculative_issues(&hart, head, issue_tick, &requests)
+        .schedule_live_speculative_issues(&hart, head, issue_tick)
         .map_err(RiscvCpuError::O3Runtime)?;
     Ok(true)
 }

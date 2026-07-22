@@ -1,52 +1,30 @@
 use super::*;
 
-fn scheduling_candidate(
-    fixture: &ScalarIssueFixture,
-    request_index: usize,
-) -> O3LiveIssueSchedulingCandidate {
-    let request = &fixture.requests[request_index];
-    fixture
-        .runtime
-        .live_issue_scheduling_candidate(
-            request_index,
-            request.pc(),
-            request.instruction(),
-            request.consumed_requests(),
-        )
-        .unwrap()
-}
-
 fn sequence_at(fixture: &ScalarIssueFixture, pc: u64) -> u64 {
-    fixture
-        .runtime
-        .snapshot()
-        .reorder_buffer()
-        .iter()
-        .find(|entry| entry.pc() == Address::new(pc))
-        .unwrap()
-        .sequence()
+    fixture.sequence(pc)
 }
 
 fn prepared_issue(
     fixture: &ScalarIssueFixture,
-    request_index: usize,
+    row_index: usize,
     issue_tick: u64,
 ) -> O3PreparedLiveIssue {
-    let request = &fixture.requests[request_index];
-    let scheduling = scheduling_candidate(fixture, request_index);
+    let queue = fixture.queue();
+    let (pc, _, _) = fixture.rows[row_index];
+    let entry = queue.entry(sequence_at(fixture, pc)).unwrap();
     let candidate = fixture
         .runtime
-        .materialize_live_speculative_issue_candidate(&scheduling)
+        .materialize_live_speculative_issue_candidate(entry.scheduling())
         .unwrap();
     let mut hart = fixture.hart.clone();
     for write in candidate.forwarded_register_writes() {
         hart.write(write.register(), write.value());
     }
-    hart.set_pc(request.pc().get());
-    let execution = hart.execute_decoded(request.decoded()).unwrap();
+    hart.set_pc(entry.scheduling().pc().get());
+    let execution = hart.execute_decoded(entry.packet().decoded()).unwrap();
     O3PreparedLiveIssue {
         candidate,
-        consumed_requests: request.consumed_requests().to_vec(),
+        consumed_requests: entry.packet().consumed_requests().to_vec(),
         issue_tick,
         execution,
     }
@@ -55,7 +33,11 @@ fn prepared_issue(
 #[test]
 fn scheduling_metadata_exists_before_forwarded_values() {
     let fixture = ScalarIssueFixture::new(2, ScalarIssueCase::Dependent);
-    let candidate = scheduling_candidate(&fixture, 2);
+    let queue = fixture.queue();
+    let candidate = queue
+        .entry(sequence_at(&fixture, THIRD_PC))
+        .unwrap()
+        .scheduling();
     assert_eq!(candidate.data_producers().len(), 1);
     assert_eq!(
         candidate.data_producers()[0].sequence(),
@@ -63,21 +45,21 @@ fn scheduling_metadata_exists_before_forwarded_values() {
     );
     assert!(fixture
         .runtime
-        .materialize_live_speculative_issue_candidate(&candidate)
+        .materialize_live_speculative_issue_candidate(candidate)
         .is_none());
 }
 
 #[test]
 fn dependency_table_keeps_data_and_control_release_ticks_distinct() {
-    let mut fixture = ScalarIssueFixture::new(3, ScalarIssueCase::SameWindowCoroutine);
-    fixture
-        .runtime
-        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20, &fixture.requests[..2])
-        .unwrap();
-    let candidate = scheduling_candidate(&fixture, 2);
-    let table = O3LiveIssueDependencyTable::new(&fixture.runtime, std::slice::from_ref(&candidate))
-        .unwrap();
-    let scoped = table.scoped_instruction(&candidate);
+    let mut fixture = ScalarIssueFixture::new_unbound(3, ScalarIssueCase::SameWindowCoroutine);
+    fixture.bind_row(0);
+    fixture.bind_row(1);
+    fixture.schedule(20);
+    fixture.bind_row(2);
+    let queue = fixture.queue();
+    let entry = queue.entry(sequence_at(&fixture, THIRD_PC)).unwrap();
+    let table = O3LiveIssueDependencyTable::new(&fixture.runtime, queue.entries()).unwrap();
+    let scoped = table.scoped_instruction(entry);
     let admitted = fixture.execution_at(SECOND_PC).admitted_writeback_tick;
     assert_eq!(scoped.waits_on().len(), 2);
     assert_eq!(table.resolved_scopes_at(admitted).len(), 1);
@@ -87,10 +69,11 @@ fn dependency_table_keeps_data_and_control_release_ticks_distinct() {
 #[test]
 fn dependency_table_encodes_two_source_fan_in() {
     let fixture = ScalarIssueFixture::new(4, ScalarIssueCase::FanIn);
-    let candidate = scheduling_candidate(&fixture, 2);
-    let table = O3LiveIssueDependencyTable::new(&fixture.runtime, std::slice::from_ref(&candidate))
-        .unwrap();
-    let scoped = table.scoped_instruction(&candidate);
+    let queue = fixture.queue();
+    let entry = queue.entry(sequence_at(&fixture, THIRD_PC)).unwrap();
+    let candidate = entry.scheduling();
+    let table = O3LiveIssueDependencyTable::new(&fixture.runtime, queue.entries()).unwrap();
+    let scoped = table.scoped_instruction(entry);
     assert_eq!(
         candidate
             .data_producers()

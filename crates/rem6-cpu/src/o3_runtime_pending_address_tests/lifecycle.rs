@@ -274,20 +274,10 @@ fn stage_future_pending_wake_with_head(runtime: &mut O3RuntimeState) -> RiscvCpu
         HEAD_WRITEBACK_TICK,
         head_execution.instruction(),
     );
-    let requests = [
-        (PENDING_PC, ld(6, 5, 0), 11),
-        (FIRST_SUFFIX_PC, addi(7, 5, 8), 12),
-        (SECOND_SUFFIX_PC, add(8, 6, 7), 13),
-    ]
-    .into_iter()
-    .map(|(pc, raw, sequence)| {
-        O3LiveIssueRequest::new(Address::new(pc), vec![request(sequence)], decoded(raw))
-    })
-    .collect::<Vec<_>>();
     let mut hart = RiscvHartState::new(HEAD_PC);
     hart.write(reg(5), 0xdead_beef);
     runtime
-        .schedule_live_speculative_issues(&hart, head, HEAD_WRITEBACK_TICK, &requests)
+        .schedule_live_speculative_issues(&hart, head, HEAD_WRITEBACK_TICK)
         .unwrap();
     assert_eq!(
         runtime.pending_data_address_wake_tick(),

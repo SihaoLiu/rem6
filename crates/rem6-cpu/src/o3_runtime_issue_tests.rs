@@ -6,7 +6,8 @@ use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, Address, AgentId, MemoryRequestId};
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
-use super::o3_runtime_issue::{O3LiveIssueHeadReservation, O3LiveIssueRequest};
+use super::o3_runtime_issue::queue::{O3LiveIssueQueue, O3LiveIssueQueueCapture};
+use super::o3_runtime_issue::O3LiveIssueHeadReservation;
 use super::*;
 use crate::{CpuFetchEvent, CpuFetchRecord, RiscvCpuExecutionEvent};
 
@@ -23,7 +24,7 @@ mod queue;
 fn scoped_issue_reserves_head_width() {
     let mut fixture = ScalarIssueFixture::new(1, ScalarIssueCase::CrossResource);
 
-    fixture.schedule_all(20);
+    fixture.schedule(20);
 
     assert_eq!(fixture.issue_tick(BRANCH_PC), 21);
     assert_eq!(fixture.issue_tick(SECOND_PC), 22);
@@ -34,7 +35,7 @@ fn scoped_issue_reserves_head_width() {
 fn scoped_issue_allows_cross_resource_peer() {
     let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::CrossResource);
 
-    fixture.schedule_all(20);
+    fixture.schedule(20);
 
     assert_eq!(fixture.issue_tick(BRANCH_PC), 20);
     assert_eq!(fixture.issue_tick(SECOND_PC), 21);
@@ -45,7 +46,7 @@ fn scoped_issue_allows_cross_resource_peer() {
 fn scoped_issue_serializes_same_multiply_class() {
     let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::SameMultiply);
 
-    fixture.schedule_all(20);
+    fixture.schedule(20);
 
     assert_eq!(fixture.issue_tick(BRANCH_PC), 20);
     assert_eq!(fixture.issue_tick(SECOND_PC), 21);
@@ -56,7 +57,7 @@ fn scoped_issue_serializes_same_multiply_class() {
 fn scoped_issue_serializes_mixed_control_kinds_on_branch_port() {
     let mut fixture = ScalarIssueFixture::new(3, ScalarIssueCase::MixedControls);
 
-    fixture.schedule_all(20);
+    fixture.schedule(20);
 
     assert_eq!(fixture.issue_tick(BRANCH_PC), 20);
     assert_eq!(fixture.issue_tick(SECOND_PC), 21);
@@ -68,7 +69,7 @@ fn scoped_issue_linked_controls_reserve_writeback_and_serialize_return() {
     let mut fixture = ScalarIssueFixture::new(3, ScalarIssueCase::LinkedControls);
     assert!(fixture.runtime.set_writeback_width(1));
 
-    fixture.schedule_all(20);
+    fixture.schedule(20);
 
     let call = fixture.execution_at(BRANCH_PC);
     let addi = fixture.execution_at(SECOND_PC);
@@ -92,7 +93,7 @@ fn scoped_issue_orders_same_window_call_return_and_descendant() {
     let mut fixture = ScalarIssueFixture::new(3, ScalarIssueCase::SameWindowLinkReturn);
     assert!(fixture.runtime.set_writeback_width(1));
 
-    fixture.schedule_all(20);
+    fixture.schedule(20);
 
     let call = fixture.execution_at(BRANCH_PC);
     let return_control = fixture.execution_at(SECOND_PC);
@@ -123,7 +124,7 @@ fn scoped_issue_orders_same_window_call_coroutine_and_descendant() {
     let mut fixture = ScalarIssueFixture::new(3, ScalarIssueCase::SameWindowCoroutine);
     assert!(fixture.runtime.set_writeback_width(1));
 
-    fixture.schedule_all(20);
+    fixture.schedule(20);
 
     let call = fixture.execution_at(BRANCH_PC);
     let coroutine = fixture.execution_at(SECOND_PC);
@@ -149,7 +150,7 @@ fn scoped_issue_serializes_same_window_coroutine_round_trip() {
     let mut fixture = ScalarIssueFixture::new(3, ScalarIssueCase::SameWindowCoroutineRoundTrip);
     assert!(fixture.runtime.set_writeback_width(1));
 
-    fixture.schedule_all(20);
+    fixture.schedule(20);
 
     let call = fixture.execution_at(BRANCH_PC);
     let coroutine = fixture.execution_at(SECOND_PC);
@@ -291,25 +292,8 @@ fn scoped_issue_isolates_cross_candidate_dependency_readiness() {
     assert!(runtime
         .record_live_issue_head_execution(head, &[request(10)], head_execution)
         .unwrap());
-    let requests = [
-        O3LiveIssueRequest::new(
-            Address::new(SECOND_PC),
-            vec![request(11)],
-            decoded(coroutine),
-        ),
-        O3LiveIssueRequest::new(
-            Address::new(THIRD_PC),
-            vec![request(12)],
-            decoded(data_only),
-        ),
-        O3LiveIssueRequest::new(
-            Address::new(FOURTH_PC),
-            vec![request(13)],
-            decoded(serializing),
-        ),
-    ];
     runtime
-        .schedule_live_speculative_issues(&hart, head, 20, &requests)
+        .schedule_live_speculative_issues(&hart, head, 20)
         .unwrap();
 
     let call_execution = runtime
@@ -400,7 +384,7 @@ fn scoped_issue_isolates_cross_candidate_dependency_readiness() {
 fn scoped_issue_waits_for_register_producer_ready_tick() {
     let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::Dependent);
 
-    fixture.schedule_all(20);
+    fixture.schedule(20);
 
     let multiply = fixture.execution_at(SECOND_PC);
     let dependent = fixture.execution_at(THIRD_PC);
@@ -420,7 +404,7 @@ fn scoped_issue_waits_for_admitted_writeback_tick() {
     let mut fixture = ScalarIssueFixture::new(1, ScalarIssueCase::Dependent);
     assert!(fixture.runtime.set_writeback_width(1));
 
-    fixture.schedule_all(20);
+    fixture.schedule(20);
 
     let multiply = fixture.execution_at(SECOND_PC);
     let dependent = fixture.execution_at(THIRD_PC);
@@ -445,7 +429,7 @@ fn scoped_issue_waits_for_admitted_writeback_tick() {
 fn issue_arbitration_width_one_records_scheduler_decisions() {
     let mut fixture = ScalarIssueFixture::new(1, ScalarIssueCase::CrossResource);
 
-    fixture.schedule_all(20);
+    fixture.schedule(20);
 
     let stats = fixture.runtime.stats();
     assert_eq!(stats.issued_rows(), 3);
@@ -459,7 +443,7 @@ fn issue_arbitration_width_one_records_scheduler_decisions() {
 fn issue_arbitration_records_dependency_blocked_row_cycles() {
     let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::Dependent);
 
-    fixture.schedule_all(20);
+    fixture.schedule(20);
 
     assert!(fixture.runtime.stats().dependency_blocked_row_cycles() > 0);
 }
@@ -467,7 +451,7 @@ fn issue_arbitration_records_dependency_blocked_row_cycles() {
 #[test]
 fn issue_arbitration_reset_stats_clears_scheduler_counters() {
     let mut fixture = ScalarIssueFixture::new(1, ScalarIssueCase::CrossResource);
-    fixture.schedule_all(20);
+    fixture.schedule(20);
     assert!(!fixture.runtime.live_issue_cycle_ticks.is_empty());
 
     fixture.runtime.reset_stats();
@@ -511,28 +495,18 @@ fn scoped_issue_tracks_long_fu_head_dependency() {
     assert!(runtime
         .record_live_issue_head_execution(head, &[request(10)], head_execution,)
         .unwrap());
-    let requests = [
-        O3LiveIssueRequest::new(
-            Address::new(BRANCH_PC),
-            vec![request(11)],
-            decoded(independent),
-        ),
-        O3LiveIssueRequest::new(
-            Address::new(SECOND_PC),
-            vec![request(12)],
-            decoded(dependent),
-        ),
-    ];
-    for request in &requests {
+    for (pc, instruction, request_sequence) in
+        [(BRANCH_PC, independent, 11), (SECOND_PC, dependent, 12)]
+    {
         assert!(runtime.bind_live_staged_issue_packet(
-            request.pc(),
-            request.decoded(),
-            request.consumed_requests(),
+            Address::new(pc),
+            decoded(instruction),
+            &[request(request_sequence)],
         ));
     }
 
     runtime
-        .schedule_live_speculative_issues(&hart, head, 14, &requests)
+        .schedule_live_speculative_issues(&hart, head, 14)
         .unwrap();
 
     assert_eq!(runtime.live_speculative_executions[0].issue_tick, 12);
@@ -586,86 +560,66 @@ fn scoped_issue_tracks_long_fu_head_dependency() {
 
 #[test]
 fn scoped_issue_partial_reentry_does_not_overbook_prior_tick() {
-    let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::CrossResource);
-    let branch_request = fixture.requests[0].clone();
-
-    fixture
-        .runtime
-        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20, &[branch_request])
-        .unwrap();
-    fixture
-        .runtime
-        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20, &fixture.requests[1..])
-        .unwrap();
+    let mut fixture = ScalarIssueFixture::new_unbound(2, ScalarIssueCase::CrossResource);
+    fixture.bind_row(0);
+    fixture.schedule(20);
+    fixture.bind_row(1);
+    fixture.bind_row(2);
+    fixture.schedule(20);
 
     assert_eq!(fixture.executions_at(BRANCH_PC), 1);
     assert_eq!(fixture.issue_tick(BRANCH_PC), 20);
     assert_eq!(fixture.issue_tick(SECOND_PC), 21);
     assert_eq!(fixture.issue_tick(THIRD_PC), 21);
+    let stats = fixture.runtime.stats();
+    assert_eq!(stats.issue_cycles(), 2);
+    assert_eq!(stats.issued_rows(), 3);
+    assert_eq!(stats.max_rows_per_cycle(), 2);
 }
 
 #[test]
-#[ignore = "RED until Task 3 delegates inventory to the derived queue"]
 fn scoped_issue_partial_reentry_keeps_previously_bound_rows_visible() {
-    let mut fixture = ScalarIssueFixture::new(3, ScalarIssueCase::SameWindowLinkReturn);
+    let mut fixture = ScalarIssueFixture::new_unbound(3, ScalarIssueCase::SameWindowLinkReturn);
     assert!(fixture.runtime.set_writeback_width(1));
-    let call = fixture.requests[0].clone();
-    let return_request = fixture.requests[1].clone();
-    let descendant = fixture.requests[2].clone();
 
-    fixture
-        .runtime
-        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20, &[call])
-        .unwrap();
-    fixture
-        .runtime
-        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20, &[descendant])
-        .unwrap();
+    fixture.bind_row(0);
+    fixture.schedule(20);
+    assert_eq!(fixture.executions_at(BRANCH_PC), 1);
+    assert_eq!(fixture.executions_at(SECOND_PC), 0);
     assert_eq!(fixture.executions_at(THIRD_PC), 0);
 
-    fixture
-        .runtime
-        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20, &[return_request])
-        .unwrap();
+    fixture.bind_row(2);
+    fixture.schedule(20);
+    assert_eq!(fixture.executions_at(BRANCH_PC), 1);
+    assert_eq!(fixture.executions_at(SECOND_PC), 0);
+    assert_eq!(fixture.executions_at(THIRD_PC), 0);
+
+    fixture.bind_row(1);
+    fixture.schedule(20);
+    assert_eq!(fixture.executions_at(BRANCH_PC), 1);
     assert_eq!(fixture.executions_at(SECOND_PC), 1);
     assert_eq!(fixture.executions_at(THIRD_PC), 1);
+    assert_eq!(fixture.issue_tick(BRANCH_PC), 20);
+    assert_eq!(fixture.issue_tick(SECOND_PC), 21);
+    assert_eq!(fixture.issue_tick(THIRD_PC), 22);
 }
 
 #[test]
 fn scoped_issue_partial_reentry_keeps_unknown_return_owner_unresolved() {
-    let mut fixture = ScalarIssueFixture::new(3, ScalarIssueCase::SameWindowLinkReturn);
+    let mut fixture = ScalarIssueFixture::new_unbound(3, ScalarIssueCase::SameWindowLinkReturn);
     assert!(fixture.runtime.set_writeback_width(1));
-    let call_request = fixture.requests[0].clone();
-    let return_request = fixture.requests[1].clone();
-    let descendant_request = fixture.requests[2].clone();
 
-    fixture
-        .runtime
-        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20, &[call_request])
-        .unwrap();
-    fixture
-        .runtime
-        .schedule_live_speculative_issues(
-            &fixture.hart,
-            fixture.head,
-            20,
-            &[descendant_request.clone()],
-        )
-        .unwrap();
+    fixture.bind_row(0);
+    fixture.schedule(20);
+    fixture.bind_row(2);
+    fixture.schedule(20);
 
     assert_eq!(fixture.executions_at(BRANCH_PC), 1);
     assert_eq!(fixture.executions_at(SECOND_PC), 0);
     assert_eq!(fixture.executions_at(THIRD_PC), 0);
 
-    fixture
-        .runtime
-        .schedule_live_speculative_issues(
-            &fixture.hart,
-            fixture.head,
-            20,
-            &[return_request, descendant_request],
-        )
-        .unwrap();
+    fixture.bind_row(1);
+    fixture.schedule(20);
 
     assert_eq!(fixture.executions_at(BRANCH_PC), 1);
     assert_eq!(fixture.executions_at(SECOND_PC), 1);
@@ -676,55 +630,46 @@ fn scoped_issue_partial_reentry_keeps_unknown_return_owner_unresolved() {
 }
 
 #[test]
-fn scoped_issue_partial_reentry_rejects_wrong_no_destination_control_at_return_pc() {
+fn scoped_issue_packet_rebinding_rejects_wrong_no_destination_control_at_return_pc() {
     let mut fixture = ScalarIssueFixture::new(3, ScalarIssueCase::SameWindowLinkReturn);
     assert!(fixture.runtime.set_writeback_width(1));
-    let call_request = fixture.requests[0].clone();
-    let descendant_request = fixture.requests[2].clone();
-    let wrong_return_request =
-        O3LiveIssueRequest::new(Address::new(SECOND_PC), vec![request(12)], decoded(jal()));
+    assert!(!fixture.runtime.bind_live_staged_issue_packet(
+        Address::new(SECOND_PC),
+        decoded(jal()),
+        &[request(12)],
+    ));
+    let packet = fixture
+        .runtime
+        .live_staged_issue_packet(fixture.sequence(SECOND_PC))
+        .unwrap();
+    assert_eq!(packet.decoded(), decoded(jalr_return(1)));
+    assert_eq!(packet.consumed_requests(), [request(12)]);
 
-    fixture
-        .runtime
-        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20, &[call_request])
-        .unwrap();
-    fixture
-        .runtime
-        .schedule_live_speculative_issues(
-            &fixture.hart,
-            fixture.head,
-            20,
-            &[wrong_return_request, descendant_request],
-        )
-        .unwrap();
+    fixture.schedule(20);
 
     assert_eq!(fixture.executions_at(BRANCH_PC), 1);
-    assert_eq!(fixture.executions_at(SECOND_PC), 0);
-    assert_eq!(fixture.executions_at(THIRD_PC), 0);
+    assert_eq!(fixture.executions_at(SECOND_PC), 1);
+    assert_eq!(fixture.executions_at(THIRD_PC), 1);
 }
 
 #[test]
-fn scoped_issue_reversed_return_duplicate_uses_bound_fetch_identity() {
+fn scoped_issue_packet_rebinding_keeps_bound_fetch_identity() {
     let mut fixture = ScalarIssueFixture::new(3, ScalarIssueCase::SameWindowLinkReturn);
     assert!(fixture.runtime.set_writeback_width(1));
-    let real_return_request = fixture.requests[1].clone();
     let real_return_identity = vec![request(12)];
-    let wrong_return_request = O3LiveIssueRequest::new(
+    assert!(!fixture.runtime.bind_live_staged_issue_packet(
         Address::new(SECOND_PC),
-        vec![request(99)],
         decoded(jalr_return(1)),
-    );
-    let requests = [
-        fixture.requests[0].clone(),
-        wrong_return_request,
-        real_return_request.clone(),
-        fixture.requests[2].clone(),
-    ];
-
-    fixture
+        &[request(99)],
+    ));
+    let packet = fixture
         .runtime
-        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20, &requests)
+        .live_staged_issue_packet(fixture.sequence(SECOND_PC))
         .unwrap();
+    assert_eq!(packet.decoded(), decoded(jalr_return(1)));
+    assert_eq!(packet.consumed_requests(), real_return_identity);
+
+    fixture.schedule(20);
 
     assert_eq!(fixture.executions_at(BRANCH_PC), 1);
     assert_eq!(fixture.executions_at(SECOND_PC), 1);
@@ -739,24 +684,29 @@ fn scoped_issue_reversed_return_duplicate_uses_bound_fetch_identity() {
 }
 
 #[test]
-fn scoped_issue_deduplicates_repeated_request_for_one_rob_row() {
+fn scoped_issue_packet_binding_is_idempotent_and_queue_sequence_is_unique() {
     let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::CrossResource);
-    let branch_request = fixture.requests[0].clone();
-    let duplicate = O3LiveIssueRequest::new(
-        Address::new(BRANCH_PC),
-        vec![request(11)],
-        decoded(branch()),
+    fixture.bind_row(0);
+    let branch_sequence = fixture.sequence(BRANCH_PC);
+    let queue = fixture.queue();
+    assert_eq!(
+        queue
+            .entries()
+            .iter()
+            .filter(|entry| entry.sequence() == branch_sequence)
+            .count(),
+        1
+    );
+    assert_eq!(
+        queue
+            .entry(branch_sequence)
+            .unwrap()
+            .packet()
+            .consumed_requests(),
+        [request(11)]
     );
 
-    fixture
-        .runtime
-        .schedule_live_speculative_issues(
-            &fixture.hart,
-            fixture.head,
-            20,
-            &[branch_request, duplicate],
-        )
-        .unwrap();
+    fixture.schedule(20);
 
     assert_eq!(fixture.executions_at(BRANCH_PC), 1);
 }
@@ -764,14 +714,22 @@ fn scoped_issue_deduplicates_repeated_request_for_one_rob_row() {
 #[test]
 fn scoped_issue_records_selected_rows_in_sequence_order() {
     let mut fixture = ScalarIssueFixture::new(4, ScalarIssueCase::CrossResource);
-    fixture.requests.reverse();
-
-    fixture.schedule_all(20);
-
     let expected = fixture.runtime.snapshot().reorder_buffer()[1..]
         .iter()
         .map(|entry| entry.sequence())
         .collect::<Vec<_>>();
+    assert_eq!(
+        fixture
+            .queue()
+            .entries()
+            .iter()
+            .map(|entry| entry.sequence())
+            .collect::<Vec<_>>(),
+        expected
+    );
+
+    fixture.schedule(20);
+
     let actual = fixture
         .runtime
         .live_speculative_executions
@@ -784,7 +742,7 @@ fn scoped_issue_records_selected_rows_in_sequence_order() {
 #[test]
 fn scoped_issue_rollback_uses_existing_producer_chain() {
     let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::Dependent);
-    fixture.schedule_all(20);
+    fixture.schedule(20);
     let rob = fixture.runtime.snapshot().reorder_buffer().to_vec();
     let branch_sequence = rob[1].sequence();
     let multiply_sequence = rob[2].sequence();
@@ -836,11 +794,17 @@ struct ScalarIssueFixture {
     runtime: O3RuntimeState,
     hart: RiscvHartState,
     head: O3LiveIssueHeadReservation,
-    requests: Vec<O3LiveIssueRequest>,
+    rows: [(u64, RiscvInstruction, u64); 3],
 }
 
 impl ScalarIssueFixture {
     fn new(issue_width: usize, case: ScalarIssueCase) -> Self {
+        let mut fixture = Self::new_unbound(issue_width, case);
+        fixture.bind_all();
+        fixture
+    }
+
+    fn new_unbound(issue_width: usize, case: ScalarIssueCase) -> Self {
         let mut runtime = O3RuntimeState::default();
         runtime.set_issue_width(issue_width);
         runtime.set_scalar_memory_window_limit(4);
@@ -869,29 +833,11 @@ impl ScalarIssueFixture {
         let head = runtime
             .live_data_access_head_reservation(load.fetch().request_id())
             .expect("scalar load head reservation");
-        let requests = [BRANCH_PC, SECOND_PC, THIRD_PC]
-            .into_iter()
-            .zip(younger)
-            .enumerate()
-            .map(|(index, (pc, instruction))| {
-                O3LiveIssueRequest::new(
-                    Address::new(pc),
-                    vec![request(11 + index as u64)],
-                    decoded(instruction),
-                )
-            })
-            .collect::<Vec<_>>();
-        for (index, (pc, instruction)) in [BRANCH_PC, SECOND_PC, THIRD_PC]
-            .into_iter()
-            .zip(younger)
-            .enumerate()
-        {
-            assert!(runtime.bind_live_staged_issue_packet(
-                Address::new(pc),
-                decoded(instruction),
-                &[request(11 + index as u64)],
-            ));
-        }
+        let rows = [
+            (BRANCH_PC, younger[0], 11),
+            (SECOND_PC, younger[1], 12),
+            (THIRD_PC, younger[2], 13),
+        ];
         let mut hart = RiscvHartState::new(LOAD_PC);
         for (register, value) in [
             (2, 7),
@@ -908,14 +854,48 @@ impl ScalarIssueFixture {
             runtime,
             hart,
             head,
-            requests,
+            rows,
         }
     }
 
-    fn schedule_all(&mut self, earliest_tick: u64) {
+    fn bind_row(&mut self, index: usize) {
+        let (pc, instruction, request_sequence) = self.rows[index];
+        assert!(self.runtime.bind_live_staged_issue_packet(
+            Address::new(pc),
+            decoded(instruction),
+            &[request(request_sequence)],
+        ));
+    }
+
+    fn bind_all(&mut self) {
+        for index in 0..self.rows.len() {
+            self.bind_row(index);
+        }
+    }
+
+    fn schedule(&mut self, earliest_tick: u64) {
         self.runtime
-            .schedule_live_speculative_issues(&self.hart, self.head, earliest_tick, &self.requests)
+            .schedule_live_speculative_issues(&self.hart, self.head, earliest_tick)
             .unwrap();
+    }
+
+    fn queue(&self) -> O3LiveIssueQueue {
+        match O3LiveIssueQueue::capture(&self.runtime, self.head).unwrap() {
+            O3LiveIssueQueueCapture::Ready(queue) => queue,
+            O3LiveIssueQueueCapture::ReplayPending(sequence) => {
+                panic!("unexpected pending replay at {sequence}")
+            }
+        }
+    }
+
+    fn sequence(&self, pc: u64) -> u64 {
+        self.runtime
+            .snapshot()
+            .reorder_buffer()
+            .iter()
+            .find(|entry| entry.pc() == Address::new(pc))
+            .unwrap()
+            .sequence()
     }
 
     fn issue_tick(&self, pc: u64) -> u64 {

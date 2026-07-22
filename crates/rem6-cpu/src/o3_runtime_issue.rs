@@ -1,8 +1,4 @@
-use std::collections::BTreeSet;
-
-use rem6_isa_riscv::{
-    RiscvDecodedInstruction, RiscvExecutionRecord, RiscvHartState, RiscvInstruction,
-};
+use rem6_isa_riscv::{RiscvExecutionRecord, RiscvHartState, RiscvInstruction};
 
 use super::*;
 use crate::o3_pipeline::{O3IssueOpClass, O3ScopedReadyInstruction};
@@ -18,46 +14,9 @@ mod pending_address;
 pub(in crate::o3_runtime) mod queue;
 use calendar::{O3LiveIssueCalendar, O3LiveIssueTickDecision};
 pub(crate) use dependency::O3LiveIssueDependencyTable;
-use queue::{live_issue_op_class, O3LiveIssueSchedulingCandidate, O3LiveSpeculativeIssueCandidate};
-#[cfg(debug_assertions)]
-use queue::{O3LiveIssueQueue, O3LiveIssueQueueCapture};
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct O3LiveIssueRequest {
-    pc: Address,
-    consumed_requests: Vec<MemoryRequestId>,
-    decoded: RiscvDecodedInstruction,
-}
-
-impl O3LiveIssueRequest {
-    pub(crate) fn new(
-        pc: Address,
-        consumed_requests: Vec<MemoryRequestId>,
-        decoded: RiscvDecodedInstruction,
-    ) -> Self {
-        Self {
-            pc,
-            consumed_requests,
-            decoded,
-        }
-    }
-
-    pub(crate) const fn pc(&self) -> Address {
-        self.pc
-    }
-
-    pub(crate) const fn decoded(&self) -> RiscvDecodedInstruction {
-        self.decoded
-    }
-
-    pub(crate) const fn instruction(&self) -> RiscvInstruction {
-        self.decoded.instruction()
-    }
-
-    pub(crate) fn consumed_requests(&self) -> &[MemoryRequestId] {
-        &self.consumed_requests
-    }
-}
+use queue::{
+    live_issue_op_class, O3LiveIssueQueue, O3LiveIssueQueueCapture, O3LiveSpeculativeIssueCandidate,
+};
 
 #[derive(Clone)]
 pub(crate) struct O3PreparedLiveIssue {
@@ -245,11 +204,7 @@ impl O3RuntimeState {
         hart: &RiscvHartState,
         head: O3LiveIssueHeadReservation,
         earliest_tick: u64,
-        requests: &[O3LiveIssueRequest],
     ) -> Result<(), O3RuntimeError> {
-        #[cfg(debug_assertions)]
-        self.observe_live_issue_queue_capture_for_debug(head);
-
         if !self
             .snapshot
             .reorder_buffer
@@ -262,46 +217,27 @@ impl O3RuntimeState {
         let mut tick = earliest_tick;
         let mut tick_decision = O3LiveIssueTickDecision::default();
         loop {
-            if requests
-                .iter()
-                .all(|request| self.live_issue_request_is_recorded(request))
-            {
+            let queue = match O3LiveIssueQueue::capture(self, head)? {
+                O3LiveIssueQueueCapture::Ready(queue) => queue,
+                O3LiveIssueQueueCapture::ReplayPending(sequence) => {
+                    let mut staged = self.clone();
+                    staged.discard_pending_data_address_from(sequence);
+                    *self = staged;
+                    self.flush_live_issue_decision(tick, &mut tick_decision);
+                    break;
+                }
+            };
+            if queue.entries().is_empty() {
                 self.flush_live_issue_decision(tick, &mut tick_decision);
                 break;
             }
 
-            let candidates = self.live_issue_candidates(requests);
-            if let Some(sequence) = requests
-                .iter()
-                .find_map(|request| self.pending_data_address_request_sequence(request))
-                .filter(|sequence| {
-                    !candidates
-                        .iter()
-                        .any(|candidate| candidate.sequence() == *sequence)
-                })
-            {
-                let mut staged = self.clone();
-                staged.discard_pending_data_address_from(sequence);
-                *self = staged;
-                self.flush_live_issue_decision(tick, &mut tick_decision);
-                break;
-            }
-            if candidates.is_empty() {
-                self.flush_live_issue_decision(tick, &mut tick_decision);
-                break;
-            }
-            let dependency_table = O3LiveIssueDependencyTable::new(self, &candidates)?;
+            let dependency_table = O3LiveIssueDependencyTable::new(self, queue.entries())?;
             let calendar = O3LiveIssueCalendar::capture(self, head);
-            let plan = calendar.plan_at(tick, &dependency_table, &candidates)?;
+            let plan = calendar.plan_at(tick, &dependency_table, queue.entries())?;
             let issued_rows = plan.issued().len();
             if issued_rows != 0 {
-                let prepared = self.prepare_live_issue_batch(
-                    hart,
-                    requests,
-                    &candidates,
-                    plan.issued(),
-                    tick,
-                )?;
+                let prepared = self.prepare_live_issue_batch(hart, &queue, plan.issued(), tick)?;
                 let outcome = match prepared {
                     O3PreparedLiveIssueBatch::Prepared(prepared) => {
                         self.record_live_issue_batch(prepared)?
@@ -339,20 +275,16 @@ impl O3RuntimeState {
                 if issued_rows != 0 {
                     continue;
                 }
-                let remaining_candidates = self.live_issue_candidates(requests);
-                let remaining_table = O3LiveIssueDependencyTable::new(self, &remaining_candidates)?;
-                let remaining_scoped = remaining_candidates
-                    .iter()
-                    .map(|candidate| remaining_table.scoped_instruction(candidate))
-                    .collect::<Vec<_>>();
-                let next_tick = remaining_table.earliest_resolution_after(tick, &remaining_scoped);
+                let next_tick =
+                    dependency_table.earliest_resolution_after(tick, plan.dependency_blocked());
                 let Some(next_tick) = next_tick.filter(|next_tick| *next_tick > tick) else {
                     self.flush_live_issue_decision(tick, &mut tick_decision);
                     break;
                 };
-                if remaining_candidates
+                if queue
+                    .entries()
                     .iter()
-                    .any(O3LiveIssueSchedulingCandidate::is_pending_data_address)
+                    .any(|entry| entry.scheduling().is_pending_data_address())
                     && next_tick > earliest_tick
                 {
                     self.flush_live_issue_decision(tick, &mut tick_decision);
@@ -368,125 +300,67 @@ impl O3RuntimeState {
         Ok(())
     }
 
-    #[cfg(debug_assertions)]
-    fn observe_live_issue_queue_capture_for_debug(&self, head: O3LiveIssueHeadReservation) {
-        let Ok(O3LiveIssueQueueCapture::Ready(queue)) = O3LiveIssueQueue::capture(self, head)
-        else {
-            return;
-        };
-        let mut count = 0;
-        for sequence in queue.sequences() {
-            let entry = queue.entry(sequence).expect("captured sequence is indexed");
-            debug_assert_eq!(entry.sequence(), sequence);
-            debug_assert_eq!(
-                entry.packet().instruction(),
-                entry.scheduling().instruction()
-            );
-            count += 1;
-        }
-        debug_assert_eq!(queue.entries().len(), count);
-    }
-
-    fn live_issue_candidates(
-        &self,
-        requests: &[O3LiveIssueRequest],
-    ) -> Vec<O3LiveIssueSchedulingCandidate> {
-        let mut candidate_sequences = BTreeSet::new();
-        requests
-            .iter()
-            .enumerate()
-            .filter(|(_, request)| !self.live_issue_request_is_recorded(request))
-            .filter_map(|(index, request)| {
-                self.live_issue_scheduling_candidate(
-                    index,
-                    request.pc(),
-                    request.instruction(),
-                    request.consumed_requests(),
-                )
-            })
-            .filter(|candidate| candidate_sequences.insert(candidate.sequence()))
-            .collect()
-    }
-
     fn prepare_live_issue_batch(
         &self,
         hart: &RiscvHartState,
-        requests: &[O3LiveIssueRequest],
-        candidates: &[O3LiveIssueSchedulingCandidate],
+        queue: &O3LiveIssueQueue,
         issued: &[O3ScopedReadyInstruction],
         issue_tick: u64,
     ) -> Result<O3PreparedLiveIssueBatch, O3RuntimeError> {
         let mut selected = Vec::with_capacity(issued.len());
         for issued in issued {
-            let Some(scheduling) = candidates
-                .iter()
-                .find(|candidate| candidate.sequence() == issued.sequence())
-            else {
+            let Some(entry) = queue.entry(issued.sequence()) else {
                 return Err(O3RuntimeError::SelectedIssueCandidateNotExecutable {
                     sequence: issued.sequence(),
                 });
             };
-            selected.push(scheduling);
+            selected.push(entry);
         }
-        selected
-            .sort_by_key(|candidate| (!candidate.is_pending_data_address(), candidate.sequence()));
+        selected.sort_by_key(|entry| {
+            (
+                !entry.scheduling().is_pending_data_address(),
+                entry.sequence(),
+            )
+        });
 
         let mut prepared = Vec::with_capacity(selected.len());
-        for scheduling in selected {
-            let sequence = scheduling.sequence();
-            let Some(candidate) = self.materialize_live_speculative_issue_candidate(scheduling)
+        for entry in selected {
+            let packet = entry.packet();
+            let Some(candidate) =
+                self.materialize_live_speculative_issue_candidate(entry.scheduling())
             else {
-                return if scheduling.is_pending_data_address() {
-                    Ok(O3PreparedLiveIssueBatch::ReplayPending(sequence))
+                return if entry.scheduling().is_pending_data_address() {
+                    Ok(O3PreparedLiveIssueBatch::ReplayPending(entry.sequence()))
                 } else {
-                    Err(O3RuntimeError::SelectedIssueCandidateNotExecutable { sequence })
+                    Err(O3RuntimeError::SelectedIssueCandidateNotExecutable {
+                        sequence: entry.sequence(),
+                    })
                 };
             };
-            let Some(request) = requests.get(scheduling.request_index()) else {
-                return if scheduling.is_pending_data_address() {
-                    Ok(O3PreparedLiveIssueBatch::ReplayPending(sequence))
-                } else {
-                    Err(O3RuntimeError::SelectedIssueCandidateNotExecutable { sequence })
-                };
-            };
-            if scheduling.consumed_requests() != request.consumed_requests() {
-                return if scheduling.is_pending_data_address() {
-                    Ok(O3PreparedLiveIssueBatch::ReplayPending(sequence))
-                } else {
-                    Err(O3RuntimeError::SelectedIssueCandidateNotExecutable { sequence })
-                };
-            }
             let mut speculative_hart = hart.clone();
             for write in candidate.forwarded_register_writes() {
                 speculative_hart.write(write.register(), write.value());
             }
-            speculative_hart.set_pc(request.pc().get());
-            let execution = match speculative_hart.execute_decoded(request.decoded()) {
+            speculative_hart.set_pc(entry.scheduling().pc().get());
+            let execution = match speculative_hart.execute_decoded(packet.decoded()) {
                 Ok(execution) => execution,
-                Err(_) if scheduling.is_pending_data_address() => {
-                    return Ok(O3PreparedLiveIssueBatch::ReplayPending(sequence));
+                Err(_) if entry.scheduling().is_pending_data_address() => {
+                    return Ok(O3PreparedLiveIssueBatch::ReplayPending(entry.sequence()));
                 }
                 Err(_) => {
-                    return Err(O3RuntimeError::SelectedIssueCandidateNotExecutable { sequence });
+                    return Err(O3RuntimeError::SelectedIssueCandidateNotExecutable {
+                        sequence: entry.sequence(),
+                    });
                 }
             };
             prepared.push(O3PreparedLiveIssue {
                 candidate,
-                consumed_requests: request.consumed_requests().to_vec(),
+                consumed_requests: packet.consumed_requests().to_vec(),
                 issue_tick,
                 execution,
             });
         }
         Ok(O3PreparedLiveIssueBatch::Prepared(prepared))
-    }
-
-    fn live_issue_request_is_recorded(&self, request: &O3LiveIssueRequest) -> bool {
-        self.pending_data_address_materialization_matches(request)
-            || self.live_speculative_executions.iter().any(|issued| {
-                issued.consumed_requests == request.consumed_requests
-                    && issued.execution.pc() == request.pc.get()
-                    && issued.execution.instruction() == request.instruction()
-            })
     }
 
     fn record_live_issue_decision(

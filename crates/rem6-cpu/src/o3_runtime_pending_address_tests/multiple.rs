@@ -1,4 +1,5 @@
 use super::*;
+use crate::o3_runtime::o3_runtime_issue::queue::{O3LiveIssueQueue, O3LiveIssueQueueCapture};
 use crate::o3_runtime::o3_runtime_pending_address_set::O3_PENDING_DATA_ADDRESS_CAPACITY;
 use rem6_isa_riscv::RiscvHartState;
 const RESULT_WRITEBACK_TICK: u64 = 41;
@@ -23,10 +24,9 @@ fn schedule(
     hart: &RiscvHartState,
     head: O3LiveIssueHeadReservation,
     tick: u64,
-    requests: &[O3LiveIssueRequest],
 ) {
     runtime
-        .schedule_live_speculative_issues(hart, head, tick, requests)
+        .schedule_live_speculative_issues(hart, head, tick)
         .unwrap();
 }
 fn assert_two_pending_allocation(runtime: &O3RuntimeState) {
@@ -74,12 +74,7 @@ fn assert_two_pending_allocation(runtime: &O3RuntimeState) {
 fn ready_two_pending_issue(
     issue_width: usize,
     chained: bool,
-) -> (
-    O3RuntimeState,
-    RiscvHartState,
-    O3LiveIssueHeadReservation,
-    Vec<O3LiveIssueRequest>,
-) {
+) -> (O3RuntimeState, RiscvHartState, O3LiveIssueHeadReservation) {
     let mut fixture = PendingAddressFixture::new(4, 4);
     assert!(fixture.runtime.set_issue_width(issue_width));
     let pending = if chained {
@@ -115,19 +110,9 @@ fn ready_two_pending_issue(
         .runtime
         .take_ready_live_data_access_event(RESULT_WRITEBACK_TICK)
         .is_some());
-    let requests = [
-        (FIRST_PENDING_PC, ld(6, 5, 0), 11),
-        (SECOND_PENDING_PC, ld(7, if chained { 6 } else { 5 }, 8), 12),
-        (SCALAR_SUFFIX_PC, addi(8, 5, 1), 13),
-    ]
-    .into_iter()
-    .map(|(pc, raw, sequence)| {
-        O3LiveIssueRequest::new(Address::new(pc), vec![request(sequence)], decoded(raw))
-    })
-    .collect();
     let mut hart = RiscvHartState::new(HEAD_PC);
     hart.write(reg(5), 0xdead_beef);
-    (fixture.runtime, hart, head, requests)
+    (fixture.runtime, hart, head)
 }
 #[test]
 fn two_pending_collection_orders_by_sequence_and_rejects_third() {
@@ -186,7 +171,7 @@ fn two_pending_sibling_stages_two_addressless_lsq_rows_and_one_suffix() {
 }
 #[test]
 fn two_pending_chain_stages_second_with_first_as_immediate_producer() {
-    let (runtime, _, _, _) = ready_two_pending_issue(2, true);
+    let (runtime, _, _) = ready_two_pending_issue(2, true);
     assert_two_pending_allocation(&runtime);
     let rows = runtime.pending_data_address_rows_for_test();
     let expected_range = AddressRange::new(
@@ -325,13 +310,13 @@ fn two_pending_staging_removes_both_authorizations_only_after_schedule() {
 }
 #[test]
 fn two_pending_siblings_width_one_issue_oldest_across_ticks() {
-    let (mut runtime, hart, head, requests) = ready_two_pending_issue(1, false);
-    schedule(&mut runtime, &hart, head, RESULT_WRITEBACK_TICK, &requests);
+    let (mut runtime, hart, head) = ready_two_pending_issue(1, false);
+    schedule(&mut runtime, &hart, head, RESULT_WRITEBACK_TICK);
     let rows = runtime.pending_data_address_rows_for_test();
     assert_eq!(rows[0].selected_issue_tick, Some(RESULT_WRITEBACK_TICK));
     assert_eq!(rows[1].requested_wake_tick, Some(RESULT_WRITEBACK_TICK + 1));
     let next_tick = RESULT_WRITEBACK_TICK + 1;
-    schedule(&mut runtime, &hart, head, next_tick, &requests);
+    schedule(&mut runtime, &hart, head, next_tick);
     let rows = runtime.pending_data_address_rows_for_test();
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].selected_issue_tick, Some(RESULT_WRITEBACK_TICK));
@@ -341,8 +326,8 @@ fn two_pending_siblings_width_one_issue_oldest_across_ticks() {
 }
 #[test]
 fn two_pending_siblings_width_two_keep_one_memory_slot_and_coissue_scalar() {
-    let (mut runtime, hart, head, requests) = ready_two_pending_issue(2, false);
-    schedule(&mut runtime, &hart, head, RESULT_WRITEBACK_TICK, &requests);
+    let (mut runtime, hart, head) = ready_two_pending_issue(2, false);
+    schedule(&mut runtime, &hart, head, RESULT_WRITEBACK_TICK);
     let rows = runtime.pending_data_address_rows_for_test();
     assert_eq!(
         rows.iter()
@@ -357,18 +342,21 @@ fn two_pending_siblings_width_two_keep_one_memory_slot_and_coissue_scalar() {
 }
 #[test]
 fn two_pending_chain_initial_schedule_waits_on_first_sequence() {
-    let (mut runtime, hart, head, requests) = ready_two_pending_issue(2, true);
+    let (mut runtime, hart, head) = ready_two_pending_issue(2, true);
     let sequences = runtime.pending_data_address_sequences_for_test();
-    let second = runtime
-        .live_issue_scheduling_candidate(
-            1,
-            Address::new(SECOND_PENDING_PC),
-            decoded(ld(7, 6, 8)).instruction(),
-            &[request(12)],
-        )
-        .expect("second pending candidate");
+    let queue = match O3LiveIssueQueue::capture(&runtime, head).unwrap() {
+        O3LiveIssueQueueCapture::Ready(queue) => queue,
+        O3LiveIssueQueueCapture::ReplayPending(sequence) => {
+            panic!("unexpected pending replay at {sequence}")
+        }
+    };
+    let second = queue
+        .entry(sequences[1])
+        .expect("second pending queue entry");
+    assert_eq!(second.packet().consumed_requests(), [request(12)]);
+    let second = second.scheduling();
     assert_eq!(second.data_producers()[0].sequence(), sequences[0]);
-    schedule(&mut runtime, &hart, head, RESULT_WRITEBACK_TICK, &requests);
+    schedule(&mut runtime, &hart, head, RESULT_WRITEBACK_TICK);
     let rows = runtime.pending_data_address_rows_for_test();
     assert_eq!(rows[0].selected_issue_tick, Some(RESULT_WRITEBACK_TICK));
     assert_eq!(
@@ -378,8 +366,8 @@ fn two_pending_chain_initial_schedule_waits_on_first_sequence() {
 }
 #[test]
 fn two_pending_typed_wake_seed_separates_second_fetch_predecessor() {
-    let (mut runtime, hart, head, requests) = ready_two_pending_issue(2, true);
-    schedule(&mut runtime, &hart, head, RESULT_WRITEBACK_TICK, &requests);
+    let (mut runtime, hart, head) = ready_two_pending_issue(2, true);
+    schedule(&mut runtime, &hart, head, RESULT_WRITEBACK_TICK);
     let first_sequence = runtime.pending_data_address_sequences_for_test()[0];
     runtime.bind_oldest_pending_data_address_for_test(
         request(30),
@@ -397,8 +385,8 @@ fn two_pending_typed_wake_seed_separates_second_fetch_predecessor() {
 }
 #[test]
 fn two_pending_resource_wake_updates_only_blocked_row() {
-    let (mut runtime, hart, head, requests) = ready_two_pending_issue(2, false);
-    schedule(&mut runtime, &hart, head, RESULT_WRITEBACK_TICK, &requests);
+    let (mut runtime, hart, head) = ready_two_pending_issue(2, false);
+    schedule(&mut runtime, &hart, head, RESULT_WRITEBACK_TICK);
     let rows = runtime.pending_data_address_rows_for_test();
     assert_eq!(rows[0].requested_wake_tick, None);
     assert_eq!(rows[1].requested_wake_tick, Some(RESULT_WRITEBACK_TICK + 1));
@@ -409,9 +397,9 @@ fn two_pending_resource_wake_updates_only_blocked_row() {
 }
 #[test]
 fn two_pending_first_materialization_replay_discards_complete_chain() {
-    let (mut runtime, hart, head, requests) = ready_two_pending_issue(1, false);
+    let (mut runtime, hart, head) = ready_two_pending_issue(1, false);
     runtime.corrupt_pending_data_address_lsq_bytes_for_test(4);
-    schedule(&mut runtime, &hart, head, RESULT_WRITEBACK_TICK, &requests);
+    schedule(&mut runtime, &hart, head, RESULT_WRITEBACK_TICK);
     assert_eq!(runtime.pending_data_address_count(), 0);
     assert_eq!(pc_rows(&runtime), [HEAD_PC].map(Address::new));
     assert_eq!(runtime.snapshot().load_store_queue().len(), 1);
@@ -419,12 +407,12 @@ fn two_pending_first_materialization_replay_discards_complete_chain() {
 }
 #[test]
 fn two_pending_second_materialization_replay_preserves_older_row() {
-    let (mut runtime, hart, head, requests) = ready_two_pending_issue(1, false);
-    schedule(&mut runtime, &hart, head, RESULT_WRITEBACK_TICK, &requests);
+    let (mut runtime, hart, head) = ready_two_pending_issue(1, false);
+    schedule(&mut runtime, &hart, head, RESULT_WRITEBACK_TICK);
     let sequences = runtime.pending_data_address_sequences_for_test();
     runtime.corrupt_pending_data_address_lsq_bytes_for_fetch_for_test(request(12), 4);
     let next_tick = RESULT_WRITEBACK_TICK + 1;
-    schedule(&mut runtime, &hart, head, next_tick, &requests);
+    schedule(&mut runtime, &hart, head, next_tick);
     assert_eq!(
         runtime.pending_data_address_sequences_for_test(),
         [sequences[0]]
@@ -438,8 +426,8 @@ fn two_pending_second_materialization_replay_preserves_older_row() {
 }
 #[test]
 fn two_pending_chain_wakes_second_after_first_admitted_writeback() {
-    let (mut runtime, hart, head, requests) = ready_two_pending_issue(2, true);
-    schedule(&mut runtime, &hart, head, RESULT_WRITEBACK_TICK, &requests);
+    let (mut runtime, hart, head) = ready_two_pending_issue(2, true);
+    schedule(&mut runtime, &hart, head, RESULT_WRITEBACK_TICK);
     let first_sequence = runtime.pending_data_address_sequences_for_test()[0];
     runtime.bind_oldest_pending_data_address_for_test(
         request(30),
@@ -462,7 +450,7 @@ fn two_pending_chain_wakes_second_after_first_admitted_writeback() {
         admitted,
         completed.instruction(),
     );
-    schedule(&mut runtime, &hart, first, admitted, &requests[1..]);
+    schedule(&mut runtime, &hart, first, admitted);
     let row = runtime.pending_data_address_rows_for_test().pop().unwrap();
     assert_eq!(row.fetch.request_id(), request(12));
     assert_eq!(row.selected_issue_tick, Some(admitted));

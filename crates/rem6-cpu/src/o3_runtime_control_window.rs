@@ -97,15 +97,10 @@ impl O3RuntimeState {
         issue_tick: u64,
         execution: RiscvExecutionRecord,
     ) -> Result<bool, O3RuntimeError> {
-        let issue_tick = if candidate.request_index() == usize::MAX {
-            candidate.issue_tick(issue_tick)
-        } else {
-            issue_tick
-        };
-        if !candidate.recorded_consumed_requests_match(consumed_requests)
-            || !self
-                .live_staged_issue_packet(candidate.sequence())
-                .is_some_and(|packet| packet.matches_execution(&execution, consumed_requests))
+        let issue_tick = candidate.issue_tick(issue_tick);
+        if !self
+            .live_staged_issue_packet(candidate.sequence())
+            .is_some_and(|packet| packet.matches_execution(&execution, consumed_requests))
             || !candidate.valid_recorded_execution(&execution)
         {
             return Ok(false);

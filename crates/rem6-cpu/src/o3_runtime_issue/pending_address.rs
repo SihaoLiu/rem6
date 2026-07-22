@@ -70,21 +70,6 @@ impl O3RuntimeState {
             .map(|tick| tick.saturating_sub(1))
     }
 
-    pub(super) fn pending_data_address_request_sequence(
-        &self,
-        request: &O3LiveIssueRequest,
-    ) -> Option<u64> {
-        self.pending_data_addresses
-            .iter()
-            .find(|pending| {
-                pending.materialized.is_none()
-                    && pending.fetch.pc() == request.pc()
-                    && pending.decoded == request.decoded()
-                    && pending.consumed_requests == request.consumed_requests()
-            })
-            .map(O3PendingDataAddress::sequence)
-    }
-
     pub(super) fn pending_data_address_sequence_for_replay(&self, sequence: u64) -> Option<u64> {
         self.pending_data_addresses
             .find_sequence(sequence)

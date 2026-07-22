@@ -93,12 +93,10 @@ use o3_runtime_helpers::{
     rob_commit_tick, validate_live_staged_rob_metadata, validate_runtime_snapshot, validate_unique,
     O3RuntimeUniqueKey,
 };
-#[cfg(test)]
-use o3_runtime_issue::queue::O3LiveIssueSchedulingCandidate;
 use o3_runtime_issue::queue::O3LiveSpeculativeIssueCandidate;
+pub(crate) use o3_runtime_issue::O3LiveIssueHeadReservation;
 #[cfg(test)]
 pub(crate) use o3_runtime_issue::{O3LiveIssueDependencyTable, O3PreparedLiveIssue};
-pub(crate) use o3_runtime_issue::{O3LiveIssueHeadReservation, O3LiveIssueRequest};
 use o3_runtime_live_window::{
     staged_rename_entry, O3LiveRetiredInstruction, O3LiveStagedFetchIdentity,
 };

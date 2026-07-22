@@ -523,15 +523,7 @@ fn memory_result_replanning_invalidates_dependent_chain_until_authoritative_reis
         .live_data_access_head_reservation(older.fetch().request_id())
         .expect("memory head remains available for descendant reissue");
     runtime
-        .schedule_live_speculative_issues(
-            &RiscvHartState::new(0x8000),
-            head,
-            43,
-            &[
-                issue_request(0x8008, request(31), child),
-                issue_request(0x800c, request(32), grandchild),
-            ],
-        )
+        .schedule_live_speculative_issues(&RiscvHartState::new(0x8000), head, 43)
         .unwrap();
 
     assert_eq!(
@@ -657,12 +649,7 @@ fn memory_result_replanning_reverses_provisional_deferred_stats() {
         .live_data_access_head_reservation(older.fetch().request_id())
         .expect("memory head remains available for dependent reissue");
     runtime
-        .schedule_live_speculative_issues(
-            &RiscvHartState::new(0x8000),
-            head,
-            43,
-            &[issue_request(0x800c, request(32), dependent)],
-        )
+        .schedule_live_speculative_issues(&RiscvHartState::new(0x8000), head, 43)
         .unwrap();
 
     assert_speculative_owner(
@@ -1017,18 +1004,6 @@ fn multiply_instruction(rd: u8, rs1: u8) -> RiscvInstruction {
     }
 }
 
-fn issue_request(
-    pc: u64,
-    consumed_request: MemoryRequestId,
-    instruction: RiscvInstruction,
-) -> O3LiveIssueRequest {
-    O3LiveIssueRequest::new(
-        Address::new(pc),
-        vec![consumed_request],
-        decoded_instruction(instruction),
-    )
-}
-
 fn decoded_instruction(instruction: RiscvInstruction) -> RiscvDecodedInstruction {
     let raw = match instruction {
         RiscvInstruction::Addi { rd, rs1, imm } => {
@@ -1037,9 +1012,9 @@ fn decoded_instruction(instruction: RiscvInstruction) -> RiscvDecodedInstruction
         RiscvInstruction::Mul { rd, rs1, rs2 } => {
             r_type(1, rs2.index(), rs1.index(), 0x0, rd.index(), 0x33)
         }
-        _ => panic!("unsupported issue-request instruction {instruction:?}"),
+        _ => panic!("unsupported live issue instruction {instruction:?}"),
     };
-    RiscvInstruction::decode_with_length(raw).expect("issue-request instruction decodes")
+    RiscvInstruction::decode_with_length(raw).expect("live issue instruction decodes")
 }
 
 fn i_type(imm: i64, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {

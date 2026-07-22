@@ -1,5 +1,6 @@
 use super::*;
 
+use crate::o3_runtime::o3_runtime_issue::queue::{O3LiveIssueQueue, O3LiveIssueQueueCapture};
 use rem6_isa_riscv::RiscvHartState;
 
 const HEAD_RESPONSE_TICK: u64 = 40;
@@ -11,7 +12,6 @@ struct PendingAddressSchedulingFixture {
     hart: RiscvHartState,
     head: O3LiveIssueHeadReservation,
     head_execution: RiscvCpuExecutionEvent,
-    requests: Vec<O3LiveIssueRequest>,
 }
 
 impl PendingAddressSchedulingFixture {
@@ -34,16 +34,6 @@ impl PendingAddressSchedulingFixture {
             .runtime
             .live_data_access_head_reservation(head_execution.fetch().request_id())
             .expect("pending-address head reservation");
-        let requests = [
-            (PENDING_PC, ld(6, 5, 0), 11),
-            (FIRST_SUFFIX_PC, addi(7, 5, 8), 12),
-            (SECOND_SUFFIX_PC, add(8, 6, 7), 13),
-        ]
-        .into_iter()
-        .map(|(pc, raw, sequence)| {
-            O3LiveIssueRequest::new(Address::new(pc), vec![request(sequence)], decoded(raw))
-        })
-        .collect();
         let mut hart = RiscvHartState::new(HEAD_PC);
         hart.write(reg(5), 0xdead_beef);
         Self {
@@ -51,7 +41,6 @@ impl PendingAddressSchedulingFixture {
             hart,
             head,
             head_execution,
-            requests,
         }
     }
 
@@ -84,7 +73,7 @@ impl PendingAddressSchedulingFixture {
 
     fn schedule(&mut self, tick: u64) -> Result<(), O3RuntimeError> {
         self.runtime
-            .schedule_live_speculative_issues(&self.hart, self.head, tick, &self.requests)
+            .schedule_live_speculative_issues(&self.hart, self.head, tick)
     }
 
     fn scalar_issue_tick(&self) -> Option<u64> {
@@ -418,25 +407,27 @@ fn pending_address_materialization_failure_replays_without_callback_error() {
     let mut short = PendingAddressSchedulingFixture::new(2);
     short.complete_head(PRODUCER_VALUE);
     short.publish_head();
-    let request = &short.requests[0];
-    let scheduling = short
+    let pending_sequence = short
         .runtime
-        .live_issue_scheduling_candidate(
-            0,
-            request.pc(),
-            request.instruction(),
-            request.consumed_requests(),
-        )
-        .expect("pending scheduling candidate");
+        .pending_data_address_sequence_for_test()
+        .expect("pending sequence");
+    let queue = match O3LiveIssueQueue::capture(&short.runtime, short.head).unwrap() {
+        O3LiveIssueQueueCapture::Ready(queue) => queue,
+        O3LiveIssueQueueCapture::ReplayPending(sequence) => {
+            panic!("unexpected pending replay at {sequence}")
+        }
+    };
+    let entry = queue.entry(pending_sequence).expect("pending queue entry");
     let candidate = short
         .runtime
-        .materialize_live_speculative_issue_candidate(&scheduling)
+        .materialize_live_speculative_issue_candidate(entry.scheduling())
         .expect("pending materialization candidate");
+    let packet = entry.packet();
     let execution = RiscvExecutionRecord::new_with_instruction_bytes(
-        request.instruction(),
+        packet.instruction(),
         2,
-        request.pc().get(),
-        request.pc().get() + 2,
+        entry.scheduling().pc().get(),
+        entry.scheduling().pc().get() + 2,
         Vec::new(),
         Some(MemoryAccessKind::Load {
             rd: reg(6),
@@ -449,7 +440,7 @@ fn pending_address_materialization_failure_replays_without_callback_error() {
         .runtime
         .record_pending_data_address_materialization(
             candidate,
-            request.consumed_requests(),
+            packet.consumed_requests(),
             HEAD_WRITEBACK_TICK,
             execution,
         )

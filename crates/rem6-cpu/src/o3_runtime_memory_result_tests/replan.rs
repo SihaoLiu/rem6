@@ -127,15 +127,7 @@ fn memory_result_replanning_invalidates_fu_conflict_chain_for_authoritative_reis
         .live_data_access_head_reservation(older.fetch().request_id())
         .expect("memory head remains available for authoritative reissue");
     runtime
-        .schedule_live_speculative_issues(
-            &RiscvHartState::new(0x8000),
-            head,
-            43,
-            &[
-                issue_request(0x800c, request(32), child),
-                issue_request(0x8010, request(33), grandchild),
-            ],
-        )
+        .schedule_live_speculative_issues(&RiscvHartState::new(0x8000), head, 43)
         .unwrap();
 
     assert_speculative_owner(
@@ -232,19 +224,13 @@ fn invalidated_descendant_reissue_counts_additional_authoritative_planner_activi
     let head = runtime
         .live_data_access_head_reservation(older.fetch().request_id())
         .expect("memory head remains live");
-    let child_request = issue_request(0x8008, request(31), child);
     assert!(runtime.bind_live_staged_issue_packet(
         Address::new(0x8008),
         decoded_instruction(child),
         &[request(31)],
     ));
     runtime
-        .schedule_live_speculative_issues(
-            &RiscvHartState::new(0x8000),
-            head,
-            42,
-            std::slice::from_ref(&child_request),
-        )
+        .schedule_live_speculative_issues(&RiscvHartState::new(0x8000), head, 42)
         .unwrap();
     assert_eq!(runtime.stats().issue_cycles(), 2);
     assert_eq!(runtime.stats().issued_rows(), 1);
@@ -264,7 +250,7 @@ fn invalidated_descendant_reissue_counts_additional_authoritative_planner_activi
     assert!(runtime.writeback_reservation(child_sequence).is_none());
 
     runtime
-        .schedule_live_speculative_issues(&RiscvHartState::new(0x8000), head, 43, &[child_request])
+        .schedule_live_speculative_issues(&RiscvHartState::new(0x8000), head, 43)
         .unwrap();
 
     assert_eq!(runtime.stats().issue_cycles(), 2);

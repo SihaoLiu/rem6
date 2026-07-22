@@ -37,11 +37,9 @@ pub(in crate::o3_runtime) enum O3LiveIssueQueueCapture {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct O3LiveIssueSchedulingCandidate {
-    request_index: usize,
     sequence: u64,
     pc: Address,
     instruction: RiscvInstruction,
-    consumed_requests: Vec<MemoryRequestId>,
     kind: O3LiveSpeculativeIssueKind,
     op_class: O3IssueOpClass,
     control_dependency: Option<u64>,
@@ -134,13 +132,9 @@ impl O3LiveIssueQueue {
                 }
                 continue;
             };
-            let Some(scheduling) = runtime.live_issue_scheduling_candidate_from_entry(
-                usize::MAX,
-                index,
-                rob,
-                packet.instruction(),
-                packet.consumed_requests().to_vec(),
-            ) else {
+            let Some(scheduling) =
+                runtime.live_issue_scheduling_candidate_from_metadata(index, rob, &packet)
+            else {
                 if pending {
                     return Ok(O3LiveIssueQueueCapture::ReplayPending(sequence));
                 }
@@ -183,6 +177,7 @@ impl O3LiveIssueQueue {
             .map(|index| &self.entries[index])
     }
 
+    #[cfg(test)]
     pub(in crate::o3_runtime) fn sequences(&self) -> impl Iterator<Item = u64> + '_ {
         self.entries.iter().map(O3LiveIssueQueueEntry::sequence)
     }
@@ -213,20 +208,12 @@ impl O3LiveIssueSourceProducer {
 }
 
 impl O3LiveIssueSchedulingCandidate {
-    pub(crate) const fn request_index(&self) -> usize {
-        self.request_index
-    }
-
     pub(crate) const fn sequence(&self) -> u64 {
         self.sequence
     }
 
     pub(in crate::o3_runtime) const fn pc(&self) -> Address {
         self.pc
-    }
-
-    pub(crate) const fn instruction(&self) -> RiscvInstruction {
-        self.instruction
     }
 
     pub(crate) const fn op_class(&self) -> O3IssueOpClass {
@@ -239,10 +226,6 @@ impl O3LiveIssueSchedulingCandidate {
 
     pub(crate) fn data_producers(&self) -> &[O3LiveIssueSourceProducer] {
         &self.data_producers
-    }
-
-    pub(crate) fn consumed_requests(&self) -> &[MemoryRequestId] {
-        &self.consumed_requests
     }
 
     pub(crate) const fn is_pending_data_address(&self) -> bool {
@@ -266,10 +249,6 @@ impl O3LiveSpeculativeIssueCandidate {
 
     pub(crate) const fn sequence(&self) -> u64 {
         self.scheduling.sequence
-    }
-
-    pub(crate) const fn request_index(&self) -> usize {
-        self.scheduling.request_index
     }
 
     pub(crate) fn producer_sequences(&self) -> &[u64] {
@@ -305,14 +284,6 @@ impl O3LiveSpeculativeIssueCandidate {
 
     pub(crate) fn issue_tick(&self, earliest_tick: u64) -> u64 {
         earliest_tick.max(self.forwarded_ready_tick)
-    }
-
-    pub(in crate::o3_runtime) fn recorded_consumed_requests_match(
-        &self,
-        consumed_requests: &[MemoryRequestId],
-    ) -> bool {
-        self.scheduling.consumed_requests.is_empty()
-            || self.scheduling.consumed_requests == consumed_requests
     }
 
     pub(in crate::o3_runtime) fn valid_recorded_execution(
@@ -375,66 +346,37 @@ impl O3RuntimeState {
         pc: Address,
         instruction: RiscvInstruction,
     ) -> Option<O3LiveSpeculativeIssueCandidate> {
-        let scheduling = self.live_issue_scheduling_candidate_from_metadata(
-            usize::MAX,
-            pc,
-            instruction,
-            Vec::new(),
-        )?;
-        self.materialize_live_speculative_issue_candidate(&scheduling)
-    }
-
-    pub(crate) fn live_issue_scheduling_candidate(
-        &self,
-        request_index: usize,
-        pc: Address,
-        instruction: RiscvInstruction,
-        consumed_requests: &[MemoryRequestId],
-    ) -> Option<O3LiveIssueSchedulingCandidate> {
-        let candidate = self.live_issue_scheduling_candidate_from_metadata(
-            request_index,
-            pc,
-            instruction,
-            consumed_requests.to_vec(),
-        )?;
-        (candidate.is_pending_data_address()
-            || self.live_staged_fetch_identity_matches(
-                candidate.sequence(),
-                candidate.instruction(),
-                consumed_requests,
-            ))
-        .then_some(candidate)
-    }
-
-    fn live_issue_scheduling_candidate_from_metadata(
-        &self,
-        request_index: usize,
-        pc: Address,
-        instruction: RiscvInstruction,
-        consumed_requests: Vec<MemoryRequestId>,
-    ) -> Option<O3LiveIssueSchedulingCandidate> {
         let index = self
             .snapshot
             .reorder_buffer
             .iter()
             .position(|entry| entry.is_live_staged() && entry.pc() == pc)?;
         let entry = self.snapshot.reorder_buffer[index];
-        self.live_issue_scheduling_candidate_from_entry(
-            request_index,
+        let scheduling =
+            self.live_issue_scheduling_candidate_from_instruction(index, entry, instruction, &[])?;
+        self.materialize_live_speculative_issue_candidate(&scheduling)
+    }
+
+    fn live_issue_scheduling_candidate_from_metadata(
+        &self,
+        index: usize,
+        entry: O3ReorderBufferEntry,
+        packet: &O3LiveIssuePacket,
+    ) -> Option<O3LiveIssueSchedulingCandidate> {
+        self.live_issue_scheduling_candidate_from_instruction(
             index,
             entry,
-            instruction,
-            consumed_requests,
+            packet.instruction(),
+            packet.consumed_requests(),
         )
     }
 
-    fn live_issue_scheduling_candidate_from_entry(
+    fn live_issue_scheduling_candidate_from_instruction(
         &self,
-        request_index: usize,
         index: usize,
         entry: O3ReorderBufferEntry,
         instruction: RiscvInstruction,
-        consumed_requests: Vec<MemoryRequestId>,
+        consumed_requests: &[MemoryRequestId],
     ) -> Option<O3LiveIssueSchedulingCandidate> {
         let sequence = entry.sequence();
         if self
@@ -446,7 +388,7 @@ impl O3RuntimeState {
         }
         let pc = entry.pc();
         if let Some((destination, producer_register, producer_sequence)) = self
-            .pending_data_address_candidate_metadata(sequence, pc, instruction, &consumed_requests)
+            .pending_data_address_candidate_metadata(sequence, pc, instruction, consumed_requests)
         {
             let expected_producer = O3LiveIssueSourceProducer {
                 sequence: producer_sequence,
@@ -467,11 +409,9 @@ impl O3RuntimeState {
                 return None;
             }
             return Some(O3LiveIssueSchedulingCandidate {
-                request_index,
                 sequence,
                 pc,
                 instruction,
-                consumed_requests,
                 kind: O3LiveSpeculativeIssueKind::PendingDataAddress(destination),
                 op_class: O3IssueOpClass::Memory,
                 control_dependency: None,
@@ -508,11 +448,9 @@ impl O3RuntimeState {
         };
         let control_sequence = self.pending_control_sequence_for(sequence);
         Some(O3LiveIssueSchedulingCandidate {
-            request_index,
             sequence,
             pc,
             instruction,
-            consumed_requests,
             kind,
             op_class: live_issue_op_class(instruction),
             control_dependency: control_sequence,

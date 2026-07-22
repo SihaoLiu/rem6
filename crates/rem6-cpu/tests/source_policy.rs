@@ -1176,7 +1176,6 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     for helper in [
         "issue_matches",
         "record_pending_data_address_materialization",
-        "pending_data_address_materialization_matches",
     ] {
         assert!(
             production_defines_exact_function(&pending_code, helper),
@@ -1204,14 +1203,6 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         !materialization.contains("pending_data_addresses.first()")
             && !materialization.contains("pending_data_addresses.first_mut()")
     );
-    let materialization_matches = rust_function_definition(
-        &pending_code,
-        "pending_data_address_materialization_matches",
-    )
-    .unwrap();
-    assert!(materialization_matches.contains("self.pending_data_addresses.iter().any(|pending|"));
-    assert!(!materialization_matches.contains("pending_data_addresses.first()"));
-
     let pending_raw_code = rust_code_without_comments_and_literals(&pending);
     let pending_set_raw_code = rust_code_without_comments_and_literals(&pending_set);
     for helper in [
@@ -1241,7 +1232,6 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "pending_data_address_candidate_metadata",
         "pending_data_address_producer_ready_tick",
         "pending_data_address_committed_producer_ready_tick",
-        "pending_data_address_request_sequence",
         "pending_data_address_sequence_for_replay",
         "pending_data_address_has_producer_sequence",
         "pending_data_address_wake_seed",
@@ -1294,14 +1284,6 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     )
     .unwrap();
     assert!(candidate_metadata.contains("find_sequence(sequence)"));
-    let request_sequence =
-        rust_function_definition(&issue_pending_code, "pending_data_address_request_sequence")
-            .unwrap();
-    assert!(
-        request_sequence.contains("self.pending_data_addresses")
-            && request_sequence.contains(".iter()")
-            && request_sequence.contains(".find(|pending|")
-    );
     let wake_tick =
         rust_function_definition(&issue_pending_code, "pending_data_address_wake_tick").unwrap();
     assert!(wake_tick.contains("pending.materialized.is_none()") && wake_tick.contains(".min()"));
@@ -1320,7 +1302,14 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     }
     let prepare_batch =
         rust_function_definition(&issue_root_code, "prepare_live_issue_batch").unwrap();
-    assert!(prepare_batch.contains("(!candidate.is_pending_data_address(), candidate.sequence())"));
+    for anchor in [
+        "queue.entry(issued.sequence())",
+        "!entry.scheduling().is_pending_data_address()",
+        "entry.sequence()",
+        "entry.packet()",
+    ] {
+        assert!(prepare_batch.contains(anchor));
+    }
     assert!(!production_defines_exact_function(
         &issue_root_code,
         "live_issue_capacities_after_reservations"
@@ -2119,7 +2108,6 @@ fn task8_dependent_result_address_production_ownership_is_final() {
     for helper in [
         "issue_matches",
         "record_pending_data_address_materialization",
-        "pending_data_address_materialization_matches",
     ] {
         assert_eq!(
             owners_of(helper),
@@ -2162,7 +2150,6 @@ fn task8_dependent_result_address_production_ownership_is_final() {
         "pending_data_address_candidate_metadata",
         "pending_data_address_producer_ready_tick",
         "pending_data_address_committed_producer_ready_tick",
-        "pending_data_address_request_sequence",
         "pending_data_address_sequence_for_replay",
         "pending_data_address_has_producer_sequence",
         "pending_data_address_wake_seed",
@@ -5355,8 +5342,9 @@ fn o3_live_control_window_uses_one_typed_lineage_authority() {
     }
 
     let queue = fs::read_to_string(crate_dir.join("src/o3_runtime_issue/queue.rs")).unwrap();
-    let issue = rust_function_definition(&queue, "live_issue_scheduling_candidate_from_entry")
-        .expect("O3 live issue queue authority must classify scheduling candidates");
+    let issue =
+        rust_function_definition(&queue, "live_issue_scheduling_candidate_from_instruction")
+            .expect("O3 live issue queue authority must classify scheduling candidates");
     assert!(
         issue.contains("pending_control_sequence"),
         "O3 issue dependencies must consume only pending control lineage"

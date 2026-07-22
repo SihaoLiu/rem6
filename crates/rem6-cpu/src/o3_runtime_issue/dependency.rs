@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::calendar::LIVE_ISSUE_QUEUE;
+use super::queue::O3LiveIssueQueueEntry;
 use super::*;
 use crate::o3_pipeline::{O3DependencyScopeId, O3ScopedReadyInstruction};
 
@@ -17,22 +18,24 @@ pub(crate) struct O3LiveIssueDependencyTable {
 }
 
 impl O3LiveIssueDependencyTable {
-    pub(crate) fn new(
+    pub(in crate::o3_runtime) fn new(
         runtime: &O3RuntimeState,
-        candidates: &[O3LiveIssueSchedulingCandidate],
+        entries: &[O3LiveIssueQueueEntry],
     ) -> Result<Self, O3RuntimeError> {
         let known_sequences = runtime
             .live_speculative_executions
             .iter()
             .map(|row| row.sequence)
             .chain(
-                candidates
+                entries
                     .iter()
-                    .map(O3LiveIssueSchedulingCandidate::sequence),
+                    .map(O3LiveIssueQueueEntry::scheduling)
+                    .map(|candidate| candidate.sequence()),
             )
             .collect::<BTreeSet<_>>();
-        let control_dependencies = candidates
+        let control_dependencies = entries
             .iter()
+            .map(O3LiveIssueQueueEntry::scheduling)
             .filter_map(|candidate| {
                 let dependency = candidate.control_dependency()?;
                 (runtime
@@ -43,7 +46,8 @@ impl O3LiveIssueDependencyTable {
             })
             .collect::<BTreeMap<_, _>>();
         let mut keys = BTreeSet::new();
-        for candidate in candidates {
+        for entry in entries {
+            let candidate = entry.scheduling();
             keys.insert(O3LiveIssueDependencyKey::Data(candidate.sequence()));
             keys.insert(O3LiveIssueDependencyKey::Control(candidate.sequence()));
             keys.extend(
@@ -80,10 +84,11 @@ impl O3LiveIssueDependencyTable {
         })
     }
 
-    pub(crate) fn scoped_instruction(
+    pub(in crate::o3_runtime) fn scoped_instruction(
         &self,
-        candidate: &O3LiveIssueSchedulingCandidate,
+        entry: &O3LiveIssueQueueEntry,
     ) -> O3ScopedReadyInstruction {
+        let candidate = entry.scheduling();
         let produces = [
             self.scope(O3LiveIssueDependencyKey::Data(candidate.sequence())),
             self.scope(O3LiveIssueDependencyKey::Control(candidate.sequence())),

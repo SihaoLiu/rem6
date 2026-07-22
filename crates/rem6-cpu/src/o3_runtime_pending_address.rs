@@ -260,18 +260,6 @@ impl O3RuntimeState {
         Ok(true)
     }
 
-    pub(super) fn pending_data_address_materialization_matches(
-        &self,
-        request: &O3LiveIssueRequest,
-    ) -> bool {
-        self.pending_data_addresses.iter().any(|pending| {
-            pending.materialized.is_some()
-                && pending.fetch.pc() == request.pc()
-                && pending.decoded == request.decoded()
-                && pending.consumed_requests == request.consumed_requests()
-        })
-    }
-
     fn pending_data_address_producer_is_consistent(&self, pending: &O3PendingDataAddress) -> bool {
         if self
             .pending_data_addresses
