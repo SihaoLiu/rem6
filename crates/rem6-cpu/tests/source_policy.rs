@@ -7,6 +7,8 @@ const MAX_O3_RUNTIME_ISSUE_DEPENDENCY_LINES: usize = 500;
 const MAX_O3_RUNTIME_ISSUE_DEPENDENCY_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_ISSUE_CALENDAR_LINES: usize = 450;
 const MAX_O3_RUNTIME_ISSUE_CALENDAR_TEST_LINES: usize = 450;
+const MAX_O3_RUNTIME_ISSUE_QUEUE_LINES: usize = 600;
+const MAX_O3_RUNTIME_ISSUE_QUEUE_TEST_LINES: usize = 450;
 const MAX_O3_RUNTIME_ISSUE_LINES: usize = 800;
 const MAX_O3_RUNTIME_MEMORY_LINES: usize = 1200;
 const MAX_O3_RUNTIME_ROOT_LINES: usize = 1200;
@@ -957,6 +959,16 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         .map(|path| production_rust_source(&fs::read_to_string(path).unwrap()))
         .collect::<String>();
 
+    for stale in [
+        "pending_data_address_request_sequence",
+        "pending_data_address_materialization_matches",
+    ] {
+        assert!(
+            !production_defines_exact_function(&production_code, stale),
+            "stale pending request adapter `{stale}` must have no production definition"
+        );
+    }
+
     assert_eq!(
         pending_code
             .matches("pub(super) struct O3PendingDataAddress {")
@@ -1309,6 +1321,16 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "entry.packet()",
     ] {
         assert!(prepare_batch.contains(anchor));
+    }
+    for anchor in [
+        "pending_data_address_sequence_for_replay(sequence)",
+        "O3LiveIssueQueueCapture::ReplayPending(sequence)",
+        "discard_pending_data_address_from(sequence)",
+    ] {
+        assert!(
+            issue_root_code.contains(anchor),
+            "pending replay owner is missing `{anchor}`"
+        );
     }
     assert!(!production_defines_exact_function(
         &issue_root_code,
@@ -2969,6 +2991,304 @@ fn disjoint_store_prefix_uses_ordered_store_ownership_not_overlap_connectivity()
             "buffered store ordering must remain predecessor-based: missing `{anchor}`"
         );
     }
+}
+
+#[test]
+fn o3_live_issue_queue_owns_candidate_inventory() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let issue_path = crate_dir.join("src/o3_runtime_issue.rs");
+    let queue_path = crate_dir.join("src/o3_runtime_issue/queue.rs");
+    let queue_tests_path = crate_dir.join("src/o3_runtime_issue/queue_tests.rs");
+    let issue_tests_path = crate_dir.join("src/o3_runtime_issue_tests.rs");
+    let control_path = crate_dir.join("src/o3_runtime_control_window.rs");
+    let live_window_path = crate_dir.join("src/o3_runtime_live_window.rs");
+    let retire_path = crate_dir.join("src/riscv_live_retire_window.rs");
+    let issue_source = fs::read_to_string(&issue_path).unwrap();
+    let issue = production_rust_source(&issue_source);
+    let queue_source = fs::read_to_string(&queue_path).unwrap();
+    let queue = production_rust_source(&queue_source);
+    let queue_tests_source = fs::read_to_string(&queue_tests_path).unwrap();
+    let issue_tests_source = fs::read_to_string(&issue_tests_path).unwrap();
+    let control = production_rust_source(&fs::read_to_string(&control_path).unwrap());
+    let live_window = production_rust_source(&fs::read_to_string(&live_window_path).unwrap());
+    let retire = production_rust_source(&fs::read_to_string(&retire_path).unwrap());
+
+    assert!(line_count(&queue_path) <= MAX_O3_RUNTIME_ISSUE_QUEUE_LINES);
+    assert!(line_count(&queue_tests_path) <= MAX_O3_RUNTIME_ISSUE_QUEUE_TEST_LINES);
+    assert_eq!(
+        path_owned_module_path_declaration_count(&issue_source, "o3_runtime_issue/queue.rs",),
+        1,
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(&issue_source, "o3_runtime_issue/queue.rs", "queue",),
+        1,
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &issue_tests_source,
+            "o3_runtime_issue/queue_tests.rs",
+            "queue",
+        ),
+        1,
+    );
+
+    let queue_authority_patterns = [
+        "struct O3LiveIssuePacket",
+        "struct O3LiveIssueQueueEntry",
+        "struct O3LiveIssueQueue",
+        "enum O3LiveIssueQueueCapture",
+        "struct O3LiveIssueSchedulingCandidate",
+        "struct O3LiveSpeculativeIssueCandidate",
+        "fn live_issue_scheduling_candidate_from_metadata(",
+        "fn materialize_live_speculative_issue_candidate(",
+        "fn live_issue_source_producers(",
+        "fn live_issue_op_class(",
+        "fn live_issue_instruction_is_supported(",
+        "fn valid_recorded_execution(",
+        "fn consumes_writeback_slot(",
+    ];
+    for anchor in queue_authority_patterns {
+        assert!(queue.contains(anchor), "queue owner missing `{anchor}`");
+    }
+
+    for forbidden in [
+        "candidate.scheduling.",
+        "candidate.producer_sequences,",
+        "O3LiveSpeculativeIssueKind::",
+    ] {
+        assert!(
+            !control.contains(forbidden),
+            "control owner reaches into `{forbidden}`"
+        );
+    }
+
+    let production_sources = rust_source_files(&crate_dir.join("src"))
+        .into_iter()
+        .filter_map(|path| {
+            let relative = path.strip_prefix(crate_dir).unwrap().to_path_buf();
+            (!is_test_only_rust_source(&relative)).then(|| {
+                let source = fs::read_to_string(path).unwrap();
+                (relative, production_rust_source(&source))
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut offenders = Vec::new();
+    for (relative, source) in &production_sources {
+        if relative == Path::new("src/o3_runtime_issue/queue.rs") {
+            continue;
+        }
+        for anchor in queue_authority_patterns {
+            if source.contains(anchor) {
+                offenders.push(format!("{} retains `{anchor}`", relative.display()));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "live issue queue authority must live only in queue.rs: {}",
+        offenders.join(", ")
+    );
+    let stale_request_struct_owners = production_sources
+        .iter()
+        .filter_map(|(relative, source)| {
+            production_struct_definitions(source)
+                .into_iter()
+                .any(|definition| {
+                    production_defines_exact_named_item(&definition, "struct", "O3LiveIssueRequest")
+                })
+                .then(|| relative.display().to_string())
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        stale_request_struct_owners.is_empty(),
+        "legacy O3LiveIssueRequest definitions remain: {}",
+        stale_request_struct_owners.join(", ")
+    );
+    for stale in ["live_issue_candidates", "live_issue_request_is_recorded"] {
+        let owners = production_sources
+            .iter()
+            .filter_map(|(relative, source)| {
+                production_defines_exact_function(source, stale)
+                    .then(|| relative.display().to_string())
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            owners.is_empty(),
+            "legacy live issue request helper `{stale}` remains in {}",
+            owners.join(", ")
+        );
+    }
+    for (owner, source) in [("issue root", &issue), ("queue owner", &queue)] {
+        let chars = source.chars().collect::<Vec<_>>();
+        assert!(
+            !contains_rust_identifier(&chars, "O3LiveIssueRequest"),
+            "{owner} retains the legacy O3LiveIssueRequest type"
+        );
+    }
+    let queue_struct_definitions = production_struct_definitions(&queue);
+    for candidate in [
+        "O3LiveIssueSchedulingCandidate",
+        "O3LiveSpeculativeIssueCandidate",
+    ] {
+        let definitions = queue_struct_definitions
+            .iter()
+            .filter(|definition| {
+                production_defines_exact_named_item(definition, "struct", candidate)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            definitions.len(),
+            1,
+            "queue owner must define exactly one `{candidate}`"
+        );
+        let chars = definitions[0].chars().collect::<Vec<_>>();
+        assert!(
+            !contains_rust_identifier(&chars, "request_index"),
+            "queue candidate `{candidate}` retains request_index"
+        );
+    }
+    assert!(
+        !production_defines_exact_function(&queue, "request_index"),
+        "queue owner retains a request_index accessor"
+    );
+    let persistent_queue_storage = production_sources
+        .iter()
+        .filter_map(|(relative, source)| {
+            let mut definitions = production_struct_definitions(source);
+            definitions.extend(production_enum_definitions(source));
+            definitions.extend(production_type_alias_definitions(source));
+            let storage_count = definitions
+                .iter()
+                .map(|definition| {
+                    let storage_count = production_definition_named_type_storage_count(
+                        definition,
+                        "O3LiveIssueQueue",
+                    );
+                    let canonical_capture = relative == Path::new("src/o3_runtime_issue/queue.rs")
+                        && production_defines_exact_named_item(
+                            definition,
+                            "enum",
+                            "O3LiveIssueQueueCapture",
+                        )
+                        && storage_count == 1
+                        && enum_tuple_variant_payload(definition, "Ready")
+                            .is_some_and(|payload| payload.trim() == "O3LiveIssueQueue");
+                    if canonical_capture {
+                        0
+                    } else {
+                        storage_count
+                    }
+                })
+                .sum::<usize>();
+            (storage_count > 0).then(|| (relative, storage_count))
+        })
+        .map(|(relative, storage_count)| {
+            format!(
+                "{} ({storage_count} exact O3LiveIssueQueue references)",
+                relative.display()
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        persistent_queue_storage.is_empty(),
+        "production types must not persist a derived live issue queue: {}",
+        persistent_queue_storage.join(", "),
+    );
+
+    let schedule = rust_function_definition(&issue, "schedule_live_speculative_issues")
+        .expect("missing live issue scheduler");
+    assert_eq!(schedule.matches("O3LiveIssueQueue::capture(").count(), 1);
+    let loop_position = schedule.find("loop {").unwrap();
+    let queue_position = schedule.find("O3LiveIssueQueue::capture(").unwrap();
+    let dependency_position = schedule.find("O3LiveIssueDependencyTable::new(").unwrap();
+    let calendar_position = schedule.find("O3LiveIssueCalendar::capture(").unwrap();
+    let plan_position = schedule.find(".plan_at(").unwrap();
+    assert!(
+        loop_position < queue_position
+            && queue_position < dependency_position
+            && dependency_position < calendar_position
+            && calendar_position < plan_position,
+    );
+    let prepare = rust_function_definition(&issue, "prepare_live_issue_batch")
+        .expect("missing live issue preparation");
+    assert!(prepare.contains("queue.entry(issued.sequence())"));
+    let scheduling_from_metadata =
+        rust_function_definition(&queue, "live_issue_scheduling_candidate_from_metadata")
+            .expect("missing queue metadata scheduling path");
+    let scheduling_from_instruction =
+        rust_function_definition(&queue, "live_issue_scheduling_candidate_from_instruction")
+            .expect("missing queue instruction scheduling path");
+    let materialize =
+        rust_function_definition(&queue, "materialize_live_speculative_issue_candidate")
+            .expect("missing queue candidate materialization path");
+    for (owner, definition) in [
+        ("live issue scheduler", &schedule),
+        ("live issue preparation", &prepare),
+    ] {
+        let chars = definition.chars().collect::<Vec<_>>();
+        for legacy in ["requests", "O3LiveIssueRequest"] {
+            assert!(
+                !contains_rust_identifier(&chars, legacy),
+                "{owner} retains legacy request identifier `{legacy}`"
+            );
+        }
+    }
+    for (owner, definition) in [
+        ("live issue scheduler", &schedule),
+        ("live issue preparation", &prepare),
+        ("queue metadata scheduling", &scheduling_from_metadata),
+        ("queue instruction scheduling", &scheduling_from_instruction),
+        ("queue candidate materialization", &materialize),
+    ] {
+        let chars = definition.chars().collect::<Vec<_>>();
+        assert!(
+            !contains_rust_identifier(&chars, "request_index"),
+            "{owner} retains request_index"
+        );
+    }
+    let retire_schedule =
+        rust_function_definition(&retire, "schedule_o3_live_speculative_younger_executions")
+            .expect("missing retire-window live issue delegation");
+    let retire_schedule_chars = retire_schedule.chars().collect::<Vec<_>>();
+    for legacy in ["requests", "O3LiveIssueRequest"] {
+        assert!(
+            !contains_rust_identifier(&retire_schedule_chars, legacy),
+            "retire-window live issue delegation retains `{legacy}`"
+        );
+    }
+    assert_eq!(
+        retire_schedule
+            .matches(".schedule_live_speculative_issues(&hart, head, issue_tick)")
+            .count(),
+        1,
+        "retire-window live issue path must delegate directly without a request adapter"
+    );
+    assert!(live_window.contains("issue_packet: Option<O3LiveIssuePacket>"));
+
+    for anchor in [
+        "live_issue_queue_packet_binding_is_idempotent_and_exact",
+        "live_issue_queue_packet_rebinding_rejects_any_identity_change",
+        "live_issue_queue_capture_is_sequence_ordered_and_requires_bound_packets",
+        "live_issue_queue_lookup_is_sequence_owned",
+        "live_issue_queue_excludes_unsupported_bound_packets",
+        "live_issue_queue_rejects_duplicate_sequence_inventory",
+        "live_issue_queue_excludes_invalidated_descendant_identities",
+        "live_issue_queue_stale_pending_row_returns_exact_replay_boundary",
+        "live_issue_queue_excludes_materialized_pending_rows",
+    ] {
+        assert_eq!(
+            rust_test_function_definition_count(&queue_tests_source, anchor),
+            1,
+            "missing exact compiled queue test `{anchor}`",
+        );
+    }
+    assert_eq!(
+        rust_test_function_definition_count(
+            &issue_tests_source,
+            "scoped_issue_partial_reentry_keeps_previously_bound_rows_visible",
+        ),
+        1,
+    );
 }
 
 #[test]
