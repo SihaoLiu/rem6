@@ -245,13 +245,13 @@ issue/writeback/commit ticks provide the queue behavior evidence.
 The main evidence must run the real `rem6` binary through
 `rem6 run --execute`.
 
-### Partial re-entry and oldest-ready select
+### Oldest-ready ALU/MUL select
 
-Use a fetch-boundary fixture that binds an older dependency-blocked scalar row
-before younger independent ALU and multiply rows become available. Direct
-width-one and width-two runs prove:
+The focused runtime test owns the exact partial-reentry proof because no
+current CLI path uniquely exposes an omitted caller request slice. Use a real
+older dependency-blocked scalar row followed by younger independent ALU and
+multiply rows for direct width-one and width-two CLI runs that prove:
 
-- the older row remains eligible across scheduling invocations;
 - ready younger rows may issue before the blocked older row;
 - width and multiply-port pressure remain deterministic;
 - the older row issues at its exact producer wake tick; and
@@ -259,8 +259,8 @@ width-one and width-two runs prove:
 
 The representative anchors are:
 
-- `rem6_run_o3_general_iq_partial_reentry_width_one_direct`; and
-- `rem6_run_o3_general_iq_partial_reentry_width_two_direct`.
+- `rem6_run_o3_general_iq_oldest_ready_width_one_direct`; and
+- `rem6_run_o3_general_iq_oldest_ready_width_two_direct`.
 
 ### Pending-address and scalar mixed select
 
@@ -336,7 +336,7 @@ Production ownership is:
 Proposed source-policy caps are:
 
 - `o3_runtime_issue.rs` at the existing 800 lines;
-- `o3_runtime_issue/queue.rs` at 450 lines;
+- `o3_runtime_issue/queue.rs` at 600 lines;
 - `o3_runtime_issue/queue_tests.rs` at 450 lines;
 - `o3_runtime_issue/calendar.rs` at the existing 450 lines; and
 - `o3_runtime_issue/dependency.rs` at the existing 500 lines.
