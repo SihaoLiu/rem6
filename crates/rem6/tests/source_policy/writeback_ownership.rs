@@ -160,7 +160,7 @@ const DEPENDENT_RESULT_ADDRESS_BOUNDARY_ANCHORS: [&str; 1] =
     ["rem6_run_o3_dependent_result_address_boundaries_and_live_actions"];
 const TWO_PENDING_RESULT_ADDRESS_ANCHORS: [&str; 6] = [
     "rem6_run_o3_two_pending_result_address_sibling_width_one_direct",
-    "rem6_run_o3_two_pending_result_address_sibling_width_two_hierarchy",
+    "rem6_run_o3_general_iq_pending_address_and_scalar_hierarchy",
     "rem6_run_o3_two_pending_result_address_chain_width_one_direct",
     "rem6_run_o3_two_pending_result_address_chain_width_two_hierarchy",
     "rem6_run_o3_two_pending_result_address_atomic_sibling_direct",

@@ -93,7 +93,7 @@ fn rem6_run_o3_two_pending_result_address_sibling_width_one_direct() {
 }
 
 #[test]
-fn rem6_run_o3_two_pending_result_address_sibling_width_two_hierarchy() {
+fn rem6_run_o3_general_iq_pending_address_and_scalar_hierarchy() {
     run_two_pending_row(TWO_PENDING_ROWS[1]);
 }
 

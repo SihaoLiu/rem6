@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "scoped_issue/general_iq.rs"]
+mod general_iq;
+
 const LOAD_PC: &str = "0x80000030";
 const BRANCH_PC: &str = "0x80000034";
 const SECOND_ROW_PC: &str = "0x80000038";
@@ -12,6 +15,12 @@ const FU_HEAD_PC: &str = "0x8000000c";
 const FU_INDEPENDENT_PC: &str = "0x80000010";
 const FU_DEPENDENT_PC: &str = "0x80000014";
 const FU_DEPENDENT_RESULTS: &str = "0c000000050000000100000000000000";
+const GENERAL_IQ_LOAD_PC: &str = "0x80000010";
+const GENERAL_IQ_PRODUCER_PC: &str = "0x80000014";
+const GENERAL_IQ_BLOCKED_PC: &str = "0x80000018";
+const GENERAL_IQ_ALU_PC: &str = "0x8000001c";
+const GENERAL_IQ_MUL_PC: &str = "0x80000020";
+const GENERAL_IQ_RESULTS: &str = "0900000001000000050000004c020000";
 
 const SCOPED_ISSUE_STATS: [(&str, &str, &str); 5] = [
     ("cycles", "issue_cycles", "Cycle"),
@@ -986,6 +995,49 @@ fn scoped_issue_fu_json(
         .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"))
 }
 
+fn general_iq_oldest_ready_json(path: &Path, issue_width: usize, max_tick: u64) -> Value {
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            &max_tick.to_string(),
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-execution-mode",
+            "detailed",
+            "--riscv-o3-scalar-memory-depth",
+            "1",
+            "--riscv-o3-scalar-live-window-depth",
+            "5",
+            "--riscv-o3-issue-width",
+            &issue_width.to_string(),
+            "--riscv-o3-writeback-width",
+            "4",
+            "--memory-system",
+            "direct",
+            "--memory-route-delay",
+            "80",
+            "--dump-memory",
+            "0x80000060:16",
+            "--debug-flags",
+            "O3,Data,Fetch,Memory,HostAction",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"))
+}
+
 fn o3_trace_events(json: &Value) -> &[Value] {
     json.pointer("/debug/o3_trace/0/events")
         .and_then(Value::as_array)
@@ -1070,6 +1122,31 @@ fn scoped_issue_binary_with_dump(
     let program = riscv64_program(&words);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)
+}
+
+fn general_iq_oldest_ready_binary(name: &str) -> std::path::PathBuf {
+    let data_start = 96_i32;
+    let mut words = vec![i_type(84, 0, 0x0, 1, 0x13), i_type(7, 0, 0x0, 2, 0x13)];
+    let auipc_pc = (words.len() * 4) as i32;
+    words.extend([
+        u_type(0, 10, 0x17),
+        i_type(data_start - auipc_pc, 10, 0x0, 10, 0x13),
+        i_type(0, 10, 0b011, 5, 0x03),
+        r_type(1, 2, 1, 0x4, 6, 0x33),
+        i_type(-11, 6, 0x0, 7, 0x13),
+        i_type(5, 0, 0x0, 8, 0x13),
+        r_type(1, 2, 1, 0x0, 9, 0x33),
+        s_type(4, 7, 10, 0b010),
+        s_type(8, 8, 10, 0b010),
+        s_type(12, 9, 10, 0b010),
+    ]);
+    append_host_stop(&mut words);
+    while words.len() * 4 < data_start as usize {
+        words.push(0);
+    }
+    words.extend([9, 0, 0, 0]);
+    let program = riscv64_program(&words);
+    temp_binary(name, &riscv64_elf(0x8000_0000, 0x8000_0000, &program))
 }
 
 fn scoped_issue_fu_head_binary(name: &str) -> std::path::PathBuf {
