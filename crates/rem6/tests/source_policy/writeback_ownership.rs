@@ -1,6 +1,7 @@
 use super::*;
 use syn::visit::Visit;
 
+const CORE_TEST_ANCHORS: &str = include_str!("core_test_anchors.txt");
 const WRITEBACK_ROOT: &str = "tests/cli_run/m5_host_actions/o3/writeback_port.rs";
 const FIXED_FU: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/fixed_fu.rs";
 const RESULT_SUPPORT: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/result_support.rs";
@@ -1197,6 +1198,36 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
             );
         }
     }
+
+    let registered_core_anchors = CORE_TEST_ANCHORS
+        .lines()
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    let task8_anchors = TWO_PENDING_RESULT_ADDRESS_ANCHORS
+        .into_iter()
+        .chain(TWO_PENDING_RESULT_ADDRESS_BOUNDARY_ANCHORS)
+        .collect::<Vec<_>>();
+    for anchor in &task8_anchors {
+        assert_eq!(
+            registered_core_anchors
+                .iter()
+                .filter(|registered| *registered == anchor)
+                .count(),
+            1,
+            "core_test_anchors.txt must register Task 8 anchor `{anchor}` exactly once"
+        );
+    }
+    let dependent_result_address_tail = "rem6_run_timing_suppresses_o3_dependent_result_address";
+    let dependent_result_address_tail_index = registered_core_anchors
+        .iter()
+        .position(|anchor| *anchor == dependent_result_address_tail)
+        .expect("core_test_anchors.txt must retain the dependent-result-address tail anchor");
+    let task8_anchor_start = dependent_result_address_tail_index + 1;
+    assert_eq!(
+        registered_core_anchors.get(task8_anchor_start..task8_anchor_start + task8_anchors.len()),
+        Some(task8_anchors.as_slice()),
+        "Task 8 anchors must immediately follow the current dependent-result-address anchors"
+    );
 
     assert_rustfmt_clean(&fixed_fu_path);
     assert_rustfmt_clean(&child_path);
