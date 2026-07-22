@@ -185,14 +185,16 @@ fn o3_runtime_iq_json(summary: &Rem6CoreSummary) -> String {
     )
 }
 
-fn o3_runtime_issue_json(stats: O3RuntimeStats) -> String {
+fn o3_runtime_issue_json(summary: &Rem6CoreSummary) -> String {
     format!(
-        "{{\"cycles\":{},\"issued_rows\":{},\"resource_blocked_row_cycles\":{},\"dependency_blocked_row_cycles\":{},\"max_rows_per_cycle\":{}}}",
-        stats.issue_cycles(),
-        stats.issued_rows(),
-        stats.resource_blocked_row_cycles(),
-        stats.dependency_blocked_row_cycles(),
-        stats.max_rows_per_cycle()
+        "{{\"configured_width\":{},\"configured_memory_width\":{},\"cycles\":{},\"issued_rows\":{},\"resource_blocked_row_cycles\":{},\"dependency_blocked_row_cycles\":{},\"max_rows_per_cycle\":{}}}",
+        summary.o3_runtime_issue_width,
+        summary.o3_runtime_memory_issue_width,
+        summary.o3_runtime.issue_cycles(),
+        summary.o3_runtime.issued_rows(),
+        summary.o3_runtime.resource_blocked_row_cycles(),
+        summary.o3_runtime.dependency_blocked_row_cycles(),
+        summary.o3_runtime.max_rows_per_cycle()
     )
 }
 
@@ -858,7 +860,7 @@ impl Rem6CoreSummary {
             let branch_direction_mismatch = o3_runtime_branch_direction_mismatch_json(self);
             let branch_target_mismatch = o3_runtime_branch_target_mismatch_json(self);
             let iq = o3_runtime_iq_json(self);
-            let issue = o3_runtime_issue_json(self.o3_runtime);
+            let issue = o3_runtime_issue_json(self);
             let writeback_port = o3_runtime_writeback_port_json(self.o3_runtime);
             let iew = o3_runtime_iew_json(self);
             let commit = o3_runtime_commit_json(self);

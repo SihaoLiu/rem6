@@ -803,8 +803,32 @@ impl RiscvCore {
         let mut state = self.state.lock().expect("riscv core lock");
         assert!(
             state.o3_runtime.set_issue_width(issue_width),
-            "RISC-V O3 issue width must be between {MIN_RISCV_O3_ISSUE_WIDTH} and {MAX_RISCV_O3_ISSUE_WIDTH}"
+            "RISC-V O3 issue width must be between {MIN_RISCV_O3_ISSUE_WIDTH} and {MAX_RISCV_O3_ISSUE_WIDTH} and at least the memory issue width"
         );
+    }
+
+    pub fn set_o3_memory_issue_width(&self, memory_issue_width: usize) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        assert!(
+            state.o3_runtime.set_memory_issue_width(memory_issue_width),
+            "RISC-V O3 memory issue width must be between {MIN_RISCV_O3_MEMORY_ISSUE_WIDTH} and {MAX_RISCV_O3_MEMORY_ISSUE_WIDTH} and no greater than the total issue width"
+        );
+    }
+
+    pub fn o3_issue_width(&self) -> usize {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .o3_runtime
+            .issue_width()
+    }
+
+    pub fn o3_memory_issue_width(&self) -> usize {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .o3_runtime
+            .memory_issue_width()
     }
 
     pub fn set_o3_writeback_width(&self, writeback_width: usize) {

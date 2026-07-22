@@ -461,6 +461,8 @@ pub(super) fn execution_summary(
             o3_runtime_execution_mode: execution_mode_for_cpu(&inputs.host_actions, cpu),
             o3_runtime_stats_epoch: o3_runtime_stats_reset.0,
             o3_runtime_stats_reset_tick: o3_runtime_stats_reset.1,
+            o3_runtime_issue_width: core.o3_issue_width(),
+            o3_runtime_memory_issue_width: core.o3_memory_issue_width(),
             o3_runtime_checkpoint_restore: o3_runtime_checkpoint_restore_for_cpu(
                 &inputs.host_actions,
                 cpu,

@@ -108,6 +108,8 @@ pub struct Rem6CoreSummary {
     pub(crate) o3_runtime_execution_mode: Option<&'static str>,
     pub(crate) o3_runtime_stats_epoch: u64,
     pub(crate) o3_runtime_stats_reset_tick: u64,
+    pub(crate) o3_runtime_issue_width: usize,
+    pub(crate) o3_runtime_memory_issue_width: usize,
     pub(crate) o3_runtime_checkpoint_restore: Option<Rem6HostCheckpointSummary>,
     pub(crate) o3_runtime_snapshot: O3RuntimeSnapshot,
     pub(crate) o3_runtime_writeback_reservations: Vec<O3RuntimeWritebackReservation>,

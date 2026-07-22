@@ -105,6 +105,7 @@ pub(super) fn build_cli_riscv_cores(
             o3_window_depths.scalar_live(),
         );
         core.set_o3_issue_width(config.riscv_o3_issue_width());
+        core.set_o3_memory_issue_width(config.riscv_o3_memory_issue_width());
         core.set_o3_writeback_width(config.riscv_o3_writeback_width());
         core.set_branch_predictor_kind(config.riscv_branch_predictor());
         cores.push(core);

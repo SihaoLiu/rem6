@@ -26,6 +26,8 @@ mod m5_host_action_o3_runtime_ownership;
 mod o3_alias_authority;
 #[path = "source_policy/o3_live_window_ownership.rs"]
 mod o3_live_window_ownership;
+#[path = "source_policy/o3_memory_issue_width_ownership.rs"]
+mod o3_memory_issue_width_ownership;
 #[path = "source_policy/power_activity_ownership.rs"]
 mod power_activity_ownership;
 #[path = "source_policy/producer_forwarded_jalr_ownership.rs"]

@@ -69,9 +69,9 @@ use riscv_se_input::reject_conflicting_riscv_se_output_paths;
 pub use riscv_se_input::{RiscvSeFileRequest, RiscvSeInputSource};
 pub(crate) use riscv_timing::DEFAULT_RISCV_IN_ORDER_WIDTH;
 use riscv_timing::{
-    apply_riscv_o3_width_flag, parse_riscv_in_order_width, parse_riscv_o3_scalar_live_window_depth,
+    parse_riscv_in_order_width, parse_riscv_o3_scalar_live_window_depth,
     parse_riscv_o3_scalar_memory_depth, resolve_riscv_o3_window_depths,
-    validate_optional_riscv_o3_widths, validate_riscv_in_order_width, RiscvO3WindowDepths,
+    validate_riscv_in_order_width, RiscvO3WidthOptions, RiscvO3WindowDepths,
 };
 pub use trace_replay::{TraceReplayExternalAdapterKind, TraceReplayFabricRouterStageConfig};
 
@@ -103,6 +103,7 @@ pub struct Rem6RunConfig {
     riscv_o3_scalar_memory_depth: Option<usize>,
     riscv_o3_scalar_live_window_depth: Option<usize>,
     riscv_o3_issue_width: Option<usize>,
+    riscv_o3_memory_issue_width: Option<usize>,
     riscv_o3_writeback_width: Option<usize>,
     riscv_branch_predictor: RiscvBranchPredictorKind,
     riscv_in_order_width: Option<usize>,
@@ -231,6 +232,7 @@ struct Rem6RunFileConfig {
     riscv_o3_scalar_memory_depth: Option<usize>,
     riscv_o3_scalar_live_window_depth: Option<usize>,
     riscv_o3_issue_width: Option<usize>,
+    riscv_o3_memory_issue_width: Option<usize>,
     riscv_o3_writeback_width: Option<usize>,
     riscv_branch_predictor: Option<String>,
     riscv_in_order_width: Option<usize>,
@@ -520,11 +522,11 @@ impl Rem6RunConfig {
             .transpose()?;
         let mut riscv_o3_scalar_memory_depth = file_config.riscv_o3_scalar_memory_depth;
         let mut riscv_o3_scalar_live_window_depth = file_config.riscv_o3_scalar_live_window_depth;
-        let (mut riscv_o3_issue_width, mut riscv_o3_writeback_width) =
-            validate_optional_riscv_o3_widths(
-                file_config.riscv_o3_issue_width,
-                file_config.riscv_o3_writeback_width,
-            )?;
+        let mut riscv_o3_widths = RiscvO3WidthOptions::new(
+            file_config.riscv_o3_issue_width,
+            file_config.riscv_o3_memory_issue_width,
+            file_config.riscv_o3_writeback_width,
+        )?;
         let mut riscv_branch_predictor = file_config
             .riscv_branch_predictor
             .as_deref()
@@ -950,14 +952,11 @@ impl Rem6RunConfig {
                             args.next(),
                         )?)?);
                 }
-                "--riscv-o3-issue-width" | "--riscv-o3-writeback-width" => {
+                "--riscv-o3-issue-width"
+                | "--riscv-o3-memory-issue-width"
+                | "--riscv-o3-writeback-width" => {
                     let value = required_value(&flag, args.next())?;
-                    apply_riscv_o3_width_flag(
-                        &flag,
-                        &value,
-                        &mut riscv_o3_issue_width,
-                        &mut riscv_o3_writeback_width,
-                    )?;
+                    riscv_o3_widths.apply_flag(&flag, &value)?;
                 }
                 "--riscv-branch-predictor" => {
                     let value = required_value(&flag, args.next())?;
@@ -1360,6 +1359,7 @@ impl Rem6RunConfig {
             riscv_o3_scalar_memory_depth,
             riscv_o3_scalar_live_window_depth,
         )?;
+        riscv_o3_widths.validate_resolved()?;
         let (dram_timing, dram_low_power_timing, dram_refresh_timing) =
             validate_dram_timing_options(
                 dram_memory,
@@ -1399,8 +1399,9 @@ impl Rem6RunConfig {
             riscv_branch_lookahead,
             riscv_o3_scalar_memory_depth,
             riscv_o3_scalar_live_window_depth,
-            riscv_o3_issue_width,
-            riscv_o3_writeback_width,
+            riscv_o3_issue_width: riscv_o3_widths.issue(),
+            riscv_o3_memory_issue_width: riscv_o3_widths.memory_issue(),
+            riscv_o3_writeback_width: riscv_o3_widths.writeback(),
             riscv_branch_predictor,
             riscv_in_order_width,
             riscv_execution_mode,

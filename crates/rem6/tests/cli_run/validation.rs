@@ -1,5 +1,7 @@
 #[path = "validation/o3_depths.rs"]
 mod o3_depths;
+#[path = "validation/o3_memory_issue_width.rs"]
+mod o3_memory_issue_width;
 
 use std::process::Command;
 

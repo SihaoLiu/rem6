@@ -138,6 +138,9 @@ fn validate_non_execution_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliEr
     if config.riscv_o3_issue_width_is_explicit() {
         return Err(Rem6CliError::RiscvO3IssueWidthRequiresExecution);
     }
+    if config.riscv_o3_memory_issue_width_is_explicit() {
+        return Err(Rem6CliError::RiscvO3MemoryIssueWidthRequiresExecution);
+    }
     if config.riscv_o3_writeback_width_is_explicit() {
         return Err(Rem6CliError::RiscvO3WritebackWidthRequiresExecution);
     }
@@ -247,6 +250,9 @@ fn validate_cache_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
     }
     if config.riscv_o3_issue_width_is_explicit() && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::RiscvO3IssueWidthRequiresRiscv);
+    }
+    if config.riscv_o3_memory_issue_width_is_explicit() && config.isa() != RequestedIsa::Riscv {
+        return Err(Rem6CliError::RiscvO3MemoryIssueWidthRequiresRiscv);
     }
     if config.riscv_o3_writeback_width_is_explicit() && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::RiscvO3WritebackWidthRequiresRiscv);

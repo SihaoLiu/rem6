@@ -4,11 +4,12 @@ use crate::o3_runtime_trace::{O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3Run
 use crate::riscv_branch_kind::is_riscv_link_register;
 use crate::riscv_data_completion::apply_data_completion;
 use crate::riscv_defaults::{
-    DEFAULT_RISCV_O3_ISSUE_WIDTH, MAX_RISCV_O3_ISSUE_WIDTH, MAX_RISCV_O3_SCALAR_LIVE_WINDOW_DEPTH,
-    MAX_RISCV_O3_SCALAR_MEMORY_DEPTH, MAX_RISCV_O3_WRITEBACK_WIDTH, MIN_RISCV_O3_ISSUE_WIDTH,
+    DEFAULT_RISCV_O3_ISSUE_WIDTH, DEFAULT_RISCV_O3_MEMORY_ISSUE_WIDTH,
+    MAX_RISCV_O3_SCALAR_LIVE_WINDOW_DEPTH, MAX_RISCV_O3_SCALAR_MEMORY_DEPTH,
     MIN_RISCV_O3_SCALAR_LIVE_WINDOW_DEPTH, MIN_RISCV_O3_SCALAR_MEMORY_DEPTH,
-    MIN_RISCV_O3_WRITEBACK_WIDTH,
 };
+#[cfg(test)]
+pub(crate) use crate::riscv_defaults::{MAX_RISCV_O3_ISSUE_WIDTH, MIN_RISCV_O3_ISSUE_WIDTH};
 use crate::riscv_execution_event::RiscvCpuExecutionEvent;
 use crate::riscv_fu_latency::riscv_o3_fu_latency_class as o3_fu_latency_class;
 use crate::{
@@ -75,6 +76,8 @@ mod o3_runtime_retire;
 mod o3_runtime_snapshot_entries;
 #[path = "o3_runtime_stats.rs"]
 mod o3_runtime_stats;
+#[path = "o3_runtime_widths.rs"]
+mod o3_runtime_widths;
 #[path = "o3_runtime_writeback.rs"]
 mod o3_runtime_writeback;
 #[cfg(test)]
@@ -255,6 +258,7 @@ pub struct O3RuntimeState {
     scalar_live_window_limit: usize,
     window_depths_explicit: bool,
     issue_width: usize,
+    memory_issue_width: usize,
     last_live_commit_tick: Option<u64>,
     next_sequence: u64,
     next_physical_register: u32,
@@ -321,42 +325,6 @@ impl O3RuntimeState {
 
     pub const fn stats(&self) -> O3RuntimeStats {
         self.stats
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn issue_width(&self) -> usize {
-        self.issue_width
-    }
-
-    pub(crate) fn set_issue_width(&mut self, issue_width: usize) -> bool {
-        if !(MIN_RISCV_O3_ISSUE_WIDTH..=MAX_RISCV_O3_ISSUE_WIDTH).contains(&issue_width) {
-            return false;
-        }
-        self.issue_width = issue_width;
-        true
-    }
-
-    pub(crate) const fn writeback_width(&self) -> usize {
-        self.snapshot
-            .pending_state()
-            .writeback()
-            .policy()
-            .writeback_width()
-    }
-
-    pub(crate) fn set_writeback_width(&mut self, writeback_width: usize) -> bool {
-        if !(MIN_RISCV_O3_WRITEBACK_WIDTH..=MAX_RISCV_O3_WRITEBACK_WIDTH).contains(&writeback_width)
-        {
-            return false;
-        }
-        if !self.writeback_calendar.is_empty() {
-            return false;
-        }
-
-        self.rebuild_writeback_policy(writeback_width)
-            .expect("rebuilt O3 pending-state snapshot is valid");
-        debug_assert_eq!(self.writeback_width(), writeback_width);
-        true
     }
 
     pub fn trace_records(&self) -> &[O3RuntimeTraceRecord] {
@@ -681,6 +649,7 @@ impl Default for O3RuntimeState {
             scalar_live_window_limit: 2,
             window_depths_explicit: false,
             issue_width: DEFAULT_RISCV_O3_ISSUE_WIDTH,
+            memory_issue_width: DEFAULT_RISCV_O3_MEMORY_ISSUE_WIDTH,
             last_live_commit_tick: None,
             next_sequence: 0,
             next_physical_register: 1,

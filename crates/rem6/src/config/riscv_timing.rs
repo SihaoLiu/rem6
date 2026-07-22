@@ -1,8 +1,9 @@
 use rem6_cpu::{
-    MAX_RISCV_O3_ISSUE_WIDTH, MAX_RISCV_O3_SCALAR_LIVE_WINDOW_DEPTH,
+    DEFAULT_RISCV_O3_ISSUE_WIDTH, DEFAULT_RISCV_O3_MEMORY_ISSUE_WIDTH, MAX_RISCV_O3_ISSUE_WIDTH,
+    MAX_RISCV_O3_MEMORY_ISSUE_WIDTH, MAX_RISCV_O3_SCALAR_LIVE_WINDOW_DEPTH,
     MAX_RISCV_O3_SCALAR_MEMORY_DEPTH, MAX_RISCV_O3_WRITEBACK_WIDTH, MIN_RISCV_O3_ISSUE_WIDTH,
-    MIN_RISCV_O3_SCALAR_LIVE_WINDOW_DEPTH, MIN_RISCV_O3_SCALAR_MEMORY_DEPTH,
-    MIN_RISCV_O3_WRITEBACK_WIDTH,
+    MIN_RISCV_O3_MEMORY_ISSUE_WIDTH, MIN_RISCV_O3_SCALAR_LIVE_WINDOW_DEPTH,
+    MIN_RISCV_O3_SCALAR_MEMORY_DEPTH, MIN_RISCV_O3_WRITEBACK_WIDTH,
 };
 
 use crate::Rem6CliError;
@@ -23,6 +24,73 @@ impl RiscvO3WindowDepths {
 
     pub(crate) const fn scalar_live(self) -> usize {
         self.scalar_live
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RiscvO3WidthOptions {
+    issue: Option<usize>,
+    memory_issue: Option<usize>,
+    writeback: Option<usize>,
+}
+
+impl RiscvO3WidthOptions {
+    pub(crate) fn new(
+        issue: Option<usize>,
+        memory_issue: Option<usize>,
+        writeback: Option<usize>,
+    ) -> Result<Self, Rem6CliError> {
+        let widths = Self {
+            issue: validate_optional_riscv_o3_issue_width(issue)?,
+            memory_issue: validate_optional_riscv_o3_memory_issue_width(memory_issue)?,
+            writeback: validate_optional_riscv_o3_writeback_width(writeback)?,
+        };
+        widths.validate_resolved()?;
+        Ok(widths)
+    }
+
+    pub(crate) fn apply_flag(&mut self, flag: &str, value: &str) -> Result<(), Rem6CliError> {
+        match flag {
+            "--riscv-o3-issue-width" => self.issue = Some(parse_riscv_o3_issue_width(value)?),
+            "--riscv-o3-memory-issue-width" => {
+                self.memory_issue = Some(parse_riscv_o3_memory_issue_width(value)?);
+            }
+            "--riscv-o3-writeback-width" => {
+                self.writeback = Some(parse_riscv_o3_writeback_width(value)?);
+            }
+            _ => {
+                return Err(Rem6CliError::UnknownFlag {
+                    flag: flag.to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_resolved(self) -> Result<(), Rem6CliError> {
+        let issue_width = self.issue.unwrap_or(DEFAULT_RISCV_O3_ISSUE_WIDTH);
+        let memory_issue_width = self
+            .memory_issue
+            .unwrap_or(DEFAULT_RISCV_O3_MEMORY_ISSUE_WIDTH);
+        if memory_issue_width > issue_width {
+            return Err(Rem6CliError::RiscvO3MemoryIssueWidthExceedsIssueWidth {
+                memory_issue_width,
+                issue_width,
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) const fn issue(self) -> Option<usize> {
+        self.issue
+    }
+
+    pub(crate) const fn memory_issue(self) -> Option<usize> {
+        self.memory_issue
+    }
+
+    pub(crate) const fn writeback(self) -> Option<usize> {
+        self.writeback
     }
 }
 
@@ -102,7 +170,16 @@ pub(crate) fn parse_riscv_o3_writeback_width(value: &str) -> Result<usize, Rem6C
     validate_riscv_o3_writeback_width(width, value.to_string())
 }
 
-pub(crate) fn validate_optional_riscv_o3_issue_width(
+fn parse_riscv_o3_memory_issue_width(value: &str) -> Result<usize, Rem6CliError> {
+    let width = value
+        .parse()
+        .map_err(|_| Rem6CliError::InvalidRiscvO3MemoryIssueWidth {
+            value: value.to_string(),
+        })?;
+    validate_riscv_o3_memory_issue_width(width, value.to_string())
+}
+
+fn validate_optional_riscv_o3_issue_width(
     width: Option<usize>,
 ) -> Result<Option<usize>, Rem6CliError> {
     width
@@ -110,42 +187,20 @@ pub(crate) fn validate_optional_riscv_o3_issue_width(
         .transpose()
 }
 
-pub(crate) fn validate_optional_riscv_o3_writeback_width(
+fn validate_optional_riscv_o3_memory_issue_width(
+    width: Option<usize>,
+) -> Result<Option<usize>, Rem6CliError> {
+    width
+        .map(|width| validate_riscv_o3_memory_issue_width(width, width.to_string()))
+        .transpose()
+}
+
+fn validate_optional_riscv_o3_writeback_width(
     width: Option<usize>,
 ) -> Result<Option<usize>, Rem6CliError> {
     width
         .map(|width| validate_riscv_o3_writeback_width(width, width.to_string()))
         .transpose()
-}
-
-pub(crate) fn validate_optional_riscv_o3_widths(
-    issue: Option<usize>,
-    writeback: Option<usize>,
-) -> Result<(Option<usize>, Option<usize>), Rem6CliError> {
-    Ok((
-        validate_optional_riscv_o3_issue_width(issue)?,
-        validate_optional_riscv_o3_writeback_width(writeback)?,
-    ))
-}
-
-pub(crate) fn apply_riscv_o3_width_flag(
-    flag: &str,
-    value: &str,
-    issue: &mut Option<usize>,
-    writeback: &mut Option<usize>,
-) -> Result<(), Rem6CliError> {
-    match flag {
-        "--riscv-o3-issue-width" => *issue = Some(parse_riscv_o3_issue_width(value)?),
-        "--riscv-o3-writeback-width" => {
-            *writeback = Some(parse_riscv_o3_writeback_width(value)?);
-        }
-        _ => {
-            return Err(Rem6CliError::UnknownFlag {
-                flag: flag.to_string(),
-            });
-        }
-    }
-    Ok(())
 }
 
 fn validate_riscv_o3_scalar_memory_depth(depth: usize) -> Result<usize, Rem6CliError> {
@@ -171,6 +226,16 @@ fn validate_riscv_o3_scalar_live_window_depth(depth: usize) -> Result<usize, Rem
 fn validate_riscv_o3_issue_width(width: usize, value: String) -> Result<usize, Rem6CliError> {
     if !(MIN_RISCV_O3_ISSUE_WIDTH..=MAX_RISCV_O3_ISSUE_WIDTH).contains(&width) {
         return Err(Rem6CliError::InvalidRiscvO3IssueWidth { value });
+    }
+    Ok(width)
+}
+
+fn validate_riscv_o3_memory_issue_width(
+    width: usize,
+    value: String,
+) -> Result<usize, Rem6CliError> {
+    if !(MIN_RISCV_O3_MEMORY_ISSUE_WIDTH..=MAX_RISCV_O3_MEMORY_ISSUE_WIDTH).contains(&width) {
+        return Err(Rem6CliError::InvalidRiscvO3MemoryIssueWidth { value });
     }
     Ok(width)
 }

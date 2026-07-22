@@ -53,6 +53,29 @@ fn o3_issue_width_survives_snapshot_restore() {
 }
 
 #[test]
+fn o3_runtime_memory_issue_width_defaults_to_one_and_tracks_valid_values() {
+    let mut runtime = O3RuntimeState::default();
+
+    assert_eq!(runtime.memory_issue_width(), 1);
+    assert!(runtime.set_memory_issue_width(4));
+    assert_eq!(runtime.memory_issue_width(), 4);
+}
+
+#[test]
+fn o3_runtime_rejects_memory_width_outside_total_issue_width() {
+    let mut runtime = O3RuntimeState::default();
+
+    assert!(runtime.set_issue_width(2));
+    assert!(!runtime.set_memory_issue_width(3));
+    assert_eq!(runtime.memory_issue_width(), 1);
+    assert!(runtime.set_memory_issue_width(2));
+    assert_eq!(runtime.memory_issue_width(), 2);
+    assert!(!runtime.set_issue_width(1));
+    assert_eq!(runtime.issue_width(), 2);
+    assert_eq!(runtime.memory_issue_width(), 2);
+}
+
+#[test]
 fn execution_writes_link_register_uses_actual_coroutine_register_write() {
     let coroutine = RiscvInstruction::Jalr {
         rd: rem6_isa_riscv::Register::new(5).unwrap(),
