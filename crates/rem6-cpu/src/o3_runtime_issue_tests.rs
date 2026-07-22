@@ -13,6 +13,9 @@ use crate::{CpuFetchEvent, CpuFetchRecord, RiscvCpuExecutionEvent};
 #[path = "o3_runtime_issue_tests/dependency_scopes.rs"]
 mod dependency_scopes;
 
+#[path = "o3_runtime_issue/calendar_tests.rs"]
+mod calendar;
+
 #[test]
 fn scoped_issue_reserves_head_width() {
     let mut fixture = ScalarIssueFixture::new(1, ScalarIssueCase::CrossResource);

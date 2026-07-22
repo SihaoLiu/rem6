@@ -13,6 +13,9 @@ use crate::o3_pipeline::{
 
 #[path = "o3_runtime_issue/dependency.rs"]
 mod dependency;
+
+#[path = "o3_runtime_issue/calendar.rs"]
+pub(in crate::o3_runtime) mod calendar;
 #[path = "o3_runtime_issue/pending_address.rs"]
 mod pending_address;
 pub(crate) use dependency::O3LiveIssueDependencyTable;
