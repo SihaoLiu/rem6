@@ -2995,7 +2995,6 @@ fn o3_live_issue_calendar_owns_reservations_and_arbiter() {
     let issue = production_rust_source(&issue_source);
     let calendar = production_rust_source(&fs::read_to_string(&calendar_path).unwrap());
     let calendar_tests_source = fs::read_to_string(&calendar_tests_path).unwrap();
-    let calendar_tests = rust_code_without_comments_and_literals(&calendar_tests_source);
     let issue_tests_source = fs::read_to_string(&issue_tests_path).unwrap();
 
     assert!(
@@ -3010,10 +3009,19 @@ fn o3_live_issue_calendar_owns_reservations_and_arbiter() {
         line_count(&calendar_tests_path) <= MAX_O3_RUNTIME_ISSUE_CALENDAR_TEST_LINES,
         "src/o3_runtime_issue/calendar_tests.rs exceeds {MAX_O3_RUNTIME_ISSUE_CALENDAR_TEST_LINES} lines"
     );
-    assert!(
-        issue_source.contains("#[path = \"o3_runtime_issue/calendar.rs\"]")
-            && issue_source.contains("mod calendar;"),
-        "src/o3_runtime_issue.rs must declare o3_runtime_issue/calendar.rs"
+    assert_eq!(
+        path_owned_module_path_declaration_count(&issue_source, "o3_runtime_issue/calendar.rs"),
+        1,
+        "src/o3_runtime_issue.rs must attach o3_runtime_issue/calendar.rs exactly once"
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &issue_source,
+            "o3_runtime_issue/calendar.rs",
+            "calendar"
+        ),
+        1,
+        "src/o3_runtime_issue.rs must declare o3_runtime_issue/calendar.rs exactly once"
     );
     assert_eq!(
         path_owned_module_declaration_count(
@@ -3127,18 +3135,13 @@ fn o3_live_issue_calendar_owns_reservations_and_arbiter() {
         "live_issue_calendar_rebuild_releases_removed_prior_row",
         "live_issue_calendar_selected_pending_tick_reserves_memory",
         "live_issue_calendar_separates_resource_and_dependency_blocks",
-        "live_issue_tick_decision_aggregates_same_tick_attempts",
+        "live_issue_calendar_tick_decision_aggregates_same_tick_attempts",
     ];
-    assert_eq!(
-        calendar_tests.matches("#[test]").count(),
-        expected_calendar_tests.len(),
-        "calendar_tests.rs must expose exactly the focused five-test inventory"
-    );
     for anchor in expected_calendar_tests {
         assert_eq!(
-            rust_function_definition_count(&calendar_tests, anchor),
+            rust_test_function_definition_count(&calendar_tests_source, anchor),
             1,
-            "calendar_tests.rs must contain exact test anchor `{anchor}`"
+            "calendar_tests.rs must compile exact test anchor `{anchor}`"
         );
     }
 }
@@ -5171,12 +5174,27 @@ fn producer_forwarded_chain_authority_stays_focused() {
 #[test]
 fn live_window_module_policy_ignores_comments_and_detects_nonliteral_includes() {
     let live = "#[path = \"identity.rs\"]\nmod identity;\n";
+    let restricted = "#[path = \"identity.rs\"]\npub(in crate::runtime) mod identity;\n";
+    let shadow = "#[path = \"identity.rs\"]\nmod identity_shadow;\n";
+    let duplicate = format!("{live}{shadow}");
     let commented = "/* #[path = \"identity.rs\"]\nmod identity; */\n";
     let detached = "#[path = \"identity.rs\"]\nconst MARKER: () = ();\nmod identity;\n";
 
     assert_eq!(
         path_owned_module_declaration_count(live, "identity.rs", "identity"),
         1
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(restricted, "identity.rs", "identity"),
+        1
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(&duplicate, "identity.rs", "identity"),
+        1
+    );
+    assert_eq!(
+        path_owned_module_path_declaration_count(&duplicate, "identity.rs"),
+        2
     );
     assert_eq!(
         path_owned_module_declaration_count(commented, "identity.rs", "identity"),
@@ -5528,6 +5546,87 @@ fn rust_function_definition_count(source: &str, name: &str) -> usize {
             }
         }
         index = end;
+    }
+    count
+}
+
+fn rust_test_function_definition_count(source: &str, name: &str) -> usize {
+    let code = rust_code_without_comments_and_literals(source);
+    let chars = code.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    let mut count = 0;
+    while index < chars.len() {
+        if chars.get(index) != Some(&'#') {
+            index += 1;
+            continue;
+        }
+        let attribute_start = skip_rust_whitespace(&chars, index + 1);
+        if chars.get(attribute_start) != Some(&'[') {
+            index += 1;
+            continue;
+        }
+        let Some(attribute_end) = matching_delimiter(&chars, attribute_start, '[', ']') else {
+            break;
+        };
+        let attribute = chars[attribute_start + 1..attribute_end]
+            .iter()
+            .collect::<String>();
+        if attribute.trim() == "test" {
+            let mut item_start = attribute_end + 1;
+            loop {
+                item_start = skip_rust_whitespace(&chars, item_start);
+                if chars.get(item_start) != Some(&'#') {
+                    break;
+                }
+                let next_attribute = skip_rust_whitespace(&chars, item_start + 1);
+                if chars.get(next_attribute) != Some(&'[') {
+                    break;
+                }
+                let Some(next_attribute_end) = matching_delimiter(&chars, next_attribute, '[', ']')
+                else {
+                    break;
+                };
+                item_start = next_attribute_end + 1;
+            }
+
+            item_start = skip_rust_whitespace(&chars, item_start);
+            if let Some((visibility, visibility_end)) = rust_identifier_at(&chars, item_start) {
+                if visibility == "pub" {
+                    item_start = skip_rust_whitespace(&chars, visibility_end);
+                    if chars.get(item_start) == Some(&'(') {
+                        let Some(visibility_close) =
+                            matching_delimiter(&chars, item_start, '(', ')')
+                        else {
+                            break;
+                        };
+                        item_start = skip_rust_whitespace(&chars, visibility_close + 1);
+                    }
+                }
+            }
+            loop {
+                let Some((qualifier, qualifier_end)) = rust_identifier_at(&chars, item_start)
+                else {
+                    break;
+                };
+                if matches!(qualifier.as_str(), "async" | "unsafe") {
+                    item_start = skip_rust_whitespace(&chars, qualifier_end);
+                    continue;
+                }
+                if qualifier == "fn" {
+                    let name_start = skip_rust_whitespace(&chars, qualifier_end);
+                    if let Some((function_name, name_end)) = rust_identifier_at(&chars, name_start)
+                    {
+                        let after_name = skip_rust_whitespace(&chars, name_end);
+                        if function_name == name && matches!(chars.get(after_name), Some('(' | '<'))
+                        {
+                            count += 1;
+                        }
+                    }
+                }
+                break;
+            }
+        }
+        index = attribute_end + 1;
     }
     count
 }
@@ -6335,6 +6434,29 @@ fn not_obsolete_name() {}
         !production_defines_exact_function(&production, "obsolete_name"),
         "unrelated identifiers, calls, comments, literals, or longer names must not count"
     );
+
+    let tests = r#"
+#[test]
+fn focused_test() {}
+
+fn detached_test() {}
+
+#[test]
+#[cfg(target_pointer_width = "64")]
+fn attributed_test() {}
+"#;
+    assert_eq!(
+        rust_test_function_definition_count(tests, "focused_test"),
+        1
+    );
+    assert_eq!(
+        rust_test_function_definition_count(tests, "detached_test"),
+        0
+    );
+    assert_eq!(
+        rust_test_function_definition_count(tests, "attributed_test"),
+        1
+    );
 }
 
 #[test]
@@ -6853,27 +6975,63 @@ fn external_module_declaration_lines(source: &str) -> Vec<usize> {
         .collect()
 }
 
+fn path_owned_module_path_declaration_count(source: &str, path: &str) -> usize {
+    path_owned_module_declarations(source, path).len()
+}
+
 fn path_owned_module_declaration_count(source: &str, path: &str, module: &str) -> usize {
+    path_owned_module_declarations(source, path)
+        .into_iter()
+        .filter(|declared| declared == module)
+        .count()
+}
+
+fn path_owned_module_declarations(source: &str, path: &str) -> Vec<String> {
     let code = rust_code_without_comments_and_literals(source);
     let source_lines = source.lines().collect::<Vec<_>>();
     let code_lines = code.lines().collect::<Vec<_>>();
     let attribute = format!("#[path = \"{path}\"]");
-    let declaration = format!("mod {module};");
 
     source_lines
         .iter()
         .zip(&code_lines)
         .enumerate()
-        .filter(|(index, (source_line, code_line))| {
-            source_line.trim() == attribute
-                && code_line.trim_start().starts_with("#[path")
-                && code_lines
-                    .iter()
-                    .skip(index + 1)
-                    .find(|line| !line.trim().is_empty())
-                    .is_some_and(|line| line.trim() == declaration)
+        .filter_map(|(index, (source_line, code_line))| {
+            (source_line.trim() == attribute && code_line.trim_start().starts_with("#[path"))
+                .then(|| {
+                    code_lines
+                        .iter()
+                        .skip(index + 1)
+                        .find(|line| !line.trim().is_empty())
+                        .and_then(|line| external_module_declaration_name(line))
+                        .map(str::to_owned)
+                })
+                .flatten()
         })
-        .count()
+        .collect()
+}
+
+fn external_module_declaration_name(line: &str) -> Option<&str> {
+    let line = line.trim();
+    let declaration = if let Some(declaration) = line.strip_prefix("mod ") {
+        declaration
+    } else if let Some(declaration) = line.strip_prefix("pub mod ") {
+        declaration
+    } else if let Some(declaration) = line.strip_prefix("pub(crate) mod ") {
+        declaration
+    } else if let Some(declaration) = line.strip_prefix("pub(super) mod ") {
+        declaration
+    } else {
+        let restricted = line.strip_prefix("pub(in ")?;
+        let visibility_end = restricted.find(')')?;
+        restricted[visibility_end + 1..]
+            .trim_start()
+            .strip_prefix("mod ")?
+    };
+    let name = declaration.strip_suffix(';')?.trim();
+    let chars = name.chars().collect::<Vec<_>>();
+    let (_, end) = rust_identifier_at(&chars, 0)?;
+    (end == chars.len()).then_some(name)
 }
 
 fn production_rust_source(source: &str) -> String {

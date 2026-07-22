@@ -180,7 +180,7 @@ fn live_issue_calendar_separates_resource_and_dependency_blocks() {
 }
 
 #[test]
-fn live_issue_tick_decision_aggregates_same_tick_attempts() {
+fn live_issue_calendar_tick_decision_aggregates_same_tick_attempts() {
     let mut first_runtime = O3RuntimeState::default();
     assert!(first_runtime.set_issue_width(2));
     let first_head = O3LiveIssueHeadReservation::for_instruction(1, 20, addi(3, 0, 1));
