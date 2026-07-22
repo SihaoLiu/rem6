@@ -38,6 +38,9 @@ impl O3PendingDataAddresses {
     pub(super) fn find_sequence(&self, sequence: u64) -> Option<&O3PendingDataAddress> {
         self.rows.iter().find(|row| row.sequence == sequence)
     }
+    pub(super) fn find_sequence_mut(&mut self, sequence: u64) -> Option<&mut O3PendingDataAddress> {
+        self.rows.iter_mut().find(|row| row.sequence == sequence)
+    }
 
     pub(super) fn find_fetch(&self, request: MemoryRequestId) -> Option<&O3PendingDataAddress> {
         self.rows.iter().find(|row| {

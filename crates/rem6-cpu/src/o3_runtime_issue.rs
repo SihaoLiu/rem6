@@ -423,7 +423,8 @@ impl O3RuntimeState {
             };
             selected.push(scheduling);
         }
-        selected.sort_by_key(|candidate| !candidate.is_pending_data_address());
+        selected
+            .sort_by_key(|candidate| (!candidate.is_pending_data_address(), candidate.sequence()));
 
         let mut prepared = Vec::with_capacity(selected.len());
         for scheduling in selected {
@@ -524,7 +525,7 @@ impl O3RuntimeState {
         if head.issue_tick == tick {
             reservations.reserve(head.op_class);
         }
-        if self.pending_data_address_selected_issue_tick_for_reservation() == Some(tick) {
+        if self.pending_data_address_selected_issue_tick_for_reservation(tick) {
             reservations.reserve(O3IssueOpClass::Memory);
         }
         for issued in self.live_speculative_executions.iter().filter(|issued| {

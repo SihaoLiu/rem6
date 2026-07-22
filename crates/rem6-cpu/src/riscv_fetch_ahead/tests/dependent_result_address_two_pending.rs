@@ -11,6 +11,19 @@ fn bytes(instruction: u32) -> Vec<u8> {
     instruction.to_le_bytes().to_vec()
 }
 
+fn add(rd: u8, rs1: u8, rs2: u8) -> u32 {
+    r_type(0, rs2, rs1, 0, rd, 0x33)
+}
+
+fn window_core(fetches: Vec<(u64, u64, Vec<u8>)>) -> RiscvCore {
+    let core = core_with_completed_fetches(fetches);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+    core.write_register(reg(2), 0x9000);
+    core.write_register(reg(4), 0x9010);
+    core
+}
+
 type CompletedResultTriple = (
     RiscvCore,
     RiscvCompletedFetchInstruction,
@@ -241,4 +254,94 @@ fn dependent_address_two_pending_rejects_duplicate_self_cycle_and_unrelated_grap
     assert_eq!(authorizer.try_authorize_next(&unrelated_second), None);
     assert_eq!(authorizer.dependent_rows(), 1);
     assert_eq!(authorizer.result_destinations(), &[reg(5), reg(6)]);
+}
+
+#[test]
+fn dependent_address_two_pending_window_records_both_authorizations() {
+    let core = window_core(vec![
+        (0, 0x8000, bytes(ld(5, 2, 0))),
+        (1, 0x8004, bytes(ld(6, 5, 8))),
+        (2, 0x8008, bytes(ld(7, 5, 16))),
+        (3, 0x800c, bytes(add(8, 6, 7))),
+    ]);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+    let state = core.state.lock().expect("riscv core lock");
+    let roles = [0, 1, 2].map(|sequence| {
+        state
+            .memory_result_window_authorizations
+            .get(&request(sequence))
+            .copied()
+            .map(O3MemoryResultWindowAuthorization::role)
+    });
+    assert_eq!(
+        roles,
+        [
+            Some(O3MemoryResultWindowRole::Head),
+            Some(O3MemoryResultWindowRole::YoungerDependentRead),
+            Some(O3MemoryResultWindowRole::YoungerDependentRead),
+        ]
+    );
+}
+
+#[test]
+fn dependent_address_two_pending_split_fetch_uses_previous_last_request() {
+    let first = bytes(ld(6, 5, 8));
+    let core = window_core(vec![
+        (0, 0x8000, bytes(ld(5, 2, 0))),
+        (1, 0x8004, first[..2].to_vec()),
+        (2, 0x8006, first[2..].to_vec()),
+        (3, 0x8008, bytes(ld(7, 6, 16))),
+        (4, 0x800c, bytes(add(8, 6, 7))),
+    ]);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+    let state = core.state.lock().expect("riscv core lock");
+    assert!(state
+        .memory_result_window_authorizations
+        .contains_key(&request(1)));
+    assert!(!state
+        .memory_result_window_authorizations
+        .contains_key(&request(2)));
+    assert_eq!(
+        state
+            .memory_result_window_authorizations
+            .get(&request(3))
+            .copied()
+            .and_then(O3MemoryResultWindowAuthorization::dependent_source),
+        Some((reg(6), MemoryWidth::Doubleword, Immediate::new(16)))
+    );
+}
+
+#[test]
+fn dependent_address_two_pending_rejects_late_pending_after_scalar() {
+    let core = window_core(vec![
+        (0, 0x8000, bytes(ld(5, 2, 0))),
+        (1, 0x8004, bytes(ld(6, 5, 8))),
+        (2, 0x8008, bytes(add(8, 5, 6))),
+        (3, 0x800c, bytes(ld(7, 6, 16))),
+    ]);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+    let state = core.state.lock().expect("riscv core lock");
+    assert_eq!(state.memory_result_window_authorizations.len(), 2);
+    assert!(!state
+        .memory_result_window_authorizations
+        .contains_key(&request(3)));
+}
+
+#[test]
+fn dependent_address_two_pending_rejects_dependent_plus_unrelated_memory_result() {
+    let core = window_core(vec![
+        (0, 0x8000, bytes(ld(5, 2, 0))),
+        (1, 0x8004, bytes(ld(6, 5, 8))),
+        (2, 0x8008, bytes(ld(7, 4, 16))),
+    ]);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+    let state = core.state.lock().expect("riscv core lock");
+    assert_eq!(state.memory_result_window_authorizations.len(), 2);
+    assert!(!state
+        .memory_result_window_authorizations
+        .contains_key(&request(2)));
 }

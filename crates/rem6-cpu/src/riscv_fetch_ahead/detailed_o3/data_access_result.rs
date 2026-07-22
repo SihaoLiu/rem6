@@ -25,6 +25,7 @@ use super::{
         data_access_result_younger_authorization, result_head_allows_younger_effect,
     },
     data_access_result_pair_policy::result_head_allows_younger_read,
+    dependent_result_address::DependentResultAddressAuthorizer,
     dependent_result_address_authorization, DetailedFetchAheadCandidate,
     TranslatedMemoryFetchAhead,
 };
@@ -40,7 +41,6 @@ pub(in crate::riscv_fetch_ahead) enum DataAccessResultHeadPhysicalProbe {
     },
     Blocked,
 }
-
 pub(in crate::riscv_fetch_ahead) fn data_access_result_head_physical_probe(
     state: &RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
@@ -92,7 +92,6 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_head_physical_probe(
         request_byte_offset: probe.request_byte_offset,
     }
 }
-
 fn data_access_result_fetch_ahead_shape(
     state: &RiscvCoreState,
     instruction: RiscvInstruction,
@@ -140,7 +139,6 @@ fn data_access_result_fetch_ahead_shape(
     };
     Some(integer_destination)
 }
-
 pub(in crate::riscv_fetch_ahead) fn data_access_result_fetch_ahead_authorization(
     state: &RiscvCoreState,
     fetch_request: MemoryRequestId,
@@ -157,7 +155,6 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_fetch_ahead_authorization
         O3MemoryResultWindowRole::Head,
     )
 }
-
 pub(in crate::riscv_fetch_ahead) fn data_access_result_authorization(
     state: &RiscvCoreState,
     fetch_request: MemoryRequestId,
@@ -217,7 +214,6 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_authorization(
         role,
     ))
 }
-
 pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
     state: &RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
@@ -229,12 +225,14 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
         return DetailedFetchAheadCandidate::Blocked;
     }
     let row_limit = state.o3_runtime.scalar_memory_window_limit();
+    let mut authorizer =
+        DependentResultAddressAuthorizer::from_head(state, current, head_authorization, row_limit);
     let mut authorizations = vec![(current.first_consumed_request(), head_authorization)];
     let mut window = RiscvScalarIntegerLiveWindow::from_memory_result(
         head_authorization.integer_destination(),
         row_limit,
     );
-    let (mut result_rows, mut dependent_result_address, mut scalar_started) = (1, false, false);
+    let (mut result_rows, mut dependent_rows, mut scalar_started) = (1, 0, false);
     let mut previous_request = current.last_consumed_request();
     let mut next_pc = completed_instruction_sequential_pc(current);
     while !window.is_full() {
@@ -252,7 +250,7 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
                 };
             }
             Err(candidate) => {
-                return if result_rows == 2 {
+                return if result_rows > 1 {
                     DetailedFetchAheadCandidate::DataAccessResultWindow {
                         next_pc: None,
                         authorizations,
@@ -262,74 +260,79 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
                 };
             }
         };
-
-        if !scalar_started && result_rows == 1 {
-            if let Some(younger_authorization) = dependent_result_address_authorization(
-                state,
-                current,
-                &younger,
-                head_authorization,
-                row_limit,
-            ) {
-                authorizations.push((younger.first_consumed_request(), younger_authorization));
-                (result_rows, dependent_result_address) = (2, true);
-                window = RiscvScalarIntegerLiveWindow::from_memory_results(
-                    authorizations
-                        .iter()
-                        .filter_map(|(_, authorization)| authorization.integer_destination()),
-                    result_rows,
-                    row_limit,
-                )
-                .expect("authorized result rows fit the configured live window");
-                previous_request = younger.last_consumed_request();
-                next_pc = completed_instruction_sequential_pc(&younger);
-                continue;
-            }
-            if let Some(younger_authorization) =
-                data_access_result_younger_authorization(state, &younger, translated)
-            {
-                if !younger_authorization.role().is_younger() {
-                    return DetailedFetchAheadCandidate::Blocked;
+        if !scalar_started && result_rows == 1 + dependent_rows {
+            if let Some(authorizer) = authorizer.as_mut() {
+                if let Some(authorization) = authorizer.try_authorize_next(&younger) {
+                    debug_assert!(
+                        authorizer.dependent_rows() != 1
+                            || dependent_result_address_authorization(
+                                state,
+                                current,
+                                &younger,
+                                head_authorization,
+                                row_limit,
+                            ) == Some(authorization)
+                    );
+                    authorizations.push((younger.first_consumed_request(), authorization));
+                    dependent_rows = authorizer.dependent_rows();
+                    result_rows = 1 + dependent_rows;
+                    window = RiscvScalarIntegerLiveWindow::from_memory_results(
+                        authorizer.result_destinations().iter().copied(),
+                        result_rows,
+                        row_limit,
+                    )
+                    .expect("authorized result rows fit the configured live window");
+                    previous_request = younger.last_consumed_request();
+                    next_pc = completed_instruction_sequential_pc(&younger);
+                    continue;
                 }
-                let allowed = match younger_authorization.role() {
-                    O3MemoryResultWindowRole::YoungerRead => result_head_allows_younger_read(
-                        current,
-                        &younger,
-                        head_authorization,
-                        younger_authorization,
-                    ),
-                    O3MemoryResultWindowRole::YoungerBufferedEffect => {
-                        result_head_allows_younger_effect(
+            }
+            if dependent_rows == 0 && result_rows == 1 {
+                if let Some(younger_authorization) =
+                    data_access_result_younger_authorization(state, &younger, translated)
+                {
+                    if !younger_authorization.role().is_younger() {
+                        return DetailedFetchAheadCandidate::Blocked;
+                    }
+                    let allowed = match younger_authorization.role() {
+                        O3MemoryResultWindowRole::YoungerRead => result_head_allows_younger_read(
                             current,
                             &younger,
                             head_authorization,
                             younger_authorization,
-                        )
+                        ),
+                        O3MemoryResultWindowRole::YoungerBufferedEffect => {
+                            result_head_allows_younger_effect(
+                                current,
+                                &younger,
+                                head_authorization,
+                                younger_authorization,
+                            )
+                        }
+                        O3MemoryResultWindowRole::Head
+                        | O3MemoryResultWindowRole::YoungerDependentRead => false,
+                    };
+                    if !allowed {
+                        return DetailedFetchAheadCandidate::Blocked;
                     }
-                    O3MemoryResultWindowRole::Head
-                    | O3MemoryResultWindowRole::YoungerDependentRead => false,
-                };
-                if !allowed {
-                    return DetailedFetchAheadCandidate::Blocked;
+                    authorizations.push((younger.first_consumed_request(), younger_authorization));
+                    result_rows = 2;
+                    window = RiscvScalarIntegerLiveWindow::from_memory_results(
+                        authorizations
+                            .iter()
+                            .filter_map(|(_, authorization)| authorization.integer_destination()),
+                        result_rows,
+                        row_limit,
+                    )
+                    .expect("authorized result rows fit the configured live window");
+                    previous_request = younger.last_consumed_request();
+                    next_pc = completed_instruction_sequential_pc(&younger);
+                    continue;
                 }
-                authorizations.push((younger.first_consumed_request(), younger_authorization));
-                result_rows = 2;
-                window = RiscvScalarIntegerLiveWindow::from_memory_results(
-                    authorizations
-                        .iter()
-                        .filter_map(|(_, authorization)| authorization.integer_destination()),
-                    result_rows,
-                    row_limit,
-                )
-                .expect("authorized result rows fit the configured live window");
-                previous_request = younger.last_consumed_request();
-                next_pc = completed_instruction_sequential_pc(&younger);
-                continue;
             }
         }
-
         let mut decision = window.classify_younger(younger.decoded().instruction());
-        if dependent_result_address
+        if dependent_rows != 0
             && decision == RiscvScalarIntegerYoungerDecision::AdmitStop
             && !window.is_full()
         {
@@ -351,7 +354,7 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
             | RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
             | RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
             | RiscvScalarIntegerYoungerDecision::Reject => {
-                return if result_rows == 2 {
+                return if result_rows > 1 {
                     DetailedFetchAheadCandidate::DataAccessResultWindow {
                         next_pc: None,
                         authorizations,
@@ -362,25 +365,21 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
             }
         }
     }
-
     DetailedFetchAheadCandidate::DataAccessResultWindow {
         next_pc: None,
         authorizations,
     }
 }
-
 fn completed_instruction_sequential_pc(instruction: &RiscvCompletedFetchInstruction) -> Address {
     let bytes = u64::from(instruction.decoded().bytes());
     Address::new(instruction.pc().get().wrapping_add(bytes))
 }
-
 struct DataAccessResultHeadProbe {
     access: MemoryAccessKind,
     request: TranslationRequest,
     virtual_range: AddressRange,
     request_byte_offset: usize,
 }
-
 fn data_access_result_head_probe(
     state: &RiscvCoreState,
     fetch_request: MemoryRequestId,
@@ -426,7 +425,6 @@ enum DataAccessResultTranslationProbe {
     Ready(Address),
     Blocked,
 }
-
 fn data_access_result_translation_probe(
     state: &RiscvCoreState,
     probe: &DataAccessResultHeadProbe,

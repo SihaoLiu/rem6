@@ -715,6 +715,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let pending_staging_path = crate_dir.join("src/o3_runtime_pending_address_staging.rs");
     let issue_root_path = crate_dir.join("src/o3_runtime_issue.rs");
     let issue_pending_path = crate_dir.join("src/o3_runtime_issue/pending_address.rs");
+    let writeback_wake_path = crate_dir.join("src/riscv_o3_writeback_wake.rs");
     let test_root_path = crate_dir.join("src/o3_runtime_pending_address_tests.rs");
     let staging_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/staging.rs");
     let scheduling_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/scheduling.rs");
@@ -729,6 +730,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         &pending_staging_path,
         &issue_root_path,
         &issue_pending_path,
+        &writeback_wake_path,
         &test_root_path,
         &staging_test_path,
         &scheduling_test_path,
@@ -751,6 +753,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let pending_staging = fs::read_to_string(&pending_staging_path).unwrap();
     let issue_root = fs::read_to_string(&issue_root_path).unwrap();
     let issue_pending = fs::read_to_string(&issue_pending_path).unwrap();
+    let writeback_wake = fs::read_to_string(&writeback_wake_path).unwrap();
     let test_root = fs::read_to_string(&test_root_path).unwrap();
     let staging_test = fs::read_to_string(&staging_test_path).unwrap();
     let scheduling_test = fs::read_to_string(&scheduling_test_path).unwrap();
@@ -934,6 +937,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let pending_staging_code = production_rust_source(&pending_staging);
     let issue_root_code = production_rust_source(&issue_root);
     let issue_pending_code = production_rust_source(&issue_pending);
+    let writeback_wake_code = production_rust_source(&writeback_wake);
     let runtime_code = production_rust_source(&runtime);
     let memory_code = production_rust_source(&memory);
     let retire_code = production_rust_source(&retire);
@@ -1126,6 +1130,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "last",
         "iter",
         "find_sequence",
+        "find_sequence_mut",
         "find_fetch",
         "try_push",
         "take_from",
@@ -1169,6 +1174,31 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
             assert!(!production_defines_exact_function(source, helper));
         }
     }
+    let materialization =
+        rust_function_definition(&pending_code, "record_pending_data_address_materialization")
+            .unwrap();
+    for anchor in [
+        "let sequence = candidate.sequence();",
+        "find_sequence(sequence)",
+        "pending.consumed_requests != consumed_requests",
+        "find_sequence_mut(sequence)",
+    ] {
+        assert!(
+            materialization.contains(anchor),
+            "pending-address materialization is missing exact-row anchor `{anchor}`"
+        );
+    }
+    assert!(
+        !materialization.contains("pending_data_addresses.first()")
+            && !materialization.contains("pending_data_addresses.first_mut()")
+    );
+    let materialization_matches = rust_function_definition(
+        &pending_code,
+        "pending_data_address_materialization_matches",
+    )
+    .unwrap();
+    assert!(materialization_matches.contains("self.pending_data_addresses.iter().any(|pending|"));
+    assert!(!materialization_matches.contains("pending_data_addresses.first()"));
 
     let pending_raw_code = rust_code_without_comments_and_literals(&pending);
     let pending_set_raw_code = rust_code_without_comments_and_literals(&pending_set);
@@ -1202,12 +1232,10 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "pending_data_address_request_sequence",
         "pending_data_address_sequence_for_replay",
         "pending_data_address_has_producer_sequence",
-        "pending_data_address_wakeup_seed",
+        "pending_data_address_wake_seed",
         "pending_data_address_wake_tick",
         "pending_data_address_selected_issue_tick_for_reservation",
         "record_pending_data_address_resource_blocked",
-        "pending_data_address_producer_sequence",
-        "pending_data_address_head_reservation",
     ] {
         assert!(
             production_defines_exact_function(&issue_pending_code, helper),
@@ -1216,6 +1244,79 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         assert!(
             !production_defines_exact_function(&issue_root_code, helper),
             "issue root must not retain pending-address scheduler helper `{helper}`"
+        );
+    }
+    assert!(!production_code.contains("pending_data_address_younger_materialization_matches"));
+    for anchor in [
+        "pub(crate) struct O3PendingDataAddressWakeSeed {",
+        "fetch_predecessor_request: MemoryRequestId,",
+        "head_reservation: O3LiveIssueHeadReservation,",
+        "younger_pcs: Vec<Address>,",
+        "pub(crate) const fn fetch_predecessor_request(&self) -> MemoryRequestId",
+        "pub(crate) const fn head_reservation(&self) -> O3LiveIssueHeadReservation",
+        "pub(crate) fn younger_pcs(&self) -> &[Address]",
+        "head_reservation: O3LiveIssueHeadReservation::memory(pending.producer_sequence, 0)",
+    ] {
+        assert!(
+            issue_pending_code.contains(anchor),
+            "pending-address typed wake owner is missing `{anchor}`"
+        );
+    }
+    let candidate_metadata = rust_function_definition(
+        &issue_pending_code,
+        "pending_data_address_candidate_metadata",
+    )
+    .unwrap();
+    assert!(candidate_metadata.contains("find_sequence(sequence)"));
+    let request_sequence =
+        rust_function_definition(&issue_pending_code, "pending_data_address_request_sequence")
+            .unwrap();
+    assert!(
+        request_sequence.contains("self.pending_data_addresses")
+            && request_sequence.contains(".iter()")
+            && request_sequence.contains(".find(|pending|")
+    );
+    let wake_tick =
+        rust_function_definition(&issue_pending_code, "pending_data_address_wake_tick").unwrap();
+    assert!(wake_tick.contains("pending.materialized.is_none()") && wake_tick.contains(".min()"));
+    let blocked_wake = rust_function_definition(
+        &issue_pending_code,
+        "record_pending_data_address_resource_blocked",
+    )
+    .unwrap();
+    for anchor in [
+        "find_sequence(sequence)",
+        "for mut pending in self.pending_data_addresses.iter().cloned()",
+        "pending.sequence == sequence",
+        "self.pending_data_addresses = updated;",
+    ] {
+        assert!(blocked_wake.contains(anchor));
+    }
+    let prepare_batch =
+        rust_function_definition(&issue_root_code, "prepare_live_issue_batch").unwrap();
+    assert!(prepare_batch.contains("(!candidate.is_pending_data_address(), candidate.sequence())"));
+    let capacities =
+        rust_function_definition(&issue_root_code, "live_issue_capacities_after_reservations")
+            .unwrap();
+    assert!(capacities.contains("1_usize.saturating_sub(reservations.memory)"));
+    let wake_window =
+        rust_function_definition(&retire_code, "wake_o3_data_access_younger_window").unwrap();
+    for anchor in [
+        "pending_data_address_wake_seed()",
+        "seed.fetch_predecessor_request()",
+        "seed.younger_pcs().to_vec()",
+        "seed.head_reservation()",
+    ] {
+        assert!(wake_window.contains(anchor));
+    }
+    for helper in [
+        "requested_o3_writeback_wake_tick",
+        "refresh_o3_writeback_wake",
+    ] {
+        let definition = rust_function_definition(&writeback_wake_code, helper).unwrap();
+        assert!(
+            definition.contains("pending_data_address_wake_tick()"),
+            "writeback wake helper `{helper}` must include the minimum pending-row wake"
         );
     }
     assert!(
@@ -1232,16 +1333,32 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let stage_child_definition =
         rust_function_definition(&stage_child_code, "stage_dependent_result_address_window")
             .unwrap();
-    let request_constructor = stage_child_definition
-        .split_once("O3PendingDataAddressRequest::new(")
-        .expect("live-retire staging must construct a pending-address request")
-        .1;
-    assert!(
-        request_constructor
-            .trim_start()
-            .starts_with("head_completed.last_consumed_request(),"),
-        "live-retire staging must pass the reconstructed head's last consumed request"
-    );
+    for anchor in [
+        "let mut predecessor = head_completed.last_consumed_request();",
+        "let mut requests = Vec::with_capacity(2);",
+        "for _ in 0..2 {",
+        "dependent_authorization(state, dependent.first_consumed_request())",
+        "O3PendingDataAddressRequest::new(",
+        "predecessor,",
+        "dependent_requests.push(dependent.first_consumed_request());",
+        "predecessor = dependent.last_consumed_request();",
+        "requests,",
+        "state.memory_result_window_authorizations.remove(&request);",
+    ] {
+        assert!(
+            stage_child_definition.contains(anchor),
+            "live-retire staging is missing split-fetch batch anchor `{anchor}`"
+        );
+    }
+    assert!(!stage_child_definition.contains(".values()"));
+    assert!(!stage_child_definition.contains("authorized_rows"));
+    let schedule_position = stage_child_definition
+        .find("let schedule_result")
+        .expect("live-retire staging must schedule the complete batch");
+    let removal_position = stage_child_definition
+        .find("for request in dependent_requests")
+        .expect("live-retire staging must remove every consumed authorization");
+    assert!(schedule_position < removal_position);
 
     let expected_tests = [
         "pending_address_stages_addressless_lsq_and_live_rename_once",
@@ -1320,6 +1437,12 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "two_pending_staging_failure_rolls_back_both_rows_and_rename",
         "two_pending_discard_from_second_preserves_first_row",
         "two_pending_retirement_accounting_counts_zero_one_two_rows",
+        "two_pending_staging_removes_both_authorizations_only_after_schedule",
+        "two_pending_siblings_width_one_issue_oldest_across_ticks",
+        "two_pending_siblings_width_two_keep_one_memory_slot_and_coissue_scalar",
+        "two_pending_chain_initial_schedule_waits_on_first_sequence",
+        "two_pending_typed_wake_seed_separates_second_fetch_predecessor",
+        "two_pending_resource_wake_updates_only_blocked_row",
     ];
     let multiple_test_code = rust_code_without_comments_and_literals(&multiple_test);
     assert!(multiple_test_code.contains("use super::*;"));
@@ -1813,12 +1936,10 @@ fn task8_dependent_result_address_production_ownership_is_final() {
         "pending_data_address_request_sequence",
         "pending_data_address_sequence_for_replay",
         "pending_data_address_has_producer_sequence",
-        "pending_data_address_wakeup_seed",
+        "pending_data_address_wake_seed",
         "pending_data_address_wake_tick",
         "pending_data_address_selected_issue_tick_for_reservation",
         "record_pending_data_address_resource_blocked",
-        "pending_data_address_producer_sequence",
-        "pending_data_address_head_reservation",
     ] {
         assert_eq!(
             owners_of(helper),
@@ -2200,6 +2321,19 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
             "dependent-result address policy is missing `{anchor}`"
         );
     }
+    for anchor in [
+        "DependentResultAddressAuthorizer::from_head(",
+        "authorizer.try_authorize_next(&younger)",
+        "authorizer.result_destinations().iter().copied()",
+        "dependent_rows == 0 && result_rows == 1",
+        "dependent_rows = authorizer.dependent_rows();",
+        "result_rows = 1 + dependent_rows;",
+    ] {
+        assert!(
+            child.contains(anchor),
+            "data-access result loop is missing bounded authorizer integration `{anchor}`"
+        );
+    }
     let dependent_address_code = rust_code_without_comments_and_literals(&dependent_address);
     assert_eq!(
         rust_function_definition_count(
@@ -2335,6 +2469,10 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
         "dependent_address_two_pending_authorizes_one_deep_chain_before_suffix",
         "dependent_address_two_pending_rejects_third_unresolved_load",
         "dependent_address_two_pending_rejects_duplicate_self_cycle_and_unrelated_graphs",
+        "dependent_address_two_pending_window_records_both_authorizations",
+        "dependent_address_two_pending_split_fetch_uses_previous_last_request",
+        "dependent_address_two_pending_rejects_late_pending_after_scalar",
+        "dependent_address_two_pending_rejects_dependent_plus_unrelated_memory_result",
     ];
     assert_eq!(
         two_pending_test.matches("#[test]").count(),

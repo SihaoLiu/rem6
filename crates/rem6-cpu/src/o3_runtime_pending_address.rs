@@ -107,7 +107,8 @@ impl O3RuntimeState {
         issue_tick: u64,
         execution: RiscvExecutionRecord,
     ) -> Result<bool, O3RuntimeError> {
-        let Some(pending) = self.pending_data_addresses.first().cloned() else {
+        let sequence = candidate.sequence();
+        let Some(pending) = self.pending_data_addresses.find_sequence(sequence).cloned() else {
             return Ok(false);
         };
         let producer = candidate.data_producers();
@@ -130,7 +131,7 @@ impl O3RuntimeState {
             }) if !rd.is_zero() => rd.index(),
             _ => return Ok(false),
         });
-        if candidate.sequence() != pending.sequence
+        if sequence != pending.sequence
             || candidate.instruction() != pending.decoded.instruction()
             || candidate.pending_data_address_destination() != Some(pending.destination)
             || pending.destination.register_class() != O3RegisterClass::Integer
@@ -159,7 +160,7 @@ impl O3RuntimeState {
         }
         let event =
             RiscvCpuExecutionEvent::new(pending.fetch, pending.decoded.instruction(), execution);
-        let Some(stored) = self.pending_data_addresses.first_mut() else {
+        let Some(stored) = self.pending_data_addresses.find_sequence_mut(sequence) else {
             return Ok(false);
         };
         if let Some(materialized) = &stored.materialized {
@@ -175,7 +176,7 @@ impl O3RuntimeState {
         &self,
         request: &O3LiveIssueRequest,
     ) -> bool {
-        self.pending_data_addresses.first().is_some_and(|pending| {
+        self.pending_data_addresses.iter().any(|pending| {
             pending.materialized.is_some()
                 && pending.fetch.pc() == request.pc()
                 && pending.decoded == request.decoded()

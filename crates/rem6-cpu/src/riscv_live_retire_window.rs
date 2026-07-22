@@ -858,16 +858,33 @@ pub(crate) fn wake_o3_data_access_younger_window(
     fetch_events: &[CpuFetchEvent],
 ) {
     let pending_window = state.o3_runtime.has_pending_data_address();
-    let Some((tail_request, younger_pcs)) = state
-        .o3_runtime
-        .pending_data_address_wakeup_seed()
-        .or_else(|| state.o3_runtime.live_data_access_younger_wakeup_seed())
-    else {
-        if pending_window {
-            state.o3_runtime.discard_pending_data_address();
-        }
-        return;
-    };
+    let (tail_request, younger_pcs, head) =
+        if let Some(seed) = state.o3_runtime.pending_data_address_wake_seed() {
+            (
+                seed.fetch_predecessor_request(),
+                seed.younger_pcs().to_vec(),
+                seed.head_reservation(),
+            )
+        } else {
+            let Some((tail_request, younger_pcs)) =
+                state.o3_runtime.live_data_access_younger_wakeup_seed()
+            else {
+                if pending_window {
+                    state.o3_runtime.discard_pending_data_address();
+                }
+                return;
+            };
+            let Some(head) = state
+                .o3_runtime
+                .live_data_access_head_reservation(tail_request)
+            else {
+                if pending_window {
+                    state.o3_runtime.discard_pending_data_address();
+                }
+                return;
+            };
+            (tail_request, younger_pcs, head)
+        };
     let mut current_request = tail_request;
     let mut younger = Vec::with_capacity(younger_pcs.len());
     for pc in younger_pcs {
@@ -882,16 +899,6 @@ pub(crate) fn wake_o3_data_access_younger_window(
         current_request = instruction.last_consumed_request();
         younger.push(instruction);
     }
-    let Some(head) = state
-        .o3_runtime
-        .live_data_access_head_reservation(tail_request)
-        .or_else(|| state.o3_runtime.pending_data_address_head_reservation())
-    else {
-        if pending_window {
-            state.o3_runtime.discard_pending_data_address();
-        }
-        return;
-    };
     schedule_o3_live_speculative_younger_executions(state, head, &younger, issue_tick)
         .expect("live data-access wake writeback reservation");
 }

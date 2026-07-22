@@ -20,49 +20,63 @@ pub(super) fn stage_dependent_result_address_window(
     ) else {
         return false;
     };
-    let next_pc = sequential_pc(&head_completed);
-    let Some(dependent) = completed_fetch_instruction_at(
-        state,
-        fetch_events,
-        head_completed.last_consumed_request(),
-        next_pc,
-    ) else {
-        return false;
-    };
-    let Some(authorization) = dependent_authorization(state, dependent.first_consumed_request())
-    else {
-        return false;
-    };
-    let Some((producer_register, dependent_rd)) = pending_registers(&dependent, authorization)
-    else {
-        return false;
-    };
     let Some(head_reservation) = state
         .o3_runtime
         .live_data_access_head_reservation(head.fetch().request_id())
     else {
         return false;
     };
-
-    let request = O3PendingDataAddressRequest::new(
-        head_completed.last_consumed_request(),
-        dependent.fetch().clone(),
-        dependent.consumed_requests().to_vec(),
-        dependent.decoded(),
-        producer_register,
-    );
+    let mut predecessor = head_completed.last_consumed_request();
+    let mut next_pc = sequential_pc(&head_completed);
+    let mut requests = Vec::with_capacity(2);
+    let mut dependent_requests = Vec::with_capacity(2);
+    let mut scheduled = Vec::with_capacity(3);
+    let mut result_destinations = Vec::with_capacity(3);
+    for _ in 0..2 {
+        let Some(dependent) =
+            completed_fetch_instruction_at(state, fetch_events, predecessor, next_pc)
+        else {
+            break;
+        };
+        let Some(authorization) =
+            dependent_authorization(state, dependent.first_consumed_request())
+        else {
+            break;
+        };
+        let Some((producer_register, dependent_rd)) = pending_registers(&dependent, authorization)
+        else {
+            return false;
+        };
+        if result_destinations.is_empty() {
+            result_destinations.push(producer_register);
+        }
+        result_destinations.push(dependent_rd);
+        requests.push(O3PendingDataAddressRequest::new(
+            predecessor,
+            dependent.fetch().clone(),
+            dependent.consumed_requests().to_vec(),
+            dependent.decoded(),
+            producer_register,
+        ));
+        dependent_requests.push(dependent.first_consumed_request());
+        predecessor = dependent.last_consumed_request();
+        next_pc = sequential_pc(&dependent);
+        scheduled.push(dependent);
+    }
+    if requests.is_empty() {
+        return false;
+    }
     let suffix = accepted_suffix(
         state,
         fetch_events,
-        dependent.last_consumed_request(),
-        sequential_pc(&dependent),
-        producer_register,
-        dependent_rd,
+        predecessor,
+        next_pc,
+        &result_destinations,
     );
-    let expected_staged = suffix.len().saturating_add(1);
+    let expected_staged = suffix.len().saturating_add(requests.len());
     let staged = state.o3_runtime.stage_pending_data_address_window(
         head.fetch().request_id(),
-        vec![request],
+        requests,
         suffix
             .iter()
             .map(|instruction| (instruction.pc(), instruction.decoded().instruction())),
@@ -72,9 +86,6 @@ pub(super) fn stage_dependent_result_address_window(
         return false;
     }
 
-    let dependent_request = dependent.first_consumed_request();
-    let mut scheduled = Vec::with_capacity(expected_staged);
-    scheduled.push(dependent);
     scheduled.extend(suffix);
     let schedule_result = schedule_o3_live_speculative_younger_executions(
         state,
@@ -84,9 +95,9 @@ pub(super) fn stage_dependent_result_address_window(
     );
     match schedule_result {
         Ok(true) => {
-            state
-                .memory_result_window_authorizations
-                .remove(&dependent_request);
+            for request in dependent_requests {
+                state.memory_result_window_authorizations.remove(&request);
+            }
             true
         }
         Ok(false) | Err(_) => {
@@ -137,18 +148,17 @@ fn accepted_suffix(
     fetch_events: &[CpuFetchEvent],
     mut current_request: MemoryRequestId,
     mut pc: Address,
-    producer_register: rem6_isa_riscv::Register,
-    dependent_rd: rem6_isa_riscv::Register,
+    result_destinations: &[rem6_isa_riscv::Register],
 ) -> Vec<RiscvCompletedFetchInstruction> {
     let Some(mut window) = RiscvScalarIntegerLiveWindow::from_memory_results(
-        [producer_register, dependent_rd],
-        2,
+        result_destinations.iter().copied(),
+        result_destinations.len(),
         state.o3_runtime.scalar_memory_window_limit(),
     ) else {
         return Vec::new();
     };
     let mut suffix = Vec::new();
-    for _ in 0..2 {
+    for _ in result_destinations.len()..state.o3_runtime.scalar_memory_window_limit() {
         let Some(instruction) =
             completed_fetch_instruction_at(state, fetch_events, current_request, pc)
         else {
