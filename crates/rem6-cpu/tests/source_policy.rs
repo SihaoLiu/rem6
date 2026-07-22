@@ -717,6 +717,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let pending_set_path = crate_dir.join("src/o3_runtime_pending_address_set.rs");
     let pending_staging_path = crate_dir.join("src/o3_runtime_pending_address_staging.rs");
     let issue_root_path = crate_dir.join("src/o3_runtime_issue.rs");
+    let issue_calendar_path = crate_dir.join("src/o3_runtime_issue/calendar.rs");
     let issue_pending_path = crate_dir.join("src/o3_runtime_issue/pending_address.rs");
     let writeback_wake_path = crate_dir.join("src/riscv_o3_writeback_wake.rs");
     let test_root_path = crate_dir.join("src/o3_runtime_pending_address_tests.rs");
@@ -732,6 +733,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         &pending_set_path,
         &pending_staging_path,
         &issue_root_path,
+        &issue_calendar_path,
         &issue_pending_path,
         &writeback_wake_path,
         &test_root_path,
@@ -755,6 +757,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let pending_set = fs::read_to_string(&pending_set_path).unwrap();
     let pending_staging = fs::read_to_string(&pending_staging_path).unwrap();
     let issue_root = fs::read_to_string(&issue_root_path).unwrap();
+    let issue_calendar = fs::read_to_string(&issue_calendar_path).unwrap();
     let issue_pending = fs::read_to_string(&issue_pending_path).unwrap();
     let writeback_wake = fs::read_to_string(&writeback_wake_path).unwrap();
     let test_root = fs::read_to_string(&test_root_path).unwrap();
@@ -939,6 +942,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let pending_set_code = production_rust_source(&pending_set);
     let pending_staging_code = production_rust_source(&pending_staging);
     let issue_root_code = production_rust_source(&issue_root);
+    let issue_calendar_code = production_rust_source(&issue_calendar);
     let issue_pending_code = production_rust_source(&issue_pending);
     let writeback_wake_code = production_rust_source(&writeback_wake);
     let runtime_code = production_rust_source(&runtime);
@@ -1242,7 +1246,6 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "pending_data_address_has_producer_sequence",
         "pending_data_address_wake_seed",
         "pending_data_address_wake_tick",
-        "pending_data_address_selected_issue_tick_for_reservation",
         "record_pending_data_address_resource_blocked",
     ] {
         assert!(
@@ -1252,6 +1255,22 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         assert!(
             !production_defines_exact_function(&issue_root_code, helper),
             "issue root must not retain pending-address scheduler helper `{helper}`"
+        );
+    }
+    assert!(
+        !production_code.contains("pending_data_address_selected_issue_tick_for_reservation"),
+        "the live issue calendar must capture selected pending ticks without the obsolete adapter"
+    );
+    let calendar_capture = rust_function_definition(&issue_calendar_code, "capture").unwrap();
+    for anchor in [
+        ".pending_data_addresses",
+        ".filter_map(|pending| pending.selected_issue_tick)",
+        ".collect::<BTreeSet<_>>()",
+        "calendar.reserve(tick, O3IssueOpClass::Memory);",
+    ] {
+        assert!(
+            calendar_capture.contains(anchor),
+            "live issue calendar capture is missing pending reservation anchor `{anchor}`"
         );
     }
     assert!(!production_code.contains("pending_data_address_younger_materialization_matches"));
@@ -1303,9 +1322,15 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let prepare_batch =
         rust_function_definition(&issue_root_code, "prepare_live_issue_batch").unwrap();
     assert!(prepare_batch.contains("(!candidate.is_pending_data_address(), candidate.sequence())"));
-    let capacities =
-        rust_function_definition(&issue_root_code, "live_issue_capacities_after_reservations")
-            .unwrap();
+    assert!(!production_defines_exact_function(
+        &issue_root_code,
+        "live_issue_capacities_after_reservations"
+    ));
+    let capacities = rust_function_definition(
+        &issue_calendar_code,
+        "live_issue_capacities_after_reservations",
+    )
+    .unwrap();
     assert!(capacities.contains("1_usize.saturating_sub(reservations.memory)"));
     let wake_window =
         rust_function_definition(&retire_code, "wake_o3_data_access_younger_window").unwrap();
@@ -1752,6 +1777,7 @@ fn task8_dependent_result_address_production_ownership_is_final() {
     let source_root = crate_dir.join("src");
     let runtime_owner_path = Path::new("src/o3_runtime.rs");
     let issue_root_path = Path::new("src/o3_runtime_issue.rs");
+    let calendar_owner_path = Path::new("src/o3_runtime_issue/calendar.rs");
     let pending_owner_path = Path::new("src/o3_runtime_pending_address.rs");
     let pending_set_owner_path = Path::new("src/o3_runtime_pending_address_set.rs");
     let pending_staging_owner_path = Path::new("src/o3_runtime_pending_address_staging.rs");
@@ -1781,6 +1807,7 @@ fn task8_dependent_result_address_production_ownership_is_final() {
     let issue_root_module_source =
         fs::read_to_string(crate_dir.join(issue_root_path)).expect("issue root source");
     let runtime_owner = source(runtime_owner_path);
+    let calendar_owner = source(calendar_owner_path);
     let pending_owner = source(pending_owner_path);
     let pending_set_owner = source(pending_set_owner_path);
     let pending_staging_owner = source(pending_staging_owner_path);
@@ -2141,7 +2168,6 @@ fn task8_dependent_result_address_production_ownership_is_final() {
         "pending_data_address_has_producer_sequence",
         "pending_data_address_wake_seed",
         "pending_data_address_wake_tick",
-        "pending_data_address_selected_issue_tick_for_reservation",
         "record_pending_data_address_resource_blocked",
     ] {
         assert_eq!(
@@ -2152,6 +2178,23 @@ fn task8_dependent_result_address_production_ownership_is_final() {
         assert_eq!(
             rust_function_definition_count(pending_issue_owner, helper),
             1
+        );
+    }
+    assert_eq!(
+        owners_of("pending_data_address_selected_issue_tick_for_reservation"),
+        Vec::<String>::new(),
+        "the obsolete pending reservation adapter must have no production owner"
+    );
+    let calendar_capture = rust_function_definition(calendar_owner, "capture").unwrap();
+    for anchor in [
+        ".pending_data_addresses",
+        ".filter_map(|pending| pending.selected_issue_tick)",
+        ".collect::<BTreeSet<_>>()",
+        "calendar.reserve(tick, O3IssueOpClass::Memory);",
+    ] {
+        assert!(
+            calendar_capture.contains(anchor),
+            "final pending reservation ownership is missing calendar anchor `{anchor}`"
         );
     }
 
