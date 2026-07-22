@@ -757,12 +757,7 @@ impl RiscvCore {
             let Some(execution) = execution.as_ref() else {
                 return false;
             };
-            let consumed = state.o3_runtime.bind_pending_data_address_issue(
-                execution,
-                issue.request_id,
-                issue.physical_address,
-                issue.tick,
-            );
+            let consumed = Self::bind_pending_address_issue(&mut state, execution, &issue);
             if consumed.is_none()
                 && !state.o3_runtime.stage_live_data_access_issue(
                     execution,

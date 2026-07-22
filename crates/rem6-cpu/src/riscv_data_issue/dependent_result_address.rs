@@ -53,9 +53,22 @@ impl RiscvCore {
         let execution = architectural.execute_decoded(decoded).ok()?;
         state
             .o3_runtime
-            .pending_data_address_execution()
+            .pending_data_address_execution_for_fetch(fetch_request)
             .is_some_and(|pending| pending.execution() == &execution)
             .then_some(decoded)
+    }
+
+    pub(super) fn bind_pending_address_issue(
+        state: &mut RiscvCoreState,
+        execution: &RiscvCpuExecutionEvent,
+        issue: &OutstandingDataAccess,
+    ) -> Option<Vec<MemoryRequestId>> {
+        state.o3_runtime.bind_pending_data_address_issue(
+            execution,
+            issue.request_id,
+            issue.physical_address,
+            issue.tick,
+        )
     }
 
     pub(super) fn validate_pending_address_pre_submit(
@@ -108,11 +121,8 @@ impl RiscvCore {
 
     pub(super) fn replay_pending_address_before_submit(&self, fetch_request: MemoryRequestId) {
         let mut state = self.state.lock().expect("riscv core lock");
-        if state
+        state
             .o3_runtime
-            .pending_data_address_owns_fetch(fetch_request)
-        {
-            state.o3_runtime.discard_pending_data_address();
-        }
+            .discard_pending_data_address_for_fetch(fetch_request);
     }
 }

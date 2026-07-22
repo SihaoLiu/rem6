@@ -1,4 +1,4 @@
-use rem6_isa_riscv::{MemoryAccessKind, MemoryWidth, RiscvDecodedInstruction, RiscvInstruction};
+use rem6_isa_riscv::{MemoryAccessKind, RiscvDecodedInstruction};
 use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
 use super::o3_runtime_pending_address::{O3PendingDataAddress, PENDING_DATA_ADDRESS_LSQ_BYTES};
@@ -23,6 +23,7 @@ impl O3PendingDataAddresses {
         self.rows.first()
     }
 
+    #[cfg(test)]
     pub(super) fn first_mut(&mut self) -> Option<&mut O3PendingDataAddress> {
         self.rows.first_mut()
     }
@@ -46,6 +47,24 @@ impl O3PendingDataAddresses {
         self.rows.iter().find(|row| {
             row.fetch.request_id() == request || row.consumed_requests.contains(&request)
         })
+    }
+
+    pub(super) fn find_primary_fetch(
+        &self,
+        request: MemoryRequestId,
+    ) -> Option<&O3PendingDataAddress> {
+        self.rows
+            .iter()
+            .find(|row| row.fetch.request_id() == request)
+    }
+
+    pub(super) fn find_primary_fetch_mut(
+        &mut self,
+        request: MemoryRequestId,
+    ) -> Option<&mut O3PendingDataAddress> {
+        self.rows
+            .iter_mut()
+            .find(|row| row.fetch.request_id() == request)
     }
 
     pub(super) fn try_push(&mut self, row: O3PendingDataAddress) -> bool {
@@ -75,8 +94,13 @@ impl O3PendingDataAddresses {
         true
     }
 
-    fn take_first(&mut self) -> O3PendingDataAddress {
-        self.rows.remove(0)
+    fn take_fetch(&mut self, request: MemoryRequestId) -> O3PendingDataAddress {
+        let index = self
+            .rows
+            .iter()
+            .position(|row| row.fetch.request_id() == request)
+            .expect("pending fetch row");
+        self.rows.remove(index)
     }
 
     fn take_from(&mut self, sequence: u64) -> Vec<O3PendingDataAddress> {
@@ -119,26 +143,39 @@ impl O3RuntimeState {
             .is_some()
     }
 
-    pub(crate) fn pending_data_address_execution(&self) -> Option<&RiscvCpuExecutionEvent> {
+    pub(crate) fn oldest_pending_data_address_execution(&self) -> Option<&RiscvCpuExecutionEvent> {
         self.pending_data_addresses
-            .first()
-            .and_then(|pending| pending.materialized.as_ref())
+            .iter()
+            .find_map(|pending| pending.materialized.as_ref())
     }
 
-    pub(crate) fn pending_data_address_execution_mut(
+    pub(crate) fn pending_data_address_execution_for_fetch(
+        &self,
+        fetch_request: MemoryRequestId,
+    ) -> Option<&RiscvCpuExecutionEvent> {
+        self.pending_data_addresses
+            .find_primary_fetch(fetch_request)?
+            .materialized
+            .as_ref()
+    }
+
+    pub(crate) fn pending_data_address_execution_for_fetch_mut(
         &mut self,
+        fetch_request: MemoryRequestId,
     ) -> Option<&mut RiscvCpuExecutionEvent> {
         self.pending_data_addresses
-            .first_mut()
-            .and_then(|pending| pending.materialized.as_mut())
+            .find_primary_fetch_mut(fetch_request)?
+            .materialized
+            .as_mut()
     }
 
     pub(crate) fn pending_data_address_decoded(
         &self,
         fetch_request: MemoryRequestId,
     ) -> Option<RiscvDecodedInstruction> {
-        let pending = self.pending_data_addresses.first()?;
-        (pending.fetch.request_id() == fetch_request).then_some(pending.decoded)
+        self.pending_data_addresses
+            .find_primary_fetch(fetch_request)
+            .map(|pending| pending.decoded)
     }
 
     pub(crate) fn pending_data_address_issue_matches(
@@ -152,53 +189,24 @@ impl O3RuntimeState {
         if !self.pending_data_address_can_issue(fetch_request, access) {
             return false;
         }
-        let Some(pending) = self.pending_data_addresses.first() else {
+        let Some(pending) = self
+            .pending_data_addresses
+            .find_primary_fetch(fetch_request)
+        else {
             return false;
         };
         let Some(execution) = pending.materialized.as_ref() else {
             return false;
         };
-        let Some(issue_tick) = pending.selected_issue_tick else {
-            return false;
-        };
-        let RiscvInstruction::Load {
-            rd,
-            rs1,
-            width: MemoryWidth::Doubleword,
-            ..
-        } = pending.decoded.instruction()
-        else {
-            return false;
-        };
-        let Some(MemoryAccessKind::Load {
-            rd: access_rd,
-            address,
-            width: MemoryWidth::Doubleword,
-            ..
-        }) = execution.execution().memory_access()
-        else {
-            return false;
-        };
-        let Ok(range) = rem6_memory::AddressRange::new(physical_address, size) else {
-            return false;
-        };
-        pending.fetch.request_id() == fetch_request
-            && pending.fetch.pc() == execution.fetch().pc()
-            && pending.decoded.instruction() == execution.instruction()
-            && pending.producer_register == rs1
-            && pending.destination.register_class() == O3RegisterClass::Integer
-            && pending.destination.architectural() == u32::from(rd.index())
-            && *access_rd == rd
-            && execution.execution().memory_access() == Some(access)
-            && physical_address.get() == *address
-            && size.bytes() == u64::from(pending.expected_lsq_bytes)
-            && request_tick >= issue_tick
-            && (!pending.root_head.atomic_head || !pending.root_head.range.overlaps(range))
-            && self.live_staged_fetch_identity_matches(
-                pending.sequence,
-                pending.decoded.instruction(),
-                &pending.consumed_requests,
-            )
+        pending.issue_matches(
+            self,
+            execution,
+            fetch_request,
+            access,
+            physical_address,
+            size,
+            request_tick,
+        )
     }
 
     fn discard_pending_data_address_at_internal(&mut self, sequence: u64, now: Option<u64>) {
@@ -217,6 +225,21 @@ impl O3RuntimeState {
 
     pub(super) fn discard_pending_data_address_from(&mut self, sequence: u64) {
         self.discard_pending_data_address_at_internal(sequence, None);
+    }
+
+    pub(crate) fn discard_pending_data_address_for_fetch(
+        &mut self,
+        fetch_request: MemoryRequestId,
+    ) -> bool {
+        let Some(sequence) = self
+            .pending_data_addresses
+            .find_primary_fetch(fetch_request)
+            .map(O3PendingDataAddress::sequence)
+        else {
+            return false;
+        };
+        self.discard_pending_data_address_from(sequence);
+        true
     }
 
     pub(crate) fn discard_pending_data_address(&mut self) {
@@ -239,6 +262,7 @@ impl O3RuntimeState {
             return;
         };
         self.discard_pending_data_address_at_internal(sequence, Some(now));
+        self.discard_live_data_access_lifecycle_at(now);
     }
 
     pub(crate) fn bind_pending_data_address_issue(
@@ -248,23 +272,26 @@ impl O3RuntimeState {
         physical_address: Address,
         request_tick: u64,
     ) -> Option<Vec<MemoryRequestId>> {
+        let fetch_request = execution.fetch().request_id();
+        self.pending_data_addresses
+            .find_primary_fetch(fetch_request)?;
         let access = execution
             .execution()
             .memory_access()
             .expect("pending address execution carries a load");
         let size = AccessSize::new(u64::from(PENDING_DATA_ADDRESS_LSQ_BYTES))
             .expect("pending data address size");
-        if !self.pending_data_address_owns_fetch(execution.fetch().request_id()) {
-            return None;
-        }
         assert!(self.pending_data_address_issue_matches(
-            execution.fetch().request_id(),
+            fetch_request,
             access,
             physical_address,
             size,
             request_tick,
         ));
-        let pending = self.pending_data_addresses.first()?;
+        let pending = self
+            .pending_data_addresses
+            .find_primary_fetch(fetch_request)?
+            .clone();
         let issue_tick = pending
             .selected_issue_tick
             .expect("materialized pending address has a selected issue tick");
@@ -291,11 +318,11 @@ impl O3RuntimeState {
         assert_eq!(lsq.bytes(), PENDING_DATA_ADDRESS_LSQ_BYTES);
         assert!(lsq.resolve_address(physical_address));
 
-        let removed = self.pending_data_addresses.take_first();
+        let removed = self.pending_data_addresses.take_fetch(fetch_request);
         debug_assert_eq!(removed.sequence, sequence);
         self.live_data_access_younger_sequences.remove(&sequence);
         self.live_data_accesses.push(O3LiveDataAccess {
-            fetch_request: execution.fetch().request_id(),
+            fetch_request,
             data_request,
             execution: execution.clone(),
             sequence,
@@ -318,33 +345,5 @@ impl O3RuntimeState {
 
     pub(super) fn pending_data_address_owner_is_consistent(&self) -> bool {
         self.pending_data_addresses.is_consistent_with(self)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn pending_data_address_sequence_for_test(&self) -> Option<u64> {
-        self.pending_data_addresses
-            .first()
-            .map(O3PendingDataAddress::sequence)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn pending_data_address_owner_count_for_test(&self) -> usize {
-        self.pending_data_address_count()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn pending_data_address_selected_issue_tick_for_test(&self) -> Option<u64> {
-        self.pending_data_addresses
-            .first()
-            .and_then(|pending| pending.selected_issue_tick)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn pending_data_address_materialized_execution_for_test(
-        &self,
-    ) -> Option<&RiscvCpuExecutionEvent> {
-        self.pending_data_addresses
-            .first()
-            .and_then(|pending| pending.materialized.as_ref())
     }
 }

@@ -1124,8 +1124,7 @@ impl RiscvCoreState {
             })
             .or_else(|| {
                 self.o3_runtime
-                    .pending_data_address_execution()
-                    .filter(|event| event.fetch().request_id() == fetch_request)
+                    .pending_data_address_execution_for_fetch(fetch_request)
             })
     }
 
@@ -1148,8 +1147,7 @@ impl RiscvCoreState {
             return Some(pending.execution_mut());
         }
         self.o3_runtime
-            .pending_data_address_execution_mut()
-            .filter(|event| event.fetch().request_id() == fetch_request)
+            .pending_data_address_execution_for_fetch_mut(fetch_request)
     }
 
     fn discard_return_address_stack_speculations(&mut self) {

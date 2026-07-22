@@ -38,6 +38,7 @@ const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_TWO_PENDING_FETCH_TEST_LINES: usize = 3
 const MAX_RISCV_UNISSUED_DATA_LINES: usize = 110;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_ISSUE_LINES: usize = 350;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_ISSUE_TEST_LINES: usize = 550;
+const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_MULTIPLE_ISSUE_TEST_LINES: usize = 500;
 const MAX_RISCV_RETAINED_DATA_ACCESS_RESULT_LINES: usize = 100;
 const MAX_RISCV_MEMORY_RESULT_AUTHORIZATION_LINES: usize = 150;
 const MAX_RISCV_BUFFERED_EFFECT_LINES: usize = 220;
@@ -1100,12 +1101,14 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "pending_data_address_count",
         "has_pending_data_address",
         "pending_data_address_owns_fetch",
-        "pending_data_address_execution",
-        "pending_data_address_execution_mut",
+        "oldest_pending_data_address_execution",
+        "pending_data_address_execution_for_fetch",
+        "pending_data_address_execution_for_fetch_mut",
         "pending_data_address_decoded",
         "pending_data_address_issue_matches",
         "discard_pending_data_address_at_internal",
         "discard_pending_data_address_from",
+        "discard_pending_data_address_for_fetch",
         "discard_pending_data_address",
         "discard_pending_data_address_at",
         "bind_pending_data_address_issue",
@@ -1126,13 +1129,15 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "len",
         "is_empty",
         "first",
-        "first_mut",
         "last",
         "iter",
         "find_sequence",
         "find_sequence_mut",
         "find_fetch",
+        "find_primary_fetch",
+        "find_primary_fetch_mut",
         "try_push",
+        "take_fetch",
         "take_from",
     ] {
         assert!(
@@ -1163,6 +1168,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     assert!(issue_pending_code.contains("pending.fetch_predecessor_request"));
     assert!(!production_code.contains("producer_fetch"));
     for helper in [
+        "issue_matches",
         "record_pending_data_address_materialization",
         "pending_data_address_materialization_matches",
     ] {
@@ -1208,11 +1214,11 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "pending_data_address_selected_issue_tick_for_test",
         "pending_data_address_materialized_execution_for_test",
     ] {
+        assert_eq!(rust_function_definition_count(&pending_raw_code, helper), 1);
         assert_eq!(
             rust_function_definition_count(&pending_set_raw_code, helper),
-            1
+            0
         );
-        assert_eq!(rust_function_definition_count(&pending_raw_code, helper), 0);
     }
     for helper in [
         "corrupt_pending_data_address_lsq_bytes_for_test",
@@ -1443,6 +1449,11 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "two_pending_chain_initial_schedule_waits_on_first_sequence",
         "two_pending_typed_wake_seed_separates_second_fetch_predecessor",
         "two_pending_resource_wake_updates_only_blocked_row",
+        "two_pending_first_materialization_replay_discards_complete_chain",
+        "two_pending_second_materialization_replay_preserves_older_row",
+        "two_pending_chain_wakes_second_after_first_admitted_writeback",
+        "two_pending_interrupt_reset_restore_and_mode_cleanup_remove_all_rows",
+        "two_pending_live_checkpoint_and_handoff_reject_two_rows",
     ];
     let multiple_test_code = rust_code_without_comments_and_literals(&multiple_test);
     assert!(multiple_test_code.contains("use super::*;"));
@@ -1463,12 +1474,17 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
 #[test]
 fn task5_dependent_result_address_data_issue_stays_focused() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source_root = crate_dir.join("src");
     let translation_root_path = crate_dir.join("src/riscv_translation.rs");
     let unissued_path = crate_dir.join("src/riscv_translation/unissued_data.rs");
     let issue_root_path = crate_dir.join("src/riscv_data_issue.rs");
     let issue_child_path = crate_dir.join("src/riscv_data_issue/dependent_result_address.rs");
+    let prepared_path = crate_dir.join("src/riscv_data_issue/prepared.rs");
     let issue_test_root_path = crate_dir.join("src/riscv_data_issue_tests.rs");
     let issue_test_path = crate_dir.join("src/riscv_data_issue_tests/dependent_result_address.rs");
+    let issue_multiple_test_path =
+        crate_dir.join("src/riscv_data_issue_tests/dependent_result_address_multiple.rs");
+    let memory_path = crate_dir.join("src/o3_runtime_memory.rs");
     let pending_path = crate_dir.join("src/o3_runtime_pending_address.rs");
     let pending_set_path = crate_dir.join("src/o3_runtime_pending_address_set.rs");
     let lib_path = crate_dir.join("src/lib.rs");
@@ -1477,8 +1493,11 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
         &unissued_path,
         &issue_root_path,
         &issue_child_path,
+        &prepared_path,
         &issue_test_root_path,
         &issue_test_path,
+        &issue_multiple_test_path,
+        &memory_path,
         &pending_path,
         &pending_set_path,
         &lib_path,
@@ -1490,8 +1509,11 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
     let unissued = fs::read_to_string(&unissued_path).unwrap();
     let issue_root = fs::read_to_string(&issue_root_path).unwrap();
     let issue_child = fs::read_to_string(&issue_child_path).unwrap();
+    let prepared = fs::read_to_string(&prepared_path).unwrap();
     let issue_test_root = fs::read_to_string(&issue_test_root_path).unwrap();
     let issue_test = fs::read_to_string(&issue_test_path).unwrap();
+    let issue_multiple_test = fs::read_to_string(&issue_multiple_test_path).unwrap();
+    let memory = fs::read_to_string(&memory_path).unwrap();
     let pending = fs::read_to_string(&pending_path).unwrap();
     let pending_set = fs::read_to_string(&pending_set_path).unwrap();
     let lib = fs::read_to_string(&lib_path).unwrap();
@@ -1516,9 +1538,18 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
         ),
         1
     );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &issue_test_root,
+            "riscv_data_issue_tests/dependent_result_address_multiple.rs",
+            "dependent_result_address_multiple",
+        ),
+        1
+    );
     assert!(include_macro_lines(&unissued).is_empty());
     assert!(include_macro_lines(&issue_child).is_empty());
     assert!(include_macro_lines(&issue_test).is_empty());
+    assert!(include_macro_lines(&issue_multiple_test).is_empty());
     assert!(
         external_module_declaration_lines(&unissued).is_empty()
             && path_attribute_lines(&unissued).is_empty()
@@ -1526,15 +1557,23 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
             && path_attribute_lines(&issue_child).is_empty()
             && external_module_declaration_lines(&issue_test).is_empty()
             && path_attribute_lines(&issue_test).is_empty()
+            && external_module_declaration_lines(&issue_multiple_test).is_empty()
+            && path_attribute_lines(&issue_multiple_test).is_empty()
     );
     assert!(line_count(&unissued_path) <= MAX_RISCV_UNISSUED_DATA_LINES);
     assert!(line_count(&issue_child_path) <= MAX_RISCV_DEPENDENT_RESULT_ADDRESS_ISSUE_LINES);
     assert!(line_count(&issue_test_path) <= MAX_RISCV_DEPENDENT_RESULT_ADDRESS_ISSUE_TEST_LINES);
+    assert!(
+        line_count(&issue_multiple_test_path)
+            <= MAX_RISCV_DEPENDENT_RESULT_ADDRESS_MULTIPLE_ISSUE_TEST_LINES
+    );
 
     let translation_code = production_rust_source(&translation_root);
     let unissued_code = production_rust_source(&unissued);
     let issue_root_code = production_rust_source(&issue_root);
     let issue_child_code = production_rust_source(&issue_child);
+    let prepared_code = production_rust_source(&prepared);
+    let memory_code = production_rust_source(&memory);
     let pending_code = production_rust_source(&pending);
     let pending_set_code = production_rust_source(&pending_set);
     let lib_code = production_rust_source(&lib);
@@ -1547,6 +1586,7 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
         "next_unissued_data_access"
     ));
     for helper in [
+        "bind_pending_address_issue",
         "validate_pending_address_pre_submit",
         "replay_pending_address_before_submit",
     ] {
@@ -1558,6 +1598,14 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
         &pending_set_code,
         "bind_pending_data_address_issue"
     ));
+    for helper in [
+        "oldest_pending_data_address_execution",
+        "pending_data_address_execution_for_fetch",
+        "pending_data_address_execution_for_fetch_mut",
+        "discard_pending_data_address_for_fetch",
+    ] {
+        assert!(production_defines_exact_function(&pending_set_code, helper));
+    }
     assert!(!production_defines_exact_function(
         &pending_code,
         "bind_pending_data_address_issue"
@@ -1570,9 +1618,81 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
         &lib_code,
         "bind_pending_data_address_issue"
     ));
+    let bind_token = "bind_pending_data_address_issue";
+    let bind_occurrences = rust_source_files(&source_root)
+        .into_iter()
+        .filter_map(|path| {
+            let relative = path.strip_prefix(crate_dir).unwrap().to_path_buf();
+            if is_test_only_rust_source(&relative) {
+                return None;
+            }
+            let source = fs::read_to_string(path).unwrap();
+            let production = production_rust_source(&source);
+            let chars = production.chars().collect::<Vec<_>>();
+            let count = rust_identifier_count(&chars, bind_token);
+            (count != 0).then_some((relative, count))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        bind_occurrences,
+        vec![
+            (PathBuf::from("src/o3_runtime_pending_address_set.rs"), 1),
+            (
+                PathBuf::from("src/riscv_data_issue/dependent_result_address.rs"),
+                1,
+            ),
+        ]
+    );
+    let bind_call = ".bind_pending_data_address_issue(";
+    let bind_callers = rust_source_files(&source_root)
+        .into_iter()
+        .filter_map(|path| {
+            let relative = path.strip_prefix(crate_dir).unwrap().to_path_buf();
+            if is_test_only_rust_source(&relative) {
+                return None;
+            }
+            let source = fs::read_to_string(path).unwrap();
+            let count = production_rust_source(&source).matches(bind_call).count();
+            (count != 0).then_some((relative, count))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        bind_callers,
+        vec![(
+            PathBuf::from("src/riscv_data_issue/dependent_result_address.rs"),
+            1,
+        )]
+    );
+    let issue_recording = rust_function_definition(&issue_root_code, "try_record_data_issue_state")
+        .expect("data-issue recording root");
+    assert_eq!(
+        issue_recording
+            .matches("Self::bind_pending_address_issue(")
+            .count(),
+        1
+    );
     for source in [&translation_code, &issue_root_code, &lib_code] {
         assert!(!source.contains("struct O3PendingDataAddress"));
     }
+    let unissued_definition = rust_function_definition(&unissued_code, "next_unissued_data_access")
+        .expect("unissued selector owner");
+    assert!(unissued_definition.contains("oldest_pending_data_address_execution()"));
+    let replay_definition =
+        rust_function_definition(&issue_child_code, "replay_pending_address_before_submit")
+            .expect("pending replay owner");
+    assert!(replay_definition.contains("discard_pending_data_address_for_fetch(fetch_request)"));
+    assert!(!replay_definition.contains("discard_pending_data_address();"));
+    let abort_definition = rust_function_definition(&prepared_code, "abort_prepared_data_issue")
+        .expect("prepared abort owner");
+    assert!(abort_definition.contains("discard_pending_data_address_for_fetch(fetch_request)"));
+    let can_issue_definition =
+        rust_function_definition(&memory_code, "pending_data_address_can_issue")
+            .expect("pending issue lookup owner");
+    assert!(
+        can_issue_definition.contains("pending_data_address_execution_for_fetch(fetch_request)")
+    );
+    assert!(lib_code.contains("pending_data_address_execution_for_fetch(fetch_request)"));
+    assert!(lib_code.contains("pending_data_address_execution_for_fetch_mut(fetch_request)"));
 
     let expected_tests = [
         "dependent_result_address_pre_submit_validation_binds_serial_request",
@@ -1596,6 +1716,27 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
     );
     for test in expected_tests {
         assert_eq!(rust_function_definition_count(&issue_test_code, test), 1);
+    }
+    let expected_multiple_tests = [
+        "two_pending_unissued_selector_returns_oldest_materialized_first",
+        "two_pending_data_access_execution_looks_up_exact_pending_fetch",
+        "two_pending_bind_first_removes_exact_row_and_keeps_second_pending",
+        "two_pending_bind_second_preserves_first_live_access",
+        "two_pending_first_pre_submit_replay_discards_second_and_suffix",
+        "two_pending_second_pre_submit_replay_preserves_first_live_access",
+        "two_pending_atomic_chain_second_overlap_uses_root_head_range",
+        "two_pending_second_pma_and_cross_line_replay_preserve_first_live_access",
+    ];
+    let issue_multiple_test_code = rust_code_without_comments_and_literals(&issue_multiple_test);
+    assert_eq!(
+        issue_multiple_test_code.matches("#[test]").count(),
+        expected_multiple_tests.len()
+    );
+    for test in expected_multiple_tests {
+        assert_eq!(
+            rust_function_definition_count(&issue_multiple_test_code, test),
+            1
+        );
     }
 }
 
@@ -1891,6 +2032,7 @@ fn task8_dependent_result_address_production_ownership_is_final() {
     );
 
     for helper in [
+        "issue_matches",
         "record_pending_data_address_materialization",
         "pending_data_address_materialization_matches",
     ] {
@@ -1906,13 +2048,15 @@ fn task8_dependent_result_address_production_ownership_is_final() {
         "pending_data_address_count",
         "has_pending_data_address",
         "pending_data_address_owns_fetch",
-        "pending_data_address_execution",
-        "pending_data_address_execution_mut",
+        "oldest_pending_data_address_execution",
+        "pending_data_address_execution_for_fetch",
+        "pending_data_address_execution_for_fetch_mut",
         "pending_data_address_decoded",
         "pending_data_address_issue_matches",
         "bind_pending_data_address_issue",
         "discard_pending_data_address_at_internal",
         "discard_pending_data_address_from",
+        "discard_pending_data_address_for_fetch",
         "discard_pending_data_address",
         "discard_pending_data_address_at",
         "pending_data_address_owner_is_consistent",
@@ -6113,18 +6257,23 @@ fn attribute_allows_dead_code(chars: &[char]) -> bool {
 }
 
 fn contains_rust_identifier(chars: &[char], needle: &str) -> bool {
+    rust_identifier_count(chars, needle) != 0
+}
+
+fn rust_identifier_count(chars: &[char], needle: &str) -> usize {
     let mut index = 0;
+    let mut count = 0;
     while index < chars.len() {
         let Some((identifier, end)) = rust_identifier_at(chars, index) else {
             index += 1;
             continue;
         };
         if identifier == needle {
-            return true;
+            count += 1;
         }
         index = end;
     }
-    false
+    count
 }
 
 fn rust_identifier_at(chars: &[char], index: usize) -> Option<(String, usize)> {

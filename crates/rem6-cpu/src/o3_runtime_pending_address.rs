@@ -1,7 +1,8 @@
 use rem6_isa_riscv::{
     MemoryAccessKind, MemoryWidth, Register, RiscvDecodedInstruction, RiscvExecutionRecord,
+    RiscvInstruction,
 };
-use rem6_memory::{AddressRange, MemoryRequestId};
+use rem6_memory::{AccessSize, Address, AddressRange, MemoryRequestId};
 
 use super::*;
 use crate::CpuFetchEvent;
@@ -74,6 +75,59 @@ impl O3PendingDataAddress {
                     && entry.bytes() == self.expected_lsq_bytes
             })
     }
+
+    pub(super) fn issue_matches(
+        &self,
+        runtime: &O3RuntimeState,
+        execution: &RiscvCpuExecutionEvent,
+        fetch_request: MemoryRequestId,
+        access: &MemoryAccessKind,
+        physical_address: Address,
+        size: AccessSize,
+        request_tick: u64,
+    ) -> bool {
+        let Some(issue_tick) = self.selected_issue_tick else {
+            return false;
+        };
+        let RiscvInstruction::Load {
+            rd,
+            rs1,
+            width: MemoryWidth::Doubleword,
+            ..
+        } = self.decoded.instruction()
+        else {
+            return false;
+        };
+        let Some(MemoryAccessKind::Load {
+            rd: access_rd,
+            address,
+            width: MemoryWidth::Doubleword,
+            ..
+        }) = execution.execution().memory_access()
+        else {
+            return false;
+        };
+        let Ok(range) = AddressRange::new(physical_address, size) else {
+            return false;
+        };
+        self.fetch.request_id() == fetch_request
+            && self.fetch.pc() == execution.fetch().pc()
+            && self.decoded.instruction() == execution.instruction()
+            && self.producer_register == rs1
+            && self.destination.register_class() == O3RegisterClass::Integer
+            && self.destination.architectural() == u32::from(rd.index())
+            && *access_rd == rd
+            && execution.execution().memory_access() == Some(access)
+            && physical_address.get() == *address
+            && size.bytes() == u64::from(self.expected_lsq_bytes)
+            && request_tick >= issue_tick
+            && (!self.root_head.atomic_head || !self.root_head.range.overlaps(range))
+            && runtime.live_staged_fetch_identity_matches(
+                self.sequence,
+                self.decoded.instruction(),
+                &self.consumed_requests,
+            )
+    }
 }
 
 impl O3PendingDataAddressRequest {
@@ -100,6 +154,40 @@ impl O3PendingDataAddressRequest {
 }
 
 impl O3RuntimeState {
+    #[cfg(test)]
+    pub(crate) fn set_pending_data_address_materialized_for_test(
+        &mut self,
+        issue_tick: u64,
+        execution: RiscvCpuExecutionEvent,
+    ) {
+        let fetch_request = self
+            .pending_data_addresses
+            .first()
+            .expect("pending address owner")
+            .fetch
+            .request_id();
+        self.set_pending_data_address_materialized_for_fetch_for_test(
+            fetch_request,
+            issue_tick,
+            execution,
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_pending_data_address_materialized_for_fetch_for_test(
+        &mut self,
+        fetch_request: MemoryRequestId,
+        issue_tick: u64,
+        execution: RiscvCpuExecutionEvent,
+    ) {
+        let pending = self
+            .pending_data_addresses
+            .find_primary_fetch_mut(fetch_request)
+            .expect("pending address fetch owner");
+        pending.selected_issue_tick = Some(issue_tick);
+        pending.materialized = Some(execution);
+    }
+
     pub(super) fn record_pending_data_address_materialization(
         &mut self,
         candidate: O3LiveSpeculativeIssueCandidate,
@@ -200,7 +288,10 @@ impl O3RuntimeState {
         }
         self.live_data_accesses.iter().any(|live| {
             if live.sequence != pending.producer_sequence
-                || live.outcome != O3LiveDataAccessOutcome::Resident
+                || matches!(
+                    live.outcome,
+                    O3LiveDataAccessOutcome::Retried | O3LiveDataAccessOutcome::Failed
+                )
                 || live.younger_window_policy != O3DataAccessWindowPolicy::MemoryResultWindow
             {
                 return false;
@@ -247,5 +338,119 @@ impl O3RuntimeState {
         if let Some(pending) = self.pending_data_addresses.first_mut() {
             pending.producer_sequence = sequence;
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_data_address_sequence_for_test(&self) -> Option<u64> {
+        self.pending_data_addresses
+            .first()
+            .map(O3PendingDataAddress::sequence)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_data_address_owner_count_for_test(&self) -> usize {
+        self.pending_data_address_count()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_data_address_selected_issue_tick_for_test(&self) -> Option<u64> {
+        self.pending_data_addresses
+            .first()
+            .and_then(|pending| pending.selected_issue_tick)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_data_address_materialized_execution_for_test(
+        &self,
+    ) -> Option<&RiscvCpuExecutionEvent> {
+        self.pending_data_addresses
+            .first()
+            .and_then(|pending| pending.materialized.as_ref())
+    }
+
+    #[cfg(test)]
+    pub(super) fn pending_data_address_rows_for_test(&self) -> Vec<O3PendingDataAddress> {
+        self.pending_data_addresses.iter().cloned().collect()
+    }
+
+    #[cfg(test)]
+    pub(super) fn pending_data_address_sequences_for_test(&self) -> Vec<u64> {
+        self.pending_data_addresses
+            .iter()
+            .map(O3PendingDataAddress::sequence)
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(super) fn bind_oldest_pending_data_address_for_test(
+        &mut self,
+        data_request: MemoryRequestId,
+        address: Address,
+        tick: u64,
+    ) {
+        let execution = self
+            .oldest_pending_data_address_execution()
+            .cloned()
+            .expect("oldest pending execution");
+        assert!(self
+            .bind_pending_data_address_issue(&execution, data_request, address, tick)
+            .is_some());
+    }
+
+    #[cfg(test)]
+    pub(super) fn corrupt_pending_data_address_lsq_bytes_for_fetch_for_test(
+        &mut self,
+        fetch_request: MemoryRequestId,
+        bytes: u32,
+    ) {
+        self.pending_data_addresses
+            .find_primary_fetch_mut(fetch_request)
+            .expect("pending address fetch owner")
+            .expected_lsq_bytes = bytes;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn append_pending_data_address_consumed_request_for_test(
+        &mut self,
+        fetch_request: MemoryRequestId,
+        consumed_request: MemoryRequestId,
+    ) {
+        self.pending_data_addresses
+            .find_primary_fetch_mut(fetch_request)
+            .expect("pending address fetch owner")
+            .consumed_requests
+            .push(consumed_request);
+    }
+
+    #[cfg(test)]
+    pub(super) fn complete_pending_data_address_for_test(
+        &mut self,
+        fetch_request: MemoryRequestId,
+        data_request: MemoryRequestId,
+        response_tick: u64,
+        data: &[u8],
+    ) -> (RiscvCpuExecutionEvent, u64) {
+        let live = self
+            .live_data_accesses
+            .iter()
+            .find(|live| live.fetch_request == fetch_request)
+            .expect("pending address is live");
+        let sequence = live.sequence;
+        let mut completed = live.execution.clone();
+        completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
+        assert!(self
+            .complete_live_data_access_response(
+                &completed,
+                data_request,
+                response_tick,
+                9,
+                Some(data),
+            )
+            .unwrap());
+        let admitted = self
+            .writeback_reservation(sequence)
+            .expect("pending writeback reservation")
+            .admitted_tick();
+        (completed, admitted)
     }
 }

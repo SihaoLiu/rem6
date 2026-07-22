@@ -263,9 +263,8 @@ pub(super) fn is_terminal_o3_data_access_event(execution: &RiscvCpuExecutionEven
 
 impl O3RuntimeState {
     pub(crate) fn pending_data_address_fetch(&self) -> Option<MemoryRequestId> {
-        self.pending_data_addresses
-            .first()
-            .map(|pending| pending.fetch.request_id())
+        self.oldest_pending_data_address_execution()
+            .map(|execution| execution.fetch().request_id())
     }
 
     pub(crate) fn pending_data_address_can_issue(
@@ -273,39 +272,25 @@ impl O3RuntimeState {
         fetch_request: MemoryRequestId,
         access: &MemoryAccessKind,
     ) -> bool {
-        self.pending_data_addresses.first().is_some_and(|pending| {
-            pending.fetch.request_id() == fetch_request
-                && pending.selected_issue_tick.is_some()
-                && pending
-                    .materialized
-                    .as_ref()
-                    .and_then(|event| event.execution().memory_access())
-                    == Some(access)
-                && self.snapshot.reorder_buffer.iter().any(|entry| {
-                    entry.sequence() == pending.sequence
-                        && entry.destination() == Some(pending.destination.physical())
-                })
-                && self.snapshot.load_store_queue.iter().any(|entry| {
-                    entry.sequence() == pending.sequence
-                        && entry.kind() == O3LoadStoreQueueKind::Load
-                        && entry.address().is_none()
-                        && entry.bytes() == pending.expected_lsq_bytes
-                })
-        })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn set_pending_data_address_materialized_for_test(
-        &mut self,
-        issue_tick: u64,
-        execution: RiscvCpuExecutionEvent,
-    ) {
-        let pending = self
-            .pending_data_addresses
-            .first_mut()
-            .expect("pending address owner");
-        pending.selected_issue_tick = Some(issue_tick);
-        pending.materialized = Some(execution);
+        let Some(execution) = self.pending_data_address_execution_for_fetch(fetch_request) else {
+            return false;
+        };
+        self.pending_data_addresses
+            .find_primary_fetch(fetch_request)
+            .is_some_and(|pending| {
+                pending.selected_issue_tick.is_some()
+                    && execution.execution().memory_access() == Some(access)
+                    && self.snapshot.reorder_buffer.iter().any(|entry| {
+                        entry.sequence() == pending.sequence
+                            && entry.destination() == Some(pending.destination.physical())
+                    })
+                    && self.snapshot.load_store_queue.iter().any(|entry| {
+                        entry.sequence() == pending.sequence
+                            && entry.kind() == O3LoadStoreQueueKind::Load
+                            && entry.address().is_none()
+                            && entry.bytes() == pending.expected_lsq_bytes
+                    })
+            })
     }
 
     #[cfg(test)]

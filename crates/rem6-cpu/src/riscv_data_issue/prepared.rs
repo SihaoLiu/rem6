@@ -9,10 +9,7 @@ impl RiscvCoreState {
     pub(crate) fn abort_prepared_data_issue(&mut self, fetch_request: MemoryRequestId) -> bool {
         let pending = self
             .o3_runtime
-            .pending_data_address_owns_fetch(fetch_request);
-        if pending {
-            self.o3_runtime.discard_pending_data_address();
-        }
+            .discard_pending_data_address_for_fetch(fetch_request);
         self.abort_deferred_o3_live_data_access_execution(fetch_request) || pending
     }
 }
@@ -191,7 +188,8 @@ impl PreparedDataIssueCleanup {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let owner = if state
             .o3_runtime
-            .pending_data_address_owns_fetch(fetch_request)
+            .pending_data_address_execution_for_fetch(fetch_request)
+            .is_some()
         {
             PreparedDataIssueOwner::PendingAddress
         } else if state.o3_runtime.deferred_live_data_access_execution() == Some(fetch_request) {
@@ -217,7 +215,8 @@ impl PreparedDataIssueCleanup {
         match self.owner {
             PreparedDataIssueOwner::PendingAddress => state
                 .o3_runtime
-                .pending_data_address_owns_fetch(self.fetch_request),
+                .pending_data_address_execution_for_fetch(self.fetch_request)
+                .is_some(),
             PreparedDataIssueOwner::DeferredLiveDataAccess => {
                 state.o3_runtime.deferred_live_data_access_execution() == Some(self.fetch_request)
             }

@@ -12,7 +12,7 @@ impl RiscvCoreState {
             .map(|pending| pending.execution());
         let pending_address = self
             .o3_runtime
-            .pending_data_address_execution()
+            .oldest_pending_data_address_execution()
             .filter(|_| !crate::riscv_fetch_ahead::hart_has_enabled_pending_interrupt(&self.hart))
             .filter(|event| {
                 !self
