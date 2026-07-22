@@ -166,6 +166,7 @@ fn live_issue_tick_decision_aggregates_same_tick_attempts() {
     let mut first_runtime = O3RuntimeState::default();
     assert!(first_runtime.set_issue_width(2));
     let first_head = O3LiveIssueHeadReservation::for_instruction(1, 20, addi(3, 0, 1));
+    let unresolved = O3DependencyScopeId::new(7);
     let first = O3LiveIssueCalendar::capture(&first_runtime, first_head)
         .plan_scoped_at(
             20,
@@ -173,9 +174,12 @@ fn live_issue_tick_decision_aggregates_same_tick_attempts() {
             [
                 ready(2, O3IssueOpClass::Branch),
                 ready(3, O3IssueOpClass::IntMult),
+                ready(4, O3IssueOpClass::Branch).with_waits_on([unresolved]),
             ],
         )
         .unwrap();
+    assert_eq!(first.resource_blocked().len(), 1);
+    assert_eq!(first.dependency_blocked().len(), 1);
 
     let mut second_runtime = O3RuntimeState::default();
     assert!(second_runtime.set_issue_width(2));
@@ -187,6 +191,7 @@ fn live_issue_tick_decision_aggregates_same_tick_attempts() {
             [ready(4, O3IssueOpClass::IntAlu)],
         )
         .unwrap();
+    assert!(second.dependency_blocked().is_empty());
 
     let mut decision = O3LiveIssueTickDecision::default();
     decision.observe(&first, 1);
