@@ -3342,11 +3342,14 @@ fn o3_live_issue_calendar_owns_reservations_and_arbiter() {
 
     let calendar_authority_patterns = [
         "struct O3LiveIssueCalendar",
+        "struct O3LiveIssueCalendar {\n    issue_width: usize,\n    memory_issue_width: usize,",
         "struct O3LiveIssueReservations",
         "struct O3LiveIssueCyclePlan",
         "struct O3LiveIssueTickDecision",
         "O3ScopedIssueScheduler::new(",
         "fn live_issue_capacities_after_reservations(",
+        "memory_issue_width: runtime.memory_issue_width(),",
+        "memory_issue_width.saturating_sub(reservations.memory)",
         "const LIVE_ISSUE_QUEUE",
     ];
     for anchor in calendar_authority_patterns {
@@ -3398,6 +3401,27 @@ fn o3_live_issue_calendar_owns_reservations_and_arbiter() {
         "production structs must not persist O3LiveIssueCalendar state: {persistent_calendars:?}"
     );
 
+    let calendar_capture = rust_function_definition(&calendar, "capture").unwrap();
+    let pending_row_reservation_loop = [
+        "for tick in runtime",
+        "            .pending_data_addresses",
+        "            .iter()",
+        "            .filter_map(|pending| pending.selected_issue_tick)",
+        "        {",
+        "            calendar.reserve(tick, O3IssueOpClass::Memory);",
+        "        }",
+    ]
+    .join("\n");
+    assert!(
+        calendar_capture.contains(&pending_row_reservation_loop),
+        "calendar capture must reserve once per materialized pending row without same-tick deduplication"
+    );
+    assert!(
+        !calendar_capture.contains("collect::<BTreeSet")
+            && !calendar_capture.contains("pending_ticks"),
+        "calendar capture must not deduplicate selected pending issue ticks"
+    );
+
     for forbidden in [
         "fn live_issue_reservations_at(",
         "struct O3LiveIssueReservations",
@@ -3441,6 +3465,10 @@ fn o3_live_issue_calendar_owns_reservations_and_arbiter() {
         "live_issue_calendar_head_and_recorded_head_consume_one_slot",
         "live_issue_calendar_rebuild_releases_removed_prior_row",
         "live_issue_calendar_selected_pending_tick_reserves_memory",
+        "live_issue_calendar_memory_width_one_blocks_younger_ready_memory_rows",
+        "live_issue_calendar_memory_width_two_selects_two_oldest_ready_memory_rows",
+        "live_issue_calendar_total_width_still_bounds_memory_width_four",
+        "live_issue_calendar_rebuild_counts_each_same_tick_memory_reservation",
         "live_issue_calendar_separates_resource_and_dependency_blocks",
         "live_issue_calendar_tick_decision_aggregates_same_tick_attempts",
     ];

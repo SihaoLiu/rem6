@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use crate::o3_pipeline::{
     O3DependencyScopeId, O3IssueOpClass, O3IssueQueueCapacity, O3IssueQueueId, O3ScopedIssuePlan,
@@ -13,6 +13,7 @@ pub(in crate::o3_runtime) const LIVE_ISSUE_QUEUE: O3IssueQueueId = O3IssueQueueI
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::o3_runtime) struct O3LiveIssueCalendar {
     issue_width: usize,
+    memory_issue_width: usize,
     by_tick: BTreeMap<u64, O3LiveIssueReservations>,
 }
 
@@ -46,16 +47,16 @@ impl O3LiveIssueCalendar {
     ) -> Self {
         let mut calendar = Self {
             issue_width: runtime.issue_width,
+            memory_issue_width: runtime.memory_issue_width(),
             by_tick: BTreeMap::new(),
         };
         calendar.reserve(head.issue_tick, head.op_class);
 
-        let pending_ticks = runtime
+        for tick in runtime
             .pending_data_addresses
             .iter()
             .filter_map(|pending| pending.selected_issue_tick)
-            .collect::<BTreeSet<_>>();
-        for tick in pending_ticks {
+        {
             calendar.reserve(tick, O3IssueOpClass::Memory);
         }
 
@@ -103,7 +104,11 @@ impl O3LiveIssueCalendar {
         let reservations = self.by_tick.get(&tick).copied().unwrap_or_default();
         let scheduler = O3ScopedIssueScheduler::new(
             self.issue_width,
-            live_issue_capacities_after_reservations(self.issue_width, reservations),
+            live_issue_capacities_after_reservations(
+                self.issue_width,
+                self.memory_issue_width,
+                reservations,
+            ),
         )
         .expect("configured live O3 issue width is nonzero");
         scheduler
@@ -192,6 +197,7 @@ impl O3LiveIssueReservations {
 
 fn live_issue_capacities_after_reservations(
     issue_width: usize,
+    memory_issue_width: usize,
     reservations: O3LiveIssueReservations,
 ) -> Vec<O3IssueQueueCapacity> {
     [
@@ -209,7 +215,7 @@ fn live_issue_capacities_after_reservations(
         ),
         (
             O3IssueOpClass::Memory,
-            1_usize.saturating_sub(reservations.memory),
+            memory_issue_width.saturating_sub(reservations.memory),
         ),
     ]
     .into_iter()

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use super::{line_count, module_has_path_attribute};
 
 const WIDTHS_OWNER: &str = "crates/rem6-cpu/src/o3_runtime_widths.rs";
+const CALENDAR_OWNER: &str = "crates/rem6-cpu/src/o3_runtime_issue/calendar.rs";
 const CONFIG_OWNER: &str = "crates/rem6/src/config.rs";
 const SUMMARY_JSON_OWNER: &str = "crates/rem6/src/core_summary_json.rs";
 const VALIDATION_OWNER: &str = "crates/rem6/tests/cli_run/validation/o3_memory_issue_width.rs";
@@ -133,6 +134,36 @@ fn o3_memory_issue_width_config_and_runtime_ownership() {
     assert_synthetic_policy_scans_are_meaningful();
 }
 
+#[test]
+fn o3_memory_issue_width_calendar_ownership() {
+    let rem6 = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let repo = rem6.parent().unwrap().parent().unwrap();
+    let calendar_path = repo.join(CALENDAR_OWNER);
+    let calendar = read(&calendar_path);
+    let production_sources = production_rust_sources(repo);
+    let anchors = memory_issue_width_calendar_anchors();
+
+    assert_line_cap(&calendar_path, 450);
+    for anchor in &anchors {
+        assert!(
+            calendar.contains(anchor),
+            "calendar owner is missing memory issue width anchor `{anchor}`"
+        );
+    }
+    assert!(
+        !calendar.contains("collect::<BTreeSet") && !calendar.contains("pending_ticks"),
+        "calendar capture must reserve memory once per materialized pending row without deduplicating same-tick rows"
+    );
+    assert_only_allowed_occurrences(
+        &production_sources,
+        &anchors,
+        &[(CALENDAR_OWNER, anchors.len())],
+        "O3 memory issue width calendar arbitration",
+        occurrences,
+    );
+    assert_calendar_policy_scan_is_meaningful();
+}
+
 fn assert_line_cap(path: &Path, maximum: usize) {
     let lines = line_count(path);
     assert!(
@@ -233,6 +264,30 @@ fn assert_synthetic_policy_scans_are_meaningful() {
             .iter()
             .any(|failure| failure.contains(&json_key)),
         "synthetic JSON-key scan must report an injected non-owner violation: {json_failures:?}"
+    );
+}
+
+fn assert_calendar_policy_scan_is_meaningful() {
+    let anchors = memory_issue_width_calendar_anchors();
+    let sources = vec![
+        SourceFile {
+            relative: CALENDAR_OWNER.to_string(),
+            source: anchors.join("\n"),
+        },
+        SourceFile {
+            relative: "crates/rem6-cpu/src/o3_runtime.rs".to_string(),
+            source: anchors.join("\n"),
+        },
+    ];
+
+    let failures =
+        disallowed_occurrence_failures(&sources, &anchors, &[CALENDAR_OWNER], occurrences);
+
+    assert!(
+        failures
+            .iter()
+            .any(|failure| failure.contains("o3_runtime.rs")),
+        "synthetic calendar policy scan must report an injected non-owner violation: {failures:?}"
     );
 }
 
@@ -372,6 +427,29 @@ fn memory_issue_width_config_field() -> String {
         "{}: Option<usize>",
         ["riscv", "o3", "memory", "issue", "width"].join("_")
     )
+}
+
+fn memory_issue_width_calendar_anchors() -> Vec<String> {
+    vec![
+        [
+            "struct O3LiveIssueCalendar {",
+            "    issue_width: usize,",
+            "    memory_issue_width: usize,",
+        ]
+        .join("\n"),
+        "memory_issue_width: runtime.memory_issue_width(),".to_string(),
+        "memory_issue_width.saturating_sub(reservations.memory)".to_string(),
+        [
+            "for tick in runtime",
+            "            .pending_data_addresses",
+            "            .iter()",
+            "            .filter_map(|pending| pending.selected_issue_tick)",
+            "        {",
+            "            calendar.reserve(tick, O3IssueOpClass::Memory);",
+            "        }",
+        ]
+        .join("\n"),
+    ]
 }
 
 fn relative(path: &Path) -> PathBuf {
