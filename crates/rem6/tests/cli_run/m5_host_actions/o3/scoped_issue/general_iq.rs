@@ -45,29 +45,63 @@ fn assert_general_iq_oldest_ready(issue_width: usize) {
     }
     let sequences = [producer, blocked, alu, multiply].map(|event| event_u64(event, "sequence"));
     assert!(sequences.windows(2).all(|pair| pair[0] < pair[1]));
+    let producer_issue_tick = event_u64(producer, "issue_tick");
+    let alu_issue_tick = event_u64(alu, "issue_tick");
+    let multiply_issue_tick = event_u64(multiply, "issue_tick");
+    let issue = scoped_issue_artifact(&json);
     assert_eq!(
         event_u64(blocked, "issue_tick"),
-        event_u64(producer, "writeback_tick")
+        event_u64(producer, "writeback_tick"),
+        "blocked row must wake exactly at DIV writeback: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
     );
     assert!(
-        event_u64(alu, "issue_tick") < event_u64(blocked, "issue_tick"),
-        "ready ALU must issue before the older blocked row: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}"
+        alu_issue_tick < event_u64(blocked, "issue_tick"),
+        "ready ALU must issue before the older blocked row: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
     );
     assert!(
-        event_u64(multiply, "issue_tick") < event_u64(blocked, "issue_tick"),
-        "ready multiply must issue before the older blocked row: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}"
+        multiply_issue_tick < event_u64(blocked, "issue_tick"),
+        "ready multiply must issue before the older blocked row: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
     );
-    let issue = scoped_issue_artifact(&json);
     if issue_width == 1 {
+        assert_eq!(
+            producer_issue_tick,
+            load_issue_tick + 1,
+            "width one must select the older ready DIV immediately after the load head consumes the issue slot: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
+        );
+        assert_eq!(
+            alu_issue_tick,
+            producer_issue_tick + 1,
+            "width one must select the younger ready ALU immediately after the older DIV: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
+        );
+        assert_eq!(
+            multiply_issue_tick,
+            alu_issue_tick + 1,
+            "width one must select the younger ready MUL immediately after the ALU: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
+        );
         assert!(
-            event_u64(alu, "issue_tick") < event_u64(multiply, "issue_tick"),
-            "width one must serialize ready rows: alu={alu}, multiply={multiply}, issue={issue}"
+            alu_issue_tick < multiply_issue_tick,
+            "width one must serialize ready rows: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
         );
     } else {
         assert_eq!(
-            event_u64(alu, "issue_tick"),
-            event_u64(multiply, "issue_tick"),
-            "width two must co-issue ready rows: alu={alu}, multiply={multiply}, issue={issue}"
+            producer_issue_tick,
+            load_issue_tick,
+            "width two must co-issue the older ready DIV with the load head: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
+        );
+        assert_eq!(
+            alu_issue_tick,
+            load_issue_tick + 1,
+            "width two must select the younger ready ALU one cycle after the load/DIV pair: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
+        );
+        assert_eq!(
+            multiply_issue_tick,
+            load_issue_tick + 1,
+            "width two must select the younger ready MUL one cycle after the load/DIV pair: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
+        );
+        assert_eq!(
+            alu_issue_tick,
+            multiply_issue_tick,
+            "width two must co-issue ready rows: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
         );
     }
     let commits =
