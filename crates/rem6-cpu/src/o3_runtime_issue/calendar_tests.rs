@@ -82,25 +82,41 @@ fn live_issue_calendar_selected_pending_tick_reserves_memory() {
         31,
         O3DataAccessWindowPolicy::MemoryResultWindow,
     ));
-    let pending_raw = load_raw(6, 5, 0);
-    let pending = O3PendingDataAddressRequest::new(
-        request(10),
-        calendar_fetch_event(BRANCH_PC, 11, pending_raw),
-        vec![request(11)],
-        RiscvInstruction::decode_with_length(pending_raw).unwrap(),
-        reg(5),
-    );
+    let first_pending_raw = load_raw(6, 5, 0);
+    let second_pending_raw = load_raw(7, 5, 0);
+    let pending = vec![
+        O3PendingDataAddressRequest::new(
+            request(10),
+            calendar_fetch_event(BRANCH_PC, 11, first_pending_raw),
+            vec![request(11)],
+            RiscvInstruction::decode_with_length(first_pending_raw).unwrap(),
+            reg(5),
+        ),
+        O3PendingDataAddressRequest::new(
+            request(11),
+            calendar_fetch_event(SECOND_PC, 12, second_pending_raw),
+            vec![request(12)],
+            RiscvInstruction::decode_with_length(second_pending_raw).unwrap(),
+            reg(5),
+        ),
+    ];
     assert_eq!(
         runtime.stage_pending_data_address_window(
             head_event.fetch().request_id(),
-            vec![pending],
-            vec![(Address::new(SECOND_PC), addi(7, 5, 8))],
+            pending,
+            std::iter::empty::<(Address, RiscvInstruction)>(),
         ),
         2
     );
-    runtime.set_pending_data_address_materialized_for_test(
+    runtime.set_pending_data_address_materialized_for_fetch_for_test(
+        request(11),
         40,
         calendar_load_event(BRANCH_PC, 11, 6, 5, 0x9100),
+    );
+    runtime.set_pending_data_address_materialized_for_fetch_for_test(
+        request(12),
+        40,
+        calendar_load_event(SECOND_PC, 12, 7, 5, 0x9200),
     );
     let head = runtime
         .live_data_access_head_reservation(head_event.fetch().request_id())
@@ -110,11 +126,15 @@ fn live_issue_calendar_selected_pending_tick_reserves_memory() {
         .plan_scoped_at(
             40,
             std::iter::empty::<O3DependencyScopeId>(),
-            [ready(99, O3IssueOpClass::Memory)],
+            [
+                ready(99, O3IssueOpClass::Memory),
+                ready(100, O3IssueOpClass::IntAlu),
+            ],
         )
         .unwrap();
 
     assert_eq!(plan.reserved_width(), 1);
+    assert_eq!(plan.issued_sequences().collect::<Vec<_>>(), vec![100]);
     assert_eq!(
         plan.resource_blocked()
             .iter()

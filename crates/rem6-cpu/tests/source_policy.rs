@@ -1265,7 +1265,6 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     for anchor in [
         ".pending_data_addresses",
         ".filter_map(|pending| pending.selected_issue_tick)",
-        ".collect::<BTreeSet<_>>()",
         "calendar.reserve(tick, O3IssueOpClass::Memory);",
     ] {
         assert!(
@@ -2189,7 +2188,6 @@ fn task8_dependent_result_address_production_ownership_is_final() {
     for anchor in [
         ".pending_data_addresses",
         ".filter_map(|pending| pending.selected_issue_tick)",
-        ".collect::<BTreeSet<_>>()",
         "calendar.reserve(tick, O3IssueOpClass::Memory);",
     ] {
         assert!(
@@ -2992,12 +2990,13 @@ fn o3_live_issue_calendar_owns_reservations_and_arbiter() {
     let issue_path = crate_dir.join("src/o3_runtime_issue.rs");
     let calendar_path = crate_dir.join("src/o3_runtime_issue/calendar.rs");
     let calendar_tests_path = crate_dir.join("src/o3_runtime_issue/calendar_tests.rs");
-    let runtime_path = crate_dir.join("src/o3_runtime.rs");
+    let issue_tests_path = crate_dir.join("src/o3_runtime_issue_tests.rs");
     let issue_source = fs::read_to_string(&issue_path).unwrap();
     let issue = production_rust_source(&issue_source);
     let calendar = production_rust_source(&fs::read_to_string(&calendar_path).unwrap());
-    let calendar_tests = fs::read_to_string(&calendar_tests_path).unwrap();
-    let runtime = production_rust_source(&fs::read_to_string(&runtime_path).unwrap());
+    let calendar_tests_source = fs::read_to_string(&calendar_tests_path).unwrap();
+    let calendar_tests = rust_code_without_comments_and_literals(&calendar_tests_source);
+    let issue_tests_source = fs::read_to_string(&issue_tests_path).unwrap();
 
     assert!(
         line_count(&issue_path) <= MAX_O3_RUNTIME_ISSUE_LINES,
@@ -3015,6 +3014,15 @@ fn o3_live_issue_calendar_owns_reservations_and_arbiter() {
         issue_source.contains("#[path = \"o3_runtime_issue/calendar.rs\"]")
             && issue_source.contains("mod calendar;"),
         "src/o3_runtime_issue.rs must declare o3_runtime_issue/calendar.rs"
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &issue_tests_source,
+            "o3_runtime_issue/calendar_tests.rs",
+            "calendar"
+        ),
+        1,
+        "src/o3_runtime_issue_tests.rs must compile the focused calendar tests exactly once"
     );
 
     let calendar_authority_patterns = [
@@ -3068,6 +3076,12 @@ fn o3_live_issue_calendar_owns_reservations_and_arbiter() {
         "live issue reservation and arbitration authority must live only in calendar.rs: {}",
         offenders.join(", ")
     );
+    let persistent_calendars =
+        production_struct_named_type_storage(&production_sources, "O3LiveIssueCalendar");
+    assert!(
+        persistent_calendars.is_empty(),
+        "production structs must not persist O3LiveIssueCalendar state: {persistent_calendars:?}"
+    );
 
     for forbidden in [
         "fn live_issue_reservations_at(",
@@ -3082,22 +3096,45 @@ fn o3_live_issue_calendar_owns_reservations_and_arbiter() {
             "src/o3_runtime_issue.rs must not retain `{forbidden}`"
         );
     }
-    assert!(
-        issue.contains("O3LiveIssueCalendar::capture(") && issue.contains(".plan_at("),
-        "src/o3_runtime_issue.rs must delegate through O3LiveIssueCalendar::capture and .plan_at"
+    let schedule = rust_function_definition(&issue, "schedule_live_speculative_issues")
+        .expect("missing schedule_live_speculative_issues definition");
+    assert_eq!(
+        schedule.matches("O3LiveIssueCalendar::capture(").count(),
+        1,
+        "schedule_live_speculative_issues must capture exactly one fresh calendar per loop pass"
     );
+    let loop_position = schedule.find("loop {").expect("missing scheduling loop");
+    let dependency_position = schedule
+        .find("let dependency_table = O3LiveIssueDependencyTable::new(")
+        .expect("missing per-pass dependency table");
+    let capture_position = schedule
+        .find("O3LiveIssueCalendar::capture(")
+        .expect("missing per-pass calendar capture");
+    let plan_position = schedule.find(".plan_at(").expect("missing calendar plan");
+    let issued_position = schedule
+        .find("let issued_rows = plan.issued().len();")
+        .expect("missing issued-row observation");
     assert!(
-        !runtime.contains("live_issue_calendar"),
-        "src/o3_runtime.rs must not retain a live_issue_calendar field"
+        loop_position < dependency_position
+            && dependency_position < capture_position
+            && capture_position < plan_position
+            && plan_position < issued_position,
+        "calendar capture must stay inside the scheduling loop after dependency discovery and before planning"
     );
 
-    for anchor in [
+    let expected_calendar_tests = [
         "live_issue_calendar_head_and_recorded_head_consume_one_slot",
         "live_issue_calendar_rebuild_releases_removed_prior_row",
         "live_issue_calendar_selected_pending_tick_reserves_memory",
         "live_issue_calendar_separates_resource_and_dependency_blocks",
         "live_issue_tick_decision_aggregates_same_tick_attempts",
-    ] {
+    ];
+    assert_eq!(
+        calendar_tests.matches("#[test]").count(),
+        expected_calendar_tests.len(),
+        "calendar_tests.rs must expose exactly the focused five-test inventory"
+    );
+    for anchor in expected_calendar_tests {
         assert_eq!(
             rust_function_definition_count(&calendar_tests, anchor),
             1,
