@@ -201,7 +201,7 @@ impl RiscvCore {
             scheduler
                 .cancel_event(event)
                 .map_err(RiscvCpuError::Scheduler)?;
-            self.clear_deferred_o3_live_data_access_execution();
+            self.clear_deferred_o3_live_data_access_execution(scheduler.now());
         }
         Ok(recorded.then_some(event))
     }

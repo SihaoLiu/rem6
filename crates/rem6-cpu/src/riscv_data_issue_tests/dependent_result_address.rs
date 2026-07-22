@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::o3_runtime::{O3DataAccessWindowPolicy, O3PendingDataAddressRequest};
-use rem6_isa_riscv::{AtomicMemoryOp, RiscvDecodedInstruction, RiscvInstruction};
+use rem6_isa_riscv::{RiscvDecodedInstruction, RiscvInstruction};
 
 const HEAD_PC: u64 = 0x8000;
 const PENDING_PC: u64 = 0x8004;
@@ -39,7 +39,7 @@ impl PendingIssueFixture {
         core.set_detailed_live_retire_gate_enabled(true);
         core.set_o3_window_depths(4, 4);
         let head = if atomic_head {
-            atomic_head_event()
+            super::atomic::atomic_memory_event(HEAD_PC, 10, HEAD_ADDRESS)
         } else {
             scalar_load_event_with_base_width(
                 HEAD_PC,
@@ -55,7 +55,7 @@ impl PendingIssueFixture {
         let decoded = decode(raw);
         let fetch = fetch_event_with_raw(PENDING_PC, 11, raw);
         let fetch_request = fetch.request_id();
-        let materialized = materialized_load(fetch.clone(), decoded, address);
+        let materialized = materialized_load(fetch.clone(), decoded, PENDING_PC, 6, address);
         let mut state = core.state.lock().expect("riscv core lock");
         assert!(state.o3_runtime.stage_live_data_access_issue(
             &head,
@@ -458,13 +458,15 @@ fn pending_address_bind_publishes_one_execution_event() {
     );
 }
 
-fn materialized_load(
+pub(super) fn materialized_load(
     fetch: CpuFetchEvent,
     decoded: RiscvDecodedInstruction,
+    pc: u64,
+    rd: u8,
     address: u64,
 ) -> RiscvCpuExecutionEvent {
     let access = MemoryAccessKind::Load {
-        rd: reg(6),
+        rd: reg(rd),
         address,
         width: MemoryWidth::Doubleword,
         signed: true,
@@ -475,41 +477,10 @@ fn materialized_load(
         RiscvExecutionRecord::new_with_instruction_bytes(
             decoded.instruction(),
             decoded.bytes(),
-            PENDING_PC,
-            PENDING_PC + 4,
+            pc,
+            pc + 4,
             Vec::new(),
             Some(access),
-        ),
-    )
-}
-
-fn atomic_head_event() -> RiscvCpuExecutionEvent {
-    let instruction = RiscvInstruction::AtomicMemory {
-        rd: reg(5),
-        rs1: reg(2),
-        rs2: reg(3),
-        width: MemoryWidth::Doubleword,
-        op: AtomicMemoryOp::Swap,
-        acquire: false,
-        release: false,
-    };
-    RiscvCpuExecutionEvent::new(
-        fetch_event(HEAD_PC, 10),
-        instruction,
-        RiscvExecutionRecord::new(
-            instruction,
-            HEAD_PC,
-            HEAD_PC + 4,
-            Vec::new(),
-            Some(MemoryAccessKind::AtomicMemory {
-                rd: reg(5),
-                address: HEAD_ADDRESS,
-                width: MemoryWidth::Doubleword,
-                op: AtomicMemoryOp::Swap,
-                value: 7,
-                acquire: false,
-                release: false,
-            }),
         ),
     )
 }

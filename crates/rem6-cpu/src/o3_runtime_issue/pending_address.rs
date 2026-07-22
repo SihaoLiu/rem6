@@ -143,6 +143,20 @@ impl O3RuntimeState {
             .min()
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_pending_data_address_resource_blocked_wake_for_test(
+        &mut self,
+        sequence: u64,
+        wake_tick: u64,
+    ) {
+        let pending = self
+            .pending_data_addresses
+            .find_sequence_mut(sequence)
+            .expect("pending data-address row");
+        assert!(pending.materialized.is_none());
+        pending.requested_wake_tick = Some(wake_tick);
+    }
+
     pub(super) fn pending_data_address_selected_issue_tick_for_reservation(
         &self,
         tick: u64,

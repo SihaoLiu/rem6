@@ -1194,9 +1194,10 @@ impl RiscvCore {
     where
         F: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
     {
-        self.data_issue_attempt(|| {
+        let tick = scheduler.now();
+        self.data_issue_attempt(tick, || {
             let Some(issue) =
-                self.prepare_next_translated_data_access(scheduler.now(), transport, page_map)?
+                self.prepare_next_translated_data_access(tick, transport, page_map)?
             else {
                 return Ok(None);
             };
@@ -1297,7 +1298,8 @@ impl RiscvCore {
         bus: &MmioBus,
         page_map: &TranslationPageMap,
     ) -> Result<Option<PartitionEventId>, RiscvCpuError> {
-        self.data_issue_attempt(|| {
+        let tick = scheduler.now();
+        self.data_issue_attempt(tick, || {
             let Some(issue) =
                 self.prepare_next_translated_mmio_data_access(scheduler, bus, page_map)?
             else {
@@ -1349,7 +1351,7 @@ impl RiscvCore {
             + Send
             + 'static,
     {
-        self.data_issue_attempt(|| {
+        self.data_issue_attempt(tick, || {
             let Some(issue) =
                 self.prepare_next_translated_data_access(tick, transport, page_map)?
             else {

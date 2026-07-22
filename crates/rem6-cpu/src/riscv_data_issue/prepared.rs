@@ -1,4 +1,4 @@
-use rem6_kernel::{PartitionEventId, PartitionedScheduler};
+use rem6_kernel::{PartitionEventId, PartitionedScheduler, Tick};
 use rem6_memory::{MemoryRequest, MemoryRequestId};
 use rem6_transport::{MemoryTransport, ParallelMemoryTransaction};
 
@@ -6,11 +6,21 @@ use super::OutstandingDataAccess;
 use crate::{RiscvCore, RiscvCoreState, RiscvCpuError};
 
 impl RiscvCoreState {
-    pub(crate) fn abort_prepared_data_issue(&mut self, fetch_request: MemoryRequestId) -> bool {
+    pub(crate) fn abort_prepared_data_issue(
+        &mut self,
+        fetch_request: MemoryRequestId,
+        now: Tick,
+    ) -> bool {
+        let pending_address_wake = self.o3_runtime.pending_data_address_wake_tick().is_some();
         let pending = self
             .o3_runtime
             .discard_pending_data_address_for_fetch(fetch_request);
-        self.abort_deferred_o3_live_data_access_execution(fetch_request) || pending
+        let deferred = self.abort_deferred_o3_live_data_access_execution(fetch_request);
+        if pending && pending_address_wake {
+            self.o3_writeback_wake.clear();
+            self.refresh_o3_writeback_wake(now);
+        }
+        deferred || pending
     }
 }
 
@@ -47,7 +57,7 @@ impl PreparedDataParallelAccess {
         issue: OutstandingDataAccess,
         transaction: ParallelMemoryTransaction,
     ) -> Self {
-        let cleanup = PreparedDataIssueCleanup::new(core, issue.fetch_request);
+        let cleanup = PreparedDataIssueCleanup::new(core, &issue);
         Self::Transaction {
             issue,
             transaction,
@@ -56,12 +66,12 @@ impl PreparedDataParallelAccess {
     }
 
     pub(crate) fn conditional_failed(core: &RiscvCore, issue: OutstandingDataAccess) -> Self {
-        let cleanup = PreparedDataIssueCleanup::new(core, issue.fetch_request);
+        let cleanup = PreparedDataIssueCleanup::new(core, &issue);
         Self::ConditionalFailed { issue, cleanup }
     }
 
     pub(crate) fn forwarded(core: &RiscvCore, issue: OutstandingDataAccess) -> Self {
-        let cleanup = PreparedDataIssueCleanup::new(core, issue.fetch_request);
+        let cleanup = PreparedDataIssueCleanup::new(core, &issue);
         Self::Forwarded { issue, cleanup }
     }
 
@@ -71,7 +81,7 @@ impl PreparedDataParallelAccess {
         request: MemoryRequest,
         predecessor: MemoryRequestId,
     ) -> Self {
-        let cleanup = PreparedDataIssueCleanup::new(core, issue.fetch_request);
+        let cleanup = PreparedDataIssueCleanup::new(core, &issue);
         Self::BufferedEffect {
             issue,
             request,
@@ -176,12 +186,14 @@ fn submit_single_parallel_data(
 pub(crate) struct PreparedDataIssueCleanup {
     core: RiscvCore,
     fetch_request: MemoryRequestId,
+    issue_tick: Tick,
     owner: PreparedDataIssueOwner,
     armed: bool,
 }
 
 impl PreparedDataIssueCleanup {
-    fn new(core: &RiscvCore, fetch_request: MemoryRequestId) -> Self {
+    fn new(core: &RiscvCore, issue: &OutstandingDataAccess) -> Self {
+        let fetch_request = issue.fetch_request;
         let state = core
             .state
             .lock()
@@ -201,6 +213,7 @@ impl PreparedDataIssueCleanup {
         Self {
             core: core.clone(),
             fetch_request,
+            issue_tick: issue.tick,
             owner,
             armed: true,
         }
@@ -248,6 +261,6 @@ impl Drop for PreparedDataIssueCleanup {
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .abort_prepared_data_issue(self.fetch_request);
+            .abort_prepared_data_issue(self.fetch_request, self.issue_tick);
     }
 }

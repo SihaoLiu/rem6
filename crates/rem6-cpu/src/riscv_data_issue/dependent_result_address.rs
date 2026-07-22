@@ -119,10 +119,12 @@ impl RiscvCore {
         PendingAddressPreSubmit::Ready
     }
 
-    pub(super) fn replay_pending_address_before_submit(&self, fetch_request: MemoryRequestId) {
+    pub(super) fn replay_pending_address_before_submit(
+        &self,
+        fetch_request: MemoryRequestId,
+        now: Tick,
+    ) {
         let mut state = self.state.lock().expect("riscv core lock");
-        state
-            .o3_runtime
-            .discard_pending_data_address_for_fetch(fetch_request);
+        state.abort_prepared_data_issue(fetch_request, now);
     }
 }

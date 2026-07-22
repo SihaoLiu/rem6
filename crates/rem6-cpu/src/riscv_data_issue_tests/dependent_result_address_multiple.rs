@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::o3_runtime::{O3DataAccessWindowPolicy, O3PendingDataAddressRequest};
-use rem6_isa_riscv::{AtomicMemoryOp, MemoryAccessKind, RiscvInstruction};
+use rem6_isa_riscv::RiscvInstruction;
 
 const HEAD_PC: u64 = 0x8000;
 const FIRST_PC: u64 = 0x8004;
@@ -10,6 +10,7 @@ const SUFFIX_PC: u64 = 0x800c;
 const HEAD_ADDRESS: u64 = 0x8800;
 const ISSUE_TICK: u64 = 41;
 const SUBMIT_TICK: u64 = 43;
+const PENDING_WAKE_TICK: u64 = 47;
 
 struct TwoPendingIssueFixture {
     core: RiscvCore,
@@ -46,7 +47,7 @@ impl TwoPendingIssueFixture {
         core.set_detailed_live_retire_gate_enabled(true);
         core.set_o3_window_depths(4, 4);
         let head = if atomic {
-            atomic_head_event()
+            super::atomic::atomic_memory_event(HEAD_PC, 10, HEAD_ADDRESS)
         } else {
             scalar_load_event_with_base_width(
                 HEAD_PC,
@@ -99,10 +100,14 @@ impl TwoPendingIssueFixture {
                     .set_pending_data_address_materialized_for_fetch_for_test(
                         fetches[index],
                         ISSUE_TICK + index as u64,
-                        materialized_load(
+                        super::dependent_result_address::materialized_load(
+                            fetch_event_with_raw(
+                                FIRST_PC + 4 * index as u64,
+                                11 + index as u64,
+                                raws[index],
+                            ),
+                            decode(raws[index]),
                             FIRST_PC + 4 * index as u64,
-                            11 + index as u64,
-                            raws[index],
                             if index == 0 { 6 } else { 7 },
                             addresses[index],
                         ),
@@ -176,30 +181,63 @@ impl TwoPendingIssueFixture {
         );
         assert!(state.o3_runtime.pending_data_address_wake_tick().is_none());
     }
+
+    fn schedule_second_pending_address_wake(&mut self) {
+        let mut state = self.core.state.lock().expect("riscv core lock");
+        state
+            .o3_runtime
+            .set_pending_data_address_resource_blocked_wake_for_test(
+                self.sequences[1],
+                PENDING_WAKE_TICK,
+            );
+        drop(state);
+        let requested = self.core.requested_o3_writeback_wake_tick(SUBMIT_TICK);
+        let event = self
+            .scheduler
+            .schedule_at(PartitionId::new(0), PENDING_WAKE_TICK, |_| {})
+            .unwrap();
+        self.core.mark_o3_writeback_wake_scheduled(
+            self.scheduler.instance_id(),
+            self.scheduler.pending_event_snapshot(event).unwrap(),
+        );
+        assert_eq!(
+            (requested, self.core.owned_o3_writeback_wakes().len()),
+            (Some(PENDING_WAKE_TICK), 1)
+        );
+    }
+
+    fn assert_first_pending_suffix_discarded_without_stale_wake(&self) {
+        let mut state = self.core.state.lock().expect("riscv core lock");
+        assert_eq!(state.o3_runtime.pending_data_address_count(), 0);
+        assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 1);
+        assert_eq!(state.o3_runtime.snapshot().load_store_queue().len(), 1);
+        assert_eq!(state.o3_runtime.live_data_access_count_for_test(), 1);
+        state.o3_runtime.discard_live_data_access_lifecycle();
+        drop(state);
+        assert_eq!(
+            (
+                self.core.owned_o3_writeback_wakes(),
+                self.core.data_access_lifecycle_is_quiescent(),
+            ),
+            (Vec::new(), true)
+        );
+    }
 }
 
 #[test]
 fn two_pending_unissued_selector_returns_oldest_materialized_first() {
     let fixture = TwoPendingIssueFixture::siblings([0x9000, 0x9008], [false, true]);
     let state = fixture.core.state.lock().expect("riscv core lock");
-    assert_eq!(
-        state
-            .next_unissued_data_access()
-            .map(|candidate| candidate.0),
-        Some(fixture.fetches[1])
-    );
+    let selected = state.next_unissued_data_access().unwrap().0;
+    assert_eq!(selected, fixture.fetches[1]);
 }
 
 #[test]
 fn two_pending_data_access_execution_looks_up_exact_pending_fetch() {
     let fixture = TwoPendingIssueFixture::siblings([0x9000, 0x9008], [true, true]);
     let mut state = fixture.core.state.lock().expect("riscv core lock");
-    assert_eq!(
-        state
-            .data_access_execution(fixture.fetches[1])
-            .map(RiscvCpuExecutionEvent::fetch_pc),
-        Some(Address::new(SECOND_PC))
-    );
+    let second = state.data_access_execution(fixture.fetches[1]).unwrap();
+    assert_eq!(second.fetch_pc(), Address::new(SECOND_PC));
     state
         .data_access_execution_mut(fixture.fetches[1])
         .unwrap()
@@ -367,16 +405,31 @@ fn two_pending_bind_second_preserves_first_live_access() {
 #[test]
 fn two_pending_first_pre_submit_replay_discards_second_and_suffix() {
     let mut fixture = TwoPendingIssueFixture::siblings([0x9000, 0x9008], [true, false]);
+    fixture.schedule_second_pending_address_wake();
     fixture
         .core
         .add_pma_uncacheable_range(RiscvPmaRange::new(0x9000, 0x9008).unwrap())
         .unwrap();
     assert!(!fixture.issue());
-    let state = fixture.core.state.lock().expect("riscv core lock");
-    assert_eq!(state.o3_runtime.pending_data_address_count(), 0);
-    assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 1);
-    assert_eq!(state.o3_runtime.snapshot().load_store_queue().len(), 1);
-    assert_eq!(state.o3_runtime.live_data_access_count_for_test(), 1);
+    fixture.assert_first_pending_suffix_discarded_without_stale_wake();
+}
+
+#[test]
+fn two_pending_dropped_parallel_prepare_clears_scheduled_pending_wake() {
+    let mut fixture = TwoPendingIssueFixture::siblings([0x9000, 0x9008], [true, false]);
+    fixture.schedule_second_pending_address_wake();
+    let prepared = fixture
+        .core
+        .prepare_data_parallel_access(
+            fixture.scheduler.now(),
+            &fixture.transport,
+            MemoryTrace::new(),
+            |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap()
+        .expect("first dependent address prepares");
+    drop(prepared);
+    fixture.assert_first_pending_suffix_discarded_without_stale_wake();
 }
 
 #[test]
@@ -407,65 +460,6 @@ fn two_pending_second_pma_and_cross_line_replay_preserve_first_live_access() {
         assert!(!fixture.issue());
         fixture.assert_first_live_and_no_pending();
     }
-}
-
-fn materialized_load(
-    pc: u64,
-    fetch_sequence: u64,
-    raw: u32,
-    rd: u8,
-    address: u64,
-) -> RiscvCpuExecutionEvent {
-    let decoded = decode(raw);
-    let access = MemoryAccessKind::Load {
-        rd: reg(rd),
-        address,
-        width: MemoryWidth::Doubleword,
-        signed: true,
-    };
-    RiscvCpuExecutionEvent::new(
-        fetch_event_with_raw(pc, fetch_sequence, raw),
-        decoded.instruction(),
-        RiscvExecutionRecord::new_with_instruction_bytes(
-            decoded.instruction(),
-            decoded.bytes(),
-            pc,
-            pc + 4,
-            Vec::new(),
-            Some(access),
-        ),
-    )
-}
-
-fn atomic_head_event() -> RiscvCpuExecutionEvent {
-    let instruction = RiscvInstruction::AtomicMemory {
-        rd: reg(5),
-        rs1: reg(2),
-        rs2: reg(3),
-        width: MemoryWidth::Doubleword,
-        op: AtomicMemoryOp::Swap,
-        acquire: false,
-        release: false,
-    };
-    RiscvCpuExecutionEvent::new(
-        fetch_event(HEAD_PC, 10),
-        instruction,
-        RiscvExecutionRecord::new(
-            instruction,
-            HEAD_PC,
-            HEAD_PC + 4,
-            Vec::new(),
-            Some(MemoryAccessKind::AtomicMemory {
-                rd: reg(5),
-                address: HEAD_ADDRESS,
-                width: MemoryWidth::Doubleword,
-                op: AtomicMemoryOp::Swap,
-                value: 7,
-                acquire: false,
-                release: false,
-            }),
-        ),
-    )
 }
 
 fn fetch_event_with_raw(pc: u64, sequence: u64, raw: u32) -> CpuFetchEvent {

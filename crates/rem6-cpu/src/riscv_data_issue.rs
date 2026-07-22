@@ -79,8 +79,9 @@ impl RiscvCore {
             + Send
             + 'static,
     {
-        self.data_issue_attempt(|| {
-            let Some(prepared) = self.prepare_data_access(scheduler.now(), transport)? else {
+        let tick = scheduler.now();
+        self.data_issue_attempt(tick, || {
+            let Some(prepared) = self.prepare_data_access(tick, transport)? else {
                 return Ok(None);
             };
             let issue = match prepared {
@@ -117,7 +118,7 @@ impl RiscvCore {
                     );
                 }
                 BufferedO3EffectAdmission::Blocked => {
-                    self.clear_deferred_o3_live_data_access_execution();
+                    self.clear_deferred_o3_live_data_access_execution(tick);
                     return Ok(None);
                 }
                 BufferedO3EffectAdmission::NotBuffered => {}
@@ -181,7 +182,7 @@ impl RiscvCore {
             + Send
             + 'static,
     {
-        self.data_issue_attempt(|| {
+        self.data_issue_attempt(tick, || {
             let Some(prepared) = self.prepare_data_access(tick, transport)? else {
                 return Ok(None);
             };
@@ -217,7 +218,7 @@ impl RiscvCore {
                     )));
                 }
                 BufferedO3EffectAdmission::Blocked => {
-                    self.clear_deferred_o3_live_data_access_execution();
+                    self.clear_deferred_o3_live_data_access_execution(tick);
                     return Ok(None);
                 }
                 BufferedO3EffectAdmission::NotBuffered => {}
@@ -263,7 +264,8 @@ impl RiscvCore {
         scheduler: &mut PartitionedScheduler,
         bus: &MmioBus,
     ) -> Result<Option<PartitionEventId>, RiscvCpuError> {
-        self.data_issue_attempt(|| {
+        let tick = scheduler.now();
+        self.data_issue_attempt(tick, || {
             let Some(issue) = self.prepare_mmio_data_access(scheduler, bus)? else {
                 return Ok(None);
             };
@@ -302,11 +304,12 @@ impl RiscvCore {
 
     pub(crate) fn data_issue_attempt<T>(
         &self,
+        tick: Tick,
         attempt: impl FnOnce() -> Result<T, RiscvCpuError>,
     ) -> Result<T, RiscvCpuError> {
         let result = attempt();
         if result.is_err() {
-            self.clear_deferred_o3_live_data_access_execution();
+            self.clear_deferred_o3_live_data_access_execution(tick);
         }
         result
     }
@@ -449,7 +452,7 @@ impl RiscvCore {
             Err(error)
                 if self.pending_address_preparation_failure_is_replay(fetch_request, &error) =>
             {
-                self.replay_pending_address_before_submit(fetch_request);
+                self.replay_pending_address_before_submit(fetch_request, tick);
                 return Ok(None);
             }
             Err(error) => return Err(error),
@@ -459,7 +462,7 @@ impl RiscvCore {
                 Ok(Some(PreparedDataAccess::New(issue)))
             }
             PendingAddressPreSubmit::Replay => {
-                self.replay_pending_address_before_submit(fetch_request);
+                self.replay_pending_address_before_submit(fetch_request, tick);
                 Ok(None)
             }
         }
@@ -480,7 +483,7 @@ impl RiscvCore {
             return Ok(None);
         };
         if self.pending_address_owns_fetch(fetch_request) {
-            self.replay_pending_address_before_submit(fetch_request);
+            self.replay_pending_address_before_submit(fetch_request, scheduler.now());
             return Ok(None);
         }
         let base_size = access_size(&access)?;

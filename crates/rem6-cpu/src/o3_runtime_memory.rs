@@ -1,6 +1,7 @@
 use super::o3_runtime_writeback::O3LiveWritebackReady;
 use super::*;
 use crate::riscv_data_completion::RiscvDataCompletion;
+use rem6_kernel::Tick;
 use rem6_memory::{AccessSize, Address, AddressRange};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1147,7 +1148,7 @@ impl crate::RiscvCore {
         self.with_o3_runtime(|runtime| runtime.ready_live_data_access_event_kind())
     }
 
-    pub(crate) fn clear_deferred_o3_live_data_access_execution(&self) -> bool {
+    pub(crate) fn clear_deferred_o3_live_data_access_execution(&self, now: Tick) -> bool {
         let mut state = self.state.lock().expect("riscv core lock");
         let fetch_request = match state.o3_runtime.deferred_live_data_access_execution() {
             Some(fetch_request) => fetch_request,
@@ -1165,6 +1166,6 @@ impl crate::RiscvCore {
                 pending_fetch
             }
         };
-        state.abort_prepared_data_issue(fetch_request)
+        state.abort_prepared_data_issue(fetch_request, now)
     }
 }

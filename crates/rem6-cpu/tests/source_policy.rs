@@ -1680,11 +1680,14 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
     let replay_definition =
         rust_function_definition(&issue_child_code, "replay_pending_address_before_submit")
             .expect("pending replay owner");
-    assert!(replay_definition.contains("discard_pending_data_address_for_fetch(fetch_request)"));
+    assert!(replay_definition.contains("abort_prepared_data_issue(fetch_request, now)"));
+    assert!(!replay_definition.contains("discard_pending_data_address_for_fetch(fetch_request)"));
     assert!(!replay_definition.contains("discard_pending_data_address();"));
     let abort_definition = rust_function_definition(&prepared_code, "abort_prepared_data_issue")
         .expect("prepared abort owner");
     assert!(abort_definition.contains("discard_pending_data_address_for_fetch(fetch_request)"));
+    assert!(abort_definition.contains("o3_writeback_wake.clear()"));
+    assert!(abort_definition.contains("refresh_o3_writeback_wake(now)"));
     let can_issue_definition =
         rust_function_definition(&memory_code, "pending_data_address_can_issue")
             .expect("pending issue lookup owner");
@@ -1723,6 +1726,7 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
         "two_pending_bind_first_removes_exact_row_and_keeps_second_pending",
         "two_pending_bind_second_preserves_first_live_access",
         "two_pending_first_pre_submit_replay_discards_second_and_suffix",
+        "two_pending_dropped_parallel_prepare_clears_scheduled_pending_wake",
         "two_pending_second_pre_submit_replay_preserves_first_live_access",
         "two_pending_atomic_chain_second_overlap_uses_root_head_range",
         "two_pending_second_pma_and_cross_line_replay_preserve_first_live_access",
@@ -1774,6 +1778,7 @@ fn task8_dependent_result_address_production_ownership_is_final() {
         fs::read_to_string(crate_dir.join(runtime_owner_path)).expect("runtime root source");
     let issue_root_module_source =
         fs::read_to_string(crate_dir.join(issue_root_path)).expect("issue root source");
+    let runtime_owner = source(runtime_owner_path);
     let pending_owner = source(pending_owner_path);
     let pending_set_owner = source(pending_set_owner_path);
     let pending_staging_owner = source(pending_staging_owner_path);
@@ -1786,6 +1791,10 @@ fn task8_dependent_result_address_production_ownership_is_final() {
         .collect::<String>();
 
     for (path, module) in [
+        (
+            "o3_runtime_pending_address.rs",
+            "o3_runtime_pending_address",
+        ),
         (
             "o3_runtime_pending_address_set.rs",
             "o3_runtime_pending_address_set",
@@ -1853,6 +1862,27 @@ fn task8_dependent_result_address_production_ownership_is_final() {
         [pending_set_owner_path.display().to_string()],
         "O3PendingDataAddresses must have exactly one focused production owner"
     );
+    let pending_wake_seed_owners = production
+        .iter()
+        .flat_map(|(path, source)| {
+            production_struct_definitions(source)
+                .into_iter()
+                .filter(|definition| {
+                    production_defines_exact_named_item(
+                        definition,
+                        "struct",
+                        "O3PendingDataAddressWakeSeed",
+                    )
+                })
+                .map(|_| path.display().to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        pending_wake_seed_owners,
+        [pending_issue_owner_path.display().to_string()],
+        "O3PendingDataAddressWakeSeed must stay in the focused scheduler owner"
+    );
     let mut alternate_pending_storage = Vec::new();
     for (path, source) in &production {
         let mut definitions = production_struct_definitions(source);
@@ -1883,6 +1913,18 @@ fn task8_dependent_result_address_production_ownership_is_final() {
         alternate_pending_storage.is_empty(),
         "alternate pending-row aggregate storage is forbidden: {}",
         alternate_pending_storage.join(", ")
+    );
+    assert_eq!(
+        production_struct_named_type_storage(&production, "O3PendingDataAddresses"),
+        [(runtime_owner_path.to_path_buf(), 1)],
+        "O3PendingDataAddresses struct-field storage must be exactly the canonical runtime field"
+    );
+    assert_eq!(
+        runtime_owner
+            .matches("pending_data_addresses: O3PendingDataAddresses,")
+            .count(),
+        1,
+        "runtime owner must contain exactly one pending-address collection field"
     );
     assert_eq!(
         production_code
@@ -1917,6 +1959,16 @@ fn task8_dependent_result_address_production_ownership_is_final() {
             .count(),
         1,
         "the pending-address collection must have one exact capacity-two constant"
+    );
+    assert_eq!(
+        production
+            .iter()
+            .map(|(_, source)| {
+                production_named_const_declaration_count(source, "O3_PENDING_DATA_ADDRESS_CAPACITY")
+            })
+            .sum::<usize>(),
+        1,
+        "production must declare exactly one O3_PENDING_DATA_ADDRESS_CAPACITY constant"
     );
     assert_eq!(
         pending_set_owner
@@ -2021,15 +2073,20 @@ fn task8_dependent_result_address_production_ownership_is_final() {
             .collect::<Vec<_>>()
     };
 
-    assert_eq!(
-        owners_of("stage_pending_data_address_window"),
-        [pending_staging_owner_path.display().to_string()],
-        "pending-address staging must stay in its focused owner"
-    );
-    assert_eq!(
-        rust_function_definition_count(pending_staging_owner, "stage_pending_data_address_window"),
-        1
-    );
+    for helper in [
+        "stage_pending_data_address_window",
+        "try_stage_pending_data_address_window",
+    ] {
+        assert_eq!(
+            owners_of(helper),
+            [pending_staging_owner_path.display().to_string()],
+            "pending-address staging helper `{helper}` must stay in its focused owner"
+        );
+        assert_eq!(
+            rust_function_definition_count(pending_staging_owner, helper),
+            1
+        );
+    }
 
     for helper in [
         "issue_matches",
@@ -2115,6 +2172,11 @@ fn task8_dependent_result_address_production_ownership_is_final() {
     let mut collection_owners = Vec::new();
     let mut compatibility_aliases = Vec::new();
     let mut parallel_authorities = Vec::new();
+    let protected_pending_items = [
+        "O3PendingDataAddress",
+        "O3PendingDataAddresses",
+        "O3_PENDING_DATA_ADDRESS_CAPACITY",
+    ];
     for (path, source) in &production {
         if ["BTreeMap", "HashMap", "BTreeSet", "HashSet"]
             .into_iter()
@@ -2123,6 +2185,9 @@ fn task8_dependent_result_address_production_ownership_is_final() {
             })
         {
             collection_owners.push(path.display().to_string());
+        }
+        for alias in production_renamed_use_aliases(source, &protected_pending_items) {
+            compatibility_aliases.push(format!("{} ({alias})", path.display()));
         }
         let mut definitions = production_struct_definitions(source);
         definitions.extend(production_enum_definitions(source));
@@ -5339,6 +5404,102 @@ fn production_definition_named_type_storage_count(definition: &str, name: &str) 
     count
 }
 
+fn production_struct_named_type_storage(
+    production: &[(PathBuf, String)],
+    name: &str,
+) -> Vec<(PathBuf, usize)> {
+    production
+        .iter()
+        .filter_map(|(path, source)| {
+            let storage_count = production_struct_definitions(source)
+                .iter()
+                .map(|definition| production_definition_named_type_storage_count(definition, name))
+                .sum();
+            (storage_count > 0).then(|| (path.clone(), storage_count))
+        })
+        .collect()
+}
+
+fn production_renamed_use_aliases(source: &str, protected_names: &[&str]) -> Vec<String> {
+    let code = production_rust_source(source);
+    let chars = code.chars().collect::<Vec<_>>();
+    let mut aliases = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        if identifier != "use" {
+            index = end;
+            continue;
+        }
+        let Some(statement_end) = chars
+            .iter()
+            .enumerate()
+            .skip(end)
+            .find_map(|(candidate, character)| (*character == ';').then_some(candidate))
+        else {
+            break;
+        };
+        let mut import_index = end;
+        while import_index < statement_end {
+            let Some((imported, imported_end)) = rust_identifier_at(&chars, import_index) else {
+                import_index += 1;
+                continue;
+            };
+            if protected_names.contains(&imported.as_str()) {
+                let as_start = skip_rust_whitespace(&chars, imported_end);
+                if let Some((as_keyword, as_end)) = rust_identifier_at(&chars, as_start) {
+                    if as_keyword == "as" {
+                        let alias_start = skip_rust_whitespace(&chars, as_end);
+                        if let Some((alias, alias_end)) = rust_identifier_at(&chars, alias_start) {
+                            aliases.push(format!("{imported} as {alias}"));
+                            import_index = alias_end;
+                            continue;
+                        }
+                    }
+                }
+            }
+            import_index = imported_end;
+        }
+        index = statement_end + 1;
+    }
+    aliases
+}
+
+fn production_named_const_declaration_count(source: &str, name: &str) -> usize {
+    let code = production_rust_source(source);
+    let chars = code.chars().collect::<Vec<_>>();
+    let mut count = 0;
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        if identifier == "const" {
+            let mut previous = index;
+            while previous > 0 && chars[previous - 1].is_whitespace() {
+                previous -= 1;
+            }
+            let const_generic = previous > 0 && matches!(chars.get(previous - 1), Some('<' | ','));
+            if !const_generic {
+                let name_start = skip_rust_whitespace(&chars, end);
+                if let Some((const_name, name_end)) = rust_identifier_at(&chars, name_start) {
+                    let declaration = skip_rust_whitespace(&chars, name_end);
+                    if const_name == name && matches!(chars.get(declaration), Some(':' | '=' | ';'))
+                    {
+                        count += 1;
+                    }
+                }
+            }
+        }
+        index = end;
+    }
+    count
+}
+
 fn production_struct_definitions(source: &str) -> Vec<String> {
     let code = production_rust_source(source);
     let chars = code.chars().collect::<Vec<_>>();
@@ -6006,6 +6167,108 @@ fn query() -> Option<O3ProducerForwardedScalarDescendant> { None }\n";
         "fn query() -> Option<O3ProducerForwardedScalarDescendant> { None }"
     )
     .is_empty());
+}
+
+#[test]
+fn task8_collection_storage_scan_rejects_nested_parallel_field() {
+    let runtime_path = PathBuf::from("src/o3_runtime.rs");
+    let mutation = vec![(
+        runtime_path.clone(),
+        production_rust_source(
+            r#"
+struct O3RuntimeState {
+    pending_data_addresses: O3PendingDataAddresses,
+}
+
+mod mutation {
+    struct ShadowRuntime {
+        shadow_pending: O3PendingDataAddresses,
+    }
+}
+"#,
+        ),
+    )];
+
+    let storage = production_struct_named_type_storage(&mutation, "O3PendingDataAddresses");
+    assert_eq!(storage, [(runtime_path.clone(), 2)]);
+    assert_ne!(
+        storage,
+        [(runtime_path, 1)],
+        "nested parallel collection storage must violate canonical runtime ownership"
+    );
+}
+
+#[test]
+fn task8_renamed_pending_address_import_mutation_is_rejected() {
+    let mutation = r#"
+mod mutation {
+    use super::O3PendingDataAddresses as PendingSet;
+    use super::{
+        O3PendingDataAddress as PendingRow,
+        O3_PENDING_DATA_ADDRESS_CAPACITY as PendingCapacity,
+    };
+
+    struct Shadow {
+        rows: PendingSet,
+    }
+}
+
+// use super::O3PendingDataAddresses as CommentedPendingSet;
+const IMPORT_TEXT: &str = "use super::O3PendingDataAddresses as StringPendingSet;";
+
+#[cfg(test)]
+mod tests {
+    use super::O3PendingDataAddresses as TestPendingSet;
+}
+"#;
+
+    let aliases = production_renamed_use_aliases(
+        mutation,
+        &[
+            "O3PendingDataAddress",
+            "O3PendingDataAddresses",
+            "O3_PENDING_DATA_ADDRESS_CAPACITY",
+        ],
+    );
+    assert_eq!(
+        aliases,
+        [
+            "O3PendingDataAddresses as PendingSet",
+            "O3PendingDataAddress as PendingRow",
+            "O3_PENDING_DATA_ADDRESS_CAPACITY as PendingCapacity",
+        ]
+    );
+    assert!(
+        !aliases.is_empty(),
+        "renamed protected imports must violate compatibility-alias ownership"
+    );
+}
+
+#[test]
+fn task8_duplicate_capacity_const_mutation_is_rejected() {
+    let mutation = r#"
+pub(super) const O3_PENDING_DATA_ADDRESS_CAPACITY: usize = 2;
+
+mod mutation {
+    const O3_PENDING_DATA_ADDRESS_CAPACITY
+        : usize = 3;
+}
+
+struct ConstGeneric<const O3_PENDING_DATA_ADDRESS_CAPACITY: usize>;
+// const O3_PENDING_DATA_ADDRESS_CAPACITY: usize = 4;
+const CAPACITY_TEXT: &str = "const O3_PENDING_DATA_ADDRESS_CAPACITY: usize = 5;";
+
+#[cfg(test)]
+const O3_PENDING_DATA_ADDRESS_CAPACITY: usize = 6;
+"#;
+
+    let declaration_count =
+        production_named_const_declaration_count(mutation, "O3_PENDING_DATA_ADDRESS_CAPACITY");
+    assert_eq!(declaration_count, 2);
+    assert_ne!(
+        declaration_count, 1,
+        "nested duplicate capacity declarations must violate canonical ownership"
+    );
 }
 
 #[test]
