@@ -6,9 +6,7 @@ use rem6_isa_riscv::{
 
 use super::o3_runtime_control_window::live_issue_op_class;
 use super::*;
-use crate::o3_pipeline::{
-    O3IssueOpClass, O3IssueQueueCapacity, O3ScopedIssueScheduler, O3ScopedReadyInstruction,
-};
+use crate::o3_pipeline::{O3IssueOpClass, O3ScopedReadyInstruction};
 
 #[path = "o3_runtime_issue/dependency.rs"]
 mod dependency;
@@ -17,7 +15,7 @@ mod dependency;
 pub(in crate::o3_runtime) mod calendar;
 #[path = "o3_runtime_issue/pending_address.rs"]
 mod pending_address;
-use calendar::LIVE_ISSUE_QUEUE;
+use calendar::{O3LiveIssueCalendar, O3LiveIssueTickDecision};
 pub(crate) use dependency::O3LiveIssueDependencyTable;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -283,21 +281,8 @@ impl O3RuntimeState {
                 break;
             }
             let dependency_table = O3LiveIssueDependencyTable::new(self, &candidates)?;
-            let reservations = self.live_issue_reservations_at(head, tick);
-            let scheduler = O3ScopedIssueScheduler::new(
-                self.issue_width,
-                live_issue_capacities_after_reservations(self.issue_width, reservations),
-            )
-            .expect("configured live O3 issue width is nonzero");
-            let plan = scheduler
-                .try_plan_with_reserved_width(
-                    reservations.width,
-                    dependency_table.resolved_scopes_at(tick),
-                    candidates
-                        .iter()
-                        .map(|candidate| dependency_table.scoped_instruction(candidate)),
-                )
-                .map_err(|error| O3RuntimeError::InvalidLiveIssuePlan { error })?;
+            let calendar = O3LiveIssueCalendar::capture(self, head);
+            let plan = calendar.plan_at(tick, &dependency_table, &candidates)?;
             let issued_rows = plan.issued().len();
             if issued_rows != 0 {
                 let prepared = self.prepare_live_issue_batch(
@@ -319,22 +304,12 @@ impl O3RuntimeState {
                     }
                 };
                 if matches!(outcome, O3LiveIssueBatchOutcome::ReplayPending(_)) {
-                    tick_decision.observe(
-                        0,
-                        plan.resource_blocked().len(),
-                        plan.dependency_blocked().len(),
-                        plan.reserved_width(),
-                    );
+                    tick_decision.observe(&plan, 0);
                     self.flush_live_issue_decision(tick, &mut tick_decision);
                     break;
                 }
             }
-            tick_decision.observe(
-                issued_rows,
-                plan.resource_blocked().len(),
-                plan.dependency_blocked().len(),
-                plan.reserved_width().saturating_add(issued_rows),
-            );
+            tick_decision.observe(&plan, issued_rows);
 
             let blocked_pending = plan.resource_blocked().iter().find_map(|blocked| {
                 self.pending_data_address_sequence_for_replay(blocked.sequence())
@@ -504,120 +479,15 @@ impl O3RuntimeState {
     }
 
     fn flush_live_issue_decision(&mut self, tick: u64, decision: &mut O3LiveIssueTickDecision) {
-        if !decision.observed {
+        let Some(decision) = decision.take() else {
             return;
-        }
-        let decision = std::mem::take(decision);
+        };
         self.record_live_issue_decision(
             tick,
-            decision.issued_rows,
-            decision.resource_blocked_rows,
-            decision.dependency_blocked_rows,
-            decision.max_rows_at_tick,
+            decision.issued_rows(),
+            decision.resource_blocked_rows(),
+            decision.dependency_blocked_rows(),
+            decision.max_rows_at_tick(),
         );
     }
-
-    fn live_issue_reservations_at(
-        &self,
-        head: O3LiveIssueHeadReservation,
-        tick: u64,
-    ) -> O3LiveIssueReservations {
-        let mut reservations = O3LiveIssueReservations::default();
-        if head.issue_tick == tick {
-            reservations.reserve(head.op_class);
-        }
-        if self.pending_data_address_selected_issue_tick_for_reservation(tick) {
-            reservations.reserve(O3IssueOpClass::Memory);
-        }
-        for issued in self.live_speculative_executions.iter().filter(|issued| {
-            issued.issue_tick == tick
-                && issued.sequence != head.sequence
-                && self
-                    .snapshot
-                    .reorder_buffer
-                    .iter()
-                    .any(|entry| entry.is_live_staged() && entry.sequence() == issued.sequence)
-        }) {
-            reservations.reserve(live_issue_op_class(issued.execution.instruction()));
-        }
-        reservations
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct O3LiveIssueReservations {
-    width: usize,
-    int_alu: usize,
-    int_mult: usize,
-    branch: usize,
-    memory: usize,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct O3LiveIssueTickDecision {
-    issued_rows: usize,
-    resource_blocked_rows: usize,
-    dependency_blocked_rows: usize,
-    max_rows_at_tick: usize,
-    observed: bool,
-}
-
-impl O3LiveIssueTickDecision {
-    fn observe(
-        &mut self,
-        issued_rows: usize,
-        resource_blocked_rows: usize,
-        dependency_blocked_rows: usize,
-        total_rows_at_tick: usize,
-    ) {
-        self.issued_rows = self.issued_rows.saturating_add(issued_rows);
-        self.resource_blocked_rows = resource_blocked_rows;
-        self.dependency_blocked_rows = dependency_blocked_rows;
-        self.max_rows_at_tick = self.max_rows_at_tick.max(total_rows_at_tick);
-        self.observed = true;
-    }
-}
-
-impl O3LiveIssueReservations {
-    fn reserve(&mut self, op_class: O3IssueOpClass) {
-        self.width = self.width.saturating_add(1);
-        match op_class {
-            O3IssueOpClass::IntAlu => self.int_alu = self.int_alu.saturating_add(1),
-            O3IssueOpClass::IntMult => self.int_mult = self.int_mult.saturating_add(1),
-            O3IssueOpClass::Branch => self.branch = self.branch.saturating_add(1),
-            O3IssueOpClass::Memory => self.memory = self.memory.saturating_add(1),
-            O3IssueOpClass::Float | O3IssueOpClass::System => {}
-        }
-    }
-}
-
-fn live_issue_capacities_after_reservations(
-    issue_width: usize,
-    reservations: O3LiveIssueReservations,
-) -> Vec<O3IssueQueueCapacity> {
-    [
-        (
-            O3IssueOpClass::IntAlu,
-            issue_width.saturating_sub(reservations.int_alu),
-        ),
-        (
-            O3IssueOpClass::IntMult,
-            1_usize.saturating_sub(reservations.int_mult),
-        ),
-        (
-            O3IssueOpClass::Branch,
-            1_usize.saturating_sub(reservations.branch),
-        ),
-        (
-            O3IssueOpClass::Memory,
-            1_usize.saturating_sub(reservations.memory),
-        ),
-    ]
-    .into_iter()
-    .filter(|(_, slots)| *slots != 0)
-    .map(|(op_class, slots)| {
-        O3IssueQueueCapacity::new(LIVE_ISSUE_QUEUE, op_class, slots)
-            .expect("live O3 issue capacities are nonzero")
-    })
-    .collect()
 }

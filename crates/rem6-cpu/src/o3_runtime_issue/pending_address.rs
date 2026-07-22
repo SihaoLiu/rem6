@@ -157,15 +157,6 @@ impl O3RuntimeState {
         pending.requested_wake_tick = Some(wake_tick);
     }
 
-    pub(super) fn pending_data_address_selected_issue_tick_for_reservation(
-        &self,
-        tick: u64,
-    ) -> bool {
-        self.pending_data_addresses
-            .iter()
-            .any(|pending| pending.selected_issue_tick == Some(tick))
-    }
-
     pub(super) fn record_pending_data_address_resource_blocked(
         &mut self,
         sequence: u64,

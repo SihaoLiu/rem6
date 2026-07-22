@@ -5,6 +5,8 @@ const MAX_FACADE_LINES: usize = 1300;
 const MAX_O3_RUNTIME_DEEP_CLEANUP_TEST_LINES: usize = 350;
 const MAX_O3_RUNTIME_ISSUE_DEPENDENCY_LINES: usize = 500;
 const MAX_O3_RUNTIME_ISSUE_DEPENDENCY_TEST_LINES: usize = 500;
+const MAX_O3_RUNTIME_ISSUE_CALENDAR_LINES: usize = 450;
+const MAX_O3_RUNTIME_ISSUE_CALENDAR_TEST_LINES: usize = 450;
 const MAX_O3_RUNTIME_ISSUE_LINES: usize = 800;
 const MAX_O3_RUNTIME_MEMORY_LINES: usize = 1200;
 const MAX_O3_RUNTIME_ROOT_LINES: usize = 1200;
@@ -2942,6 +2944,126 @@ fn disjoint_store_prefix_uses_ordered_store_ownership_not_overlap_connectivity()
 }
 
 #[test]
+fn o3_live_issue_calendar_owns_reservations_and_arbiter() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let issue_path = crate_dir.join("src/o3_runtime_issue.rs");
+    let calendar_path = crate_dir.join("src/o3_runtime_issue/calendar.rs");
+    let calendar_tests_path = crate_dir.join("src/o3_runtime_issue/calendar_tests.rs");
+    let runtime_path = crate_dir.join("src/o3_runtime.rs");
+    let issue_source = fs::read_to_string(&issue_path).unwrap();
+    let issue = production_rust_source(&issue_source);
+    let calendar = production_rust_source(&fs::read_to_string(&calendar_path).unwrap());
+    let calendar_tests = fs::read_to_string(&calendar_tests_path).unwrap();
+    let runtime = production_rust_source(&fs::read_to_string(&runtime_path).unwrap());
+
+    assert!(
+        line_count(&issue_path) <= MAX_O3_RUNTIME_ISSUE_LINES,
+        "src/o3_runtime_issue.rs exceeds {MAX_O3_RUNTIME_ISSUE_LINES} lines"
+    );
+    assert!(
+        line_count(&calendar_path) <= MAX_O3_RUNTIME_ISSUE_CALENDAR_LINES,
+        "src/o3_runtime_issue/calendar.rs exceeds {MAX_O3_RUNTIME_ISSUE_CALENDAR_LINES} lines"
+    );
+    assert!(
+        line_count(&calendar_tests_path) <= MAX_O3_RUNTIME_ISSUE_CALENDAR_TEST_LINES,
+        "src/o3_runtime_issue/calendar_tests.rs exceeds {MAX_O3_RUNTIME_ISSUE_CALENDAR_TEST_LINES} lines"
+    );
+    assert!(
+        issue_source.contains("#[path = \"o3_runtime_issue/calendar.rs\"]")
+            && issue_source.contains("mod calendar;"),
+        "src/o3_runtime_issue.rs must declare o3_runtime_issue/calendar.rs"
+    );
+
+    let calendar_authority_patterns = [
+        "struct O3LiveIssueCalendar",
+        "struct O3LiveIssueReservations",
+        "struct O3LiveIssueCyclePlan",
+        "struct O3LiveIssueTickDecision",
+        "O3ScopedIssueScheduler::new(",
+        "fn live_issue_capacities_after_reservations(",
+        "const LIVE_ISSUE_QUEUE",
+    ];
+    for anchor in calendar_authority_patterns {
+        assert!(
+            calendar.contains(anchor),
+            "live issue calendar authority is missing `{anchor}`"
+        );
+    }
+
+    let production_sources = rust_source_files(&crate_dir.join("src"))
+        .into_iter()
+        .filter_map(|path| {
+            let relative = path.strip_prefix(crate_dir).unwrap().to_path_buf();
+            (!is_test_only_rust_source(&relative)).then(|| {
+                let source = fs::read_to_string(path).unwrap();
+                (relative, production_rust_source(&source))
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut offenders = Vec::new();
+    for (relative, source) in &production_sources {
+        if relative == Path::new("src/o3_runtime_issue/calendar.rs") {
+            continue;
+        }
+        for anchor in calendar_authority_patterns {
+            if source.contains(anchor) {
+                offenders.push(format!("{} retains `{anchor}`", relative.display()));
+            }
+        }
+        for stale in [
+            "live_issue_reservations_at",
+            "live_issue_capacities_after_reservations",
+            "pending_data_address_selected_issue_tick_for_reservation",
+        ] {
+            if source.contains(stale) {
+                offenders.push(format!("{} retains `{stale}`", relative.display()));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "live issue reservation and arbitration authority must live only in calendar.rs: {}",
+        offenders.join(", ")
+    );
+
+    for forbidden in [
+        "fn live_issue_reservations_at(",
+        "struct O3LiveIssueReservations",
+        "struct O3LiveIssueTickDecision",
+        "fn live_issue_capacities_after_reservations(",
+        "O3ScopedIssueScheduler::new(",
+        "const LIVE_ISSUE_QUEUE",
+    ] {
+        assert!(
+            !issue.contains(forbidden),
+            "src/o3_runtime_issue.rs must not retain `{forbidden}`"
+        );
+    }
+    assert!(
+        issue.contains("O3LiveIssueCalendar::capture(") && issue.contains(".plan_at("),
+        "src/o3_runtime_issue.rs must delegate through O3LiveIssueCalendar::capture and .plan_at"
+    );
+    assert!(
+        !runtime.contains("live_issue_calendar"),
+        "src/o3_runtime.rs must not retain a live_issue_calendar field"
+    );
+
+    for anchor in [
+        "live_issue_calendar_head_and_recorded_head_consume_one_slot",
+        "live_issue_calendar_rebuild_releases_removed_prior_row",
+        "live_issue_calendar_selected_pending_tick_reserves_memory",
+        "live_issue_calendar_separates_resource_and_dependency_blocks",
+        "live_issue_tick_decision_aggregates_same_tick_attempts",
+    ] {
+        assert_eq!(
+            rust_function_definition_count(&calendar_tests, anchor),
+            1,
+            "calendar_tests.rs must contain exact test anchor `{anchor}`"
+        );
+    }
+}
+
+#[test]
 fn o3_runtime_issue_lives_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root = fs::read_to_string(crate_dir.join("src/o3_runtime.rs")).unwrap();
@@ -2966,7 +3088,6 @@ fn o3_runtime_issue_lives_in_focused_module() {
 
     let issue_authority_patterns = [
         "pub(crate) fn schedule_live_speculative_issues(",
-        "O3ScopedIssueScheduler::new(",
         "self.stats.record_issue_cycle(",
         "pub(crate) fn live_data_access_head_reservation(",
         "pub(super) const fn memory(",
@@ -2991,6 +3112,16 @@ fn o3_runtime_issue_lives_in_focused_module() {
             );
         }
     }
+    for anchor in ["O3LiveIssueCalendar::capture(", ".plan_at("] {
+        assert!(
+            module.contains(anchor),
+            "src/o3_runtime_issue.rs must delegate live issue arbitration through `{anchor}`"
+        );
+    }
+    assert!(
+        !module.contains("O3ScopedIssueScheduler::new("),
+        "src/o3_runtime_issue.rs must not construct the scoped issue scheduler directly"
+    );
     assert!(
         live_retire.contains(".schedule_live_speculative_issues("),
         "src/riscv_live_retire_window.rs must delegate live younger issue scheduling"
