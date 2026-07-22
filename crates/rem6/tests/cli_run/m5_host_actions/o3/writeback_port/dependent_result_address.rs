@@ -26,6 +26,8 @@ const HEAD_GUARD: u64 = 0xaaaa_bbbb_cccc_dddd;
 const WITNESS_GUARD: u64 = 0x5555_6666_7777_8888;
 const OLD_REGISTERS: [(&str, u64); 4] = [("x5", 0x15), ("x6", 0x16), ("x7", 0x17), ("x8", 0x18)];
 
+static OUTPUT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DependentAddressHead {
     ScalarLoad,
@@ -426,6 +428,95 @@ fn data_requests_sent(json: &Value) -> Vec<&Value> {
                 && record.pointer("/kind").and_then(Value::as_str) == Some("request_sent")
         })
         .collect()
+}
+
+fn wait_for_boundary(mut command: std::process::Command) -> std::process::Output {
+    let child = command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    crate::gdb_support::wait_with_output_timeout(child, std::time::Duration::from_secs(30))
+}
+
+fn unique_output(label: &str) -> std::path::PathBuf {
+    let id = OUTPUT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "rem6-o3-dependent-address-{}-{}-{id}.json",
+        label.replace(' ', "-"),
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    path
+}
+
+fn lsq_entries(json: &Value) -> &[Value] {
+    json.pointer("/cores/0/o3_runtime/snapshot/lsq/entries")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .expect("LSQ entries")
+}
+
+fn addressless_sequences(json: &Value) -> Vec<u64> {
+    lsq_entries(json)
+        .iter()
+        .filter(|entry| entry.pointer("/address").is_some_and(Value::is_null))
+        .map(|entry| event_u64(entry, "sequence"))
+        .collect()
+}
+
+fn lsq_address(json: &Value, sequence: u64) -> Option<u64> {
+    lsq_entries(json)
+        .iter()
+        .find(|entry| event_u64(entry, "sequence") == sequence)
+        .and_then(|entry| entry.pointer("/address").and_then(Value::as_str))
+        .map(|address| u64::from_str_radix(address.trim_start_matches("0x"), 16).unwrap())
+}
+
+fn rob_entries(json: &Value) -> &[Value] {
+    json.pointer("/cores/0/o3_runtime/snapshot/rob/entries")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .expect("ROB entries")
+}
+
+fn rob_has_sequence(json: &Value, sequence: u64) -> bool {
+    rob_entries(json)
+        .iter()
+        .any(|entry| entry.pointer("/sequence").and_then(Value::as_u64) == Some(sequence))
+}
+
+fn rename_has_integer(json: &Value, architectural: u64) -> bool {
+    json.pointer("/cores/0/o3_runtime/snapshot/rename_map/entries")
+        .and_then(Value::as_array)
+        .is_some_and(|entries| {
+            entries.iter().any(|entry| {
+                entry.pointer("/register_class").and_then(Value::as_str) == Some("integer")
+                    && entry.pointer("/architectural").and_then(Value::as_u64)
+                        == Some(architectural)
+            })
+        })
+}
+
+fn load_count(json: &Value, address: u64) -> usize {
+    let address = format!("0x{address:x}");
+    data_trace(json)
+        .iter()
+        .filter(|record| {
+            event_str(record, "kind") == "load" && event_str(record, "address") == address
+        })
+        .count()
+}
+
+fn completed_load_bytes(json: &Value, address: u64) -> u64 {
+    let address = format!("0x{address:x}");
+    data_trace(json)
+        .iter()
+        .filter(|record| {
+            event_str(record, "kind") == "load" && event_str(record, "address") == address
+        })
+        .map(|record| event_u64(record, "size"))
+        .sum()
 }
 
 fn dependent_address_binary(head: DependentAddressHead, offset: i32) -> std::path::PathBuf {

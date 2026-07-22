@@ -5,8 +5,6 @@ const SECOND_VALUE: u64 = 0x3333;
 const MMIO_POINTER: u64 = 0x1000_0000;
 const MMIO_VALUE: u64 = 0x4444;
 
-static OUTPUT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum BoundaryCase {
     OrderedAtomic,
@@ -315,26 +313,6 @@ fn boundary_initial_memory(case: BoundaryCase) -> Vec<u8> {
     write_u64(&mut data, 96, 0x9999);
     write_u64(&mut data, 104, WITNESS_GUARD);
     data
-}
-
-fn wait_for_boundary(mut command: std::process::Command) -> std::process::Output {
-    let child = command
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    crate::gdb_support::wait_with_output_timeout(child, std::time::Duration::from_secs(30))
-}
-
-fn unique_output(label: &str) -> std::path::PathBuf {
-    let id = OUTPUT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!(
-        "rem6-o3-dependent-address-{}-{}-{id}.json",
-        label.replace(' ', "-"),
-        std::process::id()
-    ));
-    let _ = std::fs::remove_file(&path);
-    path
 }
 
 impl BoundaryCase {

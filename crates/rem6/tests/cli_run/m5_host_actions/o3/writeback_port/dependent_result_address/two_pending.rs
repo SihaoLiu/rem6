@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "two_pending/boundaries.rs"]
+mod boundaries;
+
 const FIRST_PENDING_PC: &str = "0x80000034";
 const SECOND_PENDING_PC: &str = "0x80000038";
 const SCALAR_SUFFIX_PC: &str = "0x8000003c";
@@ -134,16 +137,26 @@ impl TwoPendingFixture {
         }
     }
 
-    fn run(&self, max_tick: u64) -> Value {
+    fn command(&self, max_tick: u64, switch_mode: &str) -> std::process::Command {
         let mut command = dependent_address_command(
             &self.binary,
             self.row.memory_system,
             self.row.issue_width,
             9,
             max_tick,
-            "detailed",
+            switch_mode,
         );
         add_two_pending_memory_dumps(&mut command);
+        command
+    }
+
+    fn run(&self, max_tick: u64) -> Value {
+        self.run_mode(max_tick, "detailed", &[])
+    }
+
+    fn run_mode(&self, max_tick: u64, switch_mode: &str, extra_args: &[&str]) -> Value {
+        let mut command = self.command(max_tick, switch_mode);
+        command.args(extra_args);
         let label = format!("two pending result address {:?}", self.row);
         let json = run_json(command, &label);
         if max_tick == self.row.max_tick {
@@ -467,6 +480,7 @@ fn two_pending_binary(row: TwoPendingRow) -> std::path::PathBuf {
             0b011,
         ),
     ]);
+    words.extend(std::iter::repeat_n(i_type(0, 0, 0, 0, 0x13), 12));
     append_host_stop(&mut words);
     while words.len() * 4 < 0x100 {
         words.push(0);
