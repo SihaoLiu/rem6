@@ -8,7 +8,7 @@ use crate::o3_pipeline::{
 use super::super::o3_runtime_control_window::live_issue_op_class;
 use super::*;
 
-const LIVE_ISSUE_QUEUE: O3IssueQueueId = O3IssueQueueId::new(0);
+pub(in crate::o3_runtime) const LIVE_ISSUE_QUEUE: O3IssueQueueId = O3IssueQueueId::new(0);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::o3_runtime) struct O3LiveIssueCalendar {

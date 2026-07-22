@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::calendar::LIVE_ISSUE_QUEUE;
 use super::*;
 use crate::o3_pipeline::{O3DependencyScopeId, O3ScopedReadyInstruction};
 

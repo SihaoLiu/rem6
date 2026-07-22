@@ -1,13 +1,11 @@
 use rem6_isa_riscv::{RiscvExecutionRecord, RiscvInstruction};
 
-use crate::o3_pipeline::{
-    O3DependencyScopeId, O3IssueOpClass, O3IssueQueueId, O3ScopedReadyInstruction,
+use crate::o3_pipeline::{O3DependencyScopeId, O3IssueOpClass, O3ScopedReadyInstruction};
+
+use super::super::o3_runtime_issue::calendar::{
+    O3LiveIssueCalendar, O3LiveIssueTickDecision, LIVE_ISSUE_QUEUE,
 };
-
-use super::super::o3_runtime_issue::calendar::{O3LiveIssueCalendar, O3LiveIssueTickDecision};
 use super::*;
-
-const LIVE_QUEUE: O3IssueQueueId = O3IssueQueueId::new(0);
 
 #[test]
 fn live_issue_calendar_head_and_recorded_head_consume_one_slot() {
@@ -36,18 +34,18 @@ fn live_issue_calendar_head_and_recorded_head_consume_one_slot() {
 #[test]
 fn live_issue_calendar_rebuild_releases_removed_prior_row() {
     let mut runtime = O3RuntimeState::default();
-    assert!(runtime.set_issue_width(1));
+    assert!(runtime.set_issue_width(2));
     stage_live_row(&mut runtime, 2, BRANCH_PC);
     runtime
         .live_speculative_executions
-        .push(live_execution(2, 20, BRANCH_PC, addi(3, 0, 1)));
+        .push(live_execution(2, 20, BRANCH_PC, mul(3, 1, 2)));
     let head = O3LiveIssueHeadReservation::for_instruction(1, 10, addi(4, 0, 1));
 
     let blocked = O3LiveIssueCalendar::capture(&runtime, head)
         .plan_scoped_at(
             20,
             std::iter::empty::<O3DependencyScopeId>(),
-            [ready(3, O3IssueOpClass::Branch)],
+            [ready(3, O3IssueOpClass::IntMult)],
         )
         .unwrap();
     assert_eq!(blocked.reserved_width(), 1);
@@ -65,7 +63,7 @@ fn live_issue_calendar_rebuild_releases_removed_prior_row() {
         .plan_scoped_at(
             20,
             std::iter::empty::<O3DependencyScopeId>(),
-            [ready(3, O3IssueOpClass::Branch)],
+            [ready(3, O3IssueOpClass::IntMult)],
         )
         .unwrap();
     assert_eq!(released.reserved_width(), 0);
@@ -206,7 +204,7 @@ fn live_issue_tick_decision_aggregates_same_tick_attempts() {
 }
 
 fn ready(sequence: u64, op_class: O3IssueOpClass) -> O3ScopedReadyInstruction {
-    O3ScopedReadyInstruction::new(sequence, LIVE_QUEUE, op_class)
+    O3ScopedReadyInstruction::new(sequence, LIVE_ISSUE_QUEUE, op_class)
 }
 
 fn stage_live_row(runtime: &mut O3RuntimeState, sequence: u64, pc: u64) {

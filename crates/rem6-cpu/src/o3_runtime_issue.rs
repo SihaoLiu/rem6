@@ -7,8 +7,7 @@ use rem6_isa_riscv::{
 use super::o3_runtime_control_window::live_issue_op_class;
 use super::*;
 use crate::o3_pipeline::{
-    O3IssueOpClass, O3IssueQueueCapacity, O3IssueQueueId, O3ScopedIssueScheduler,
-    O3ScopedReadyInstruction,
+    O3IssueOpClass, O3IssueQueueCapacity, O3ScopedIssueScheduler, O3ScopedReadyInstruction,
 };
 
 #[path = "o3_runtime_issue/dependency.rs"]
@@ -18,9 +17,8 @@ mod dependency;
 pub(in crate::o3_runtime) mod calendar;
 #[path = "o3_runtime_issue/pending_address.rs"]
 mod pending_address;
+use calendar::LIVE_ISSUE_QUEUE;
 pub(crate) use dependency::O3LiveIssueDependencyTable;
-
-const LIVE_ISSUE_QUEUE: O3IssueQueueId = O3IssueQueueId::new(0);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct O3LiveIssueRequest {
