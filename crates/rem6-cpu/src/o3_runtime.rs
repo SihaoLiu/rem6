@@ -86,17 +86,16 @@ mod o3_source_operands;
 mod o3_store_forwarding;
 pub(crate) use o3_runtime_checkpoint::O3LiveRetireGateCheckpointPayload;
 pub use o3_runtime_checkpoint::O3RuntimeCheckpointPayload;
-use o3_runtime_control_window::{
-    execution_writes_rename_destination, valid_live_speculative_fetch_identity,
-    O3LiveControlLineage, O3LiveIssueSchedulingCandidate, O3LiveSpeculativeExecution,
-    O3LiveSpeculativeIssueCandidate,
-};
+use o3_runtime_control_window::*;
 pub use o3_runtime_error::O3RuntimeError;
 use o3_runtime_helpers::{
     default_o3_runtime_snapshot, encode_register_class, encode_u32, rob_commit_boundary,
     rob_commit_tick, validate_live_staged_rob_metadata, validate_runtime_snapshot, validate_unique,
     O3RuntimeUniqueKey,
 };
+#[cfg(test)]
+use o3_runtime_issue::queue::O3LiveIssueSchedulingCandidate;
+use o3_runtime_issue::queue::O3LiveSpeculativeIssueCandidate;
 #[cfg(test)]
 pub(crate) use o3_runtime_issue::{O3LiveIssueDependencyTable, O3PreparedLiveIssue};
 pub(crate) use o3_runtime_issue::{O3LiveIssueHeadReservation, O3LiveIssueRequest};

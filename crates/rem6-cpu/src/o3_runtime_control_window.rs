@@ -1,9 +1,6 @@
-use rem6_isa_riscv::{Register, RegisterWrite, RiscvExecutionRecord, RiscvInstruction};
+use rem6_isa_riscv::{Register, RegisterWrite, RiscvExecutionRecord};
 
-use super::o3_runtime_live_window::staged_rename_entry;
 use super::*;
-use crate::o3_pipeline::O3IssueOpClass;
-use crate::O3RuntimeFuLatencyClass;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct O3LiveControlLineage {
@@ -59,153 +56,6 @@ pub(super) struct O3LiveSpeculativeExecution {
     pub(super) execution: RiscvExecutionRecord,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct O3LiveIssueSchedulingCandidate {
-    request_index: usize,
-    sequence: u64,
-    pc: Address,
-    instruction: RiscvInstruction,
-    consumed_requests: Vec<MemoryRequestId>,
-    kind: O3LiveSpeculativeIssueKind,
-    op_class: O3IssueOpClass,
-    control_dependency: Option<u64>,
-    data_producers: Vec<O3LiveIssueSourceProducer>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct O3LiveIssueSourceProducer {
-    sequence: u64,
-    source: Register,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct O3LiveSpeculativeIssueCandidate {
-    scheduling: O3LiveIssueSchedulingCandidate,
-    producer_sequences: Vec<u64>,
-    forwarded_register_writes: Vec<RegisterWrite>,
-    forwarded_ready_tick: u64,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum O3LiveSpeculativeIssueKind {
-    PendingDataAddress {
-        destination: O3RenameMapEntry,
-    },
-    Scalar {
-        destination: O3RenameMapEntry,
-    },
-    Control {
-        kind: BranchTargetKind,
-        destination: Option<O3RenameMapEntry>,
-    },
-}
-
-impl O3LiveIssueSourceProducer {
-    pub(crate) const fn sequence(self) -> u64 {
-        self.sequence
-    }
-
-    pub(crate) const fn source(self) -> Register {
-        self.source
-    }
-}
-
-impl O3LiveIssueSchedulingCandidate {
-    pub(crate) const fn request_index(&self) -> usize {
-        self.request_index
-    }
-
-    pub(crate) const fn sequence(&self) -> u64 {
-        self.sequence
-    }
-
-    pub(crate) const fn instruction(&self) -> RiscvInstruction {
-        self.instruction
-    }
-
-    pub(crate) const fn op_class(&self) -> O3IssueOpClass {
-        self.op_class
-    }
-
-    pub(crate) const fn control_dependency(&self) -> Option<u64> {
-        self.control_dependency
-    }
-
-    pub(crate) fn data_producers(&self) -> &[O3LiveIssueSourceProducer] {
-        &self.data_producers
-    }
-
-    pub(crate) fn consumed_requests(&self) -> &[MemoryRequestId] {
-        &self.consumed_requests
-    }
-
-    pub(crate) const fn is_pending_data_address(&self) -> bool {
-        matches!(
-            self.kind,
-            O3LiveSpeculativeIssueKind::PendingDataAddress { .. }
-        )
-    }
-}
-
-impl O3LiveSpeculativeIssueCandidate {
-    #[cfg(test)]
-    pub(crate) const fn destination(&self) -> Option<O3RenameMapEntry> {
-        match self.scheduling.kind {
-            O3LiveSpeculativeIssueKind::PendingDataAddress { destination } => Some(destination),
-            O3LiveSpeculativeIssueKind::Scalar { destination } => Some(destination),
-            O3LiveSpeculativeIssueKind::Control { destination, .. } => destination,
-        }
-    }
-
-    pub(crate) fn forwarded_register_writes(&self) -> &[RegisterWrite] {
-        &self.forwarded_register_writes
-    }
-
-    pub(crate) const fn sequence(&self) -> u64 {
-        self.scheduling.sequence
-    }
-
-    pub(crate) const fn request_index(&self) -> usize {
-        self.scheduling.request_index
-    }
-
-    pub(crate) fn producer_sequences(&self) -> &[u64] {
-        &self.producer_sequences
-    }
-
-    pub(crate) const fn is_pending_data_address(&self) -> bool {
-        matches!(
-            self.scheduling.kind,
-            O3LiveSpeculativeIssueKind::PendingDataAddress { .. }
-        )
-    }
-
-    pub(crate) const fn pending_data_address_destination(&self) -> Option<O3RenameMapEntry> {
-        match self.scheduling.kind {
-            O3LiveSpeculativeIssueKind::PendingDataAddress { destination } => Some(destination),
-            O3LiveSpeculativeIssueKind::Scalar { .. }
-            | O3LiveSpeculativeIssueKind::Control { .. } => None,
-        }
-    }
-
-    pub(crate) fn data_producers(&self) -> &[O3LiveIssueSourceProducer] {
-        &self.scheduling.data_producers
-    }
-
-    pub(crate) const fn instruction(&self) -> RiscvInstruction {
-        self.scheduling.instruction
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn control_dependency(&self) -> Option<u64> {
-        self.scheduling.control_dependency
-    }
-
-    pub(crate) fn issue_tick(&self, earliest_tick: u64) -> u64 {
-        earliest_tick.max(self.forwarded_ready_tick)
-    }
-}
-
 impl O3RuntimeState {
     pub(crate) fn recorded_producer_forwarded_control_speculation_matches(
         &self,
@@ -240,219 +90,6 @@ impl O3RuntimeState {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn live_speculative_issue_candidate(
-        &self,
-        pc: Address,
-        instruction: RiscvInstruction,
-    ) -> Option<O3LiveSpeculativeIssueCandidate> {
-        let scheduling = self.live_issue_scheduling_candidate_from_metadata(
-            usize::MAX,
-            pc,
-            instruction,
-            Vec::new(),
-        )?;
-        self.materialize_live_speculative_issue_candidate(&scheduling)
-    }
-
-    pub(crate) fn live_issue_scheduling_candidate(
-        &self,
-        request_index: usize,
-        pc: Address,
-        instruction: RiscvInstruction,
-        consumed_requests: &[MemoryRequestId],
-    ) -> Option<O3LiveIssueSchedulingCandidate> {
-        let candidate = self.live_issue_scheduling_candidate_from_metadata(
-            request_index,
-            pc,
-            instruction,
-            consumed_requests.to_vec(),
-        )?;
-        (candidate.is_pending_data_address()
-            || self.live_staged_fetch_identity_matches(
-                candidate.sequence(),
-                candidate.instruction(),
-                consumed_requests,
-            ))
-        .then_some(candidate)
-    }
-
-    fn live_issue_scheduling_candidate_from_metadata(
-        &self,
-        request_index: usize,
-        pc: Address,
-        instruction: RiscvInstruction,
-        consumed_requests: Vec<MemoryRequestId>,
-    ) -> Option<O3LiveIssueSchedulingCandidate> {
-        let Some((index, entry)) = self
-            .snapshot
-            .reorder_buffer
-            .iter()
-            .copied()
-            .enumerate()
-            .find(|(_, entry)| entry.is_live_staged() && entry.pc() == pc)
-        else {
-            return None;
-        };
-        if self
-            .live_speculative_executions
-            .iter()
-            .any(|issued| issued.sequence == entry.sequence())
-        {
-            return None;
-        }
-        if let Some((destination, producer_register, producer_sequence)) = self
-            .pending_data_address_candidate_metadata(
-                entry.sequence(),
-                pc,
-                instruction,
-                &consumed_requests,
-            )
-        {
-            let expected_producer = O3LiveIssueSourceProducer {
-                sequence: producer_sequence,
-                source: producer_register,
-            };
-            let mut data_producers = self.live_issue_source_producers(index, &[producer_register]);
-            if data_producers.is_empty()
-                && self
-                    .pending_data_address_committed_producer_ready_tick(
-                        producer_sequence,
-                        producer_register,
-                    )
-                    .is_some()
-            {
-                data_producers.push(expected_producer);
-            }
-            if data_producers.as_slice() != [expected_producer] {
-                return None;
-            }
-            return Some(O3LiveIssueSchedulingCandidate {
-                request_index,
-                sequence: entry.sequence(),
-                pc,
-                instruction,
-                consumed_requests,
-                kind: O3LiveSpeculativeIssueKind::PendingDataAddress { destination },
-                op_class: O3IssueOpClass::Memory,
-                control_dependency: None,
-                data_producers,
-            });
-        }
-        if index == 0 || !self.live_staged_instruction_matches(entry.sequence(), instruction) {
-            return None;
-        }
-        let (scalar_destination, control, sources) = if let Some((destination, sources)) =
-            o3_predicted_scalar_descendant_operands(instruction)
-        {
-            (Some(destination), None, sources)
-        } else {
-            let control = o3_live_control_operands(instruction)?;
-            let sources = control.sources().to_vec();
-            (None, Some(control), sources)
-        };
-        let staged_destination = staged_rename_entry(entry);
-        let kind = if let Some(destination) = scalar_destination {
-            let Some(staged_destination) = staged_destination else {
-                return None;
-            };
-            if staged_destination.register_class() != O3RegisterClass::Integer
-                || staged_destination.architectural() != u32::from(destination.index())
-            {
-                return None;
-            }
-            O3LiveSpeculativeIssueKind::Scalar {
-                destination: staged_destination,
-            }
-        } else {
-            let control = control.expect("control candidate has control operands");
-            let destination = match control.destination() {
-                Some(destination) => {
-                    let staged_destination = staged_destination?;
-                    if staged_destination.register_class() != O3RegisterClass::Integer
-                        || staged_destination.architectural() != u32::from(destination.index())
-                    {
-                        return None;
-                    }
-                    Some(staged_destination)
-                }
-                None if entry.destination().is_none() && entry.rename_destination().is_none() => {
-                    None
-                }
-                None => return None,
-            };
-            O3LiveSpeculativeIssueKind::Control {
-                kind: control.kind(),
-                destination,
-            }
-        };
-
-        let control_sequence = self.pending_control_sequence_for(entry.sequence());
-        Some(O3LiveIssueSchedulingCandidate {
-            request_index,
-            sequence: entry.sequence(),
-            pc,
-            instruction,
-            consumed_requests,
-            kind,
-            op_class: live_issue_op_class(instruction),
-            control_dependency: control_sequence,
-            data_producers: self.live_issue_source_producers(index, &sources),
-        })
-    }
-
-    pub(crate) fn materialize_live_speculative_issue_candidate(
-        &self,
-        scheduling: &O3LiveIssueSchedulingCandidate,
-    ) -> Option<O3LiveSpeculativeIssueCandidate> {
-        let mut producer_sequences = Vec::new();
-        let mut forwarded_register_writes = Vec::new();
-        let mut forwarded_ready_tick = 0;
-        for producer in scheduling.data_producers.iter().copied() {
-            let (write, ready_tick) =
-                match self.live_issue_source_value(producer.sequence(), producer.source()) {
-                    Some((write, ready_tick)) => (Some(write), ready_tick),
-                    None if matches!(
-                        scheduling.kind,
-                        O3LiveSpeculativeIssueKind::PendingDataAddress { .. }
-                    ) =>
-                    {
-                        (
-                            None,
-                            self.pending_data_address_committed_producer_ready_tick(
-                                producer.sequence(),
-                                producer.source(),
-                            )?,
-                        )
-                    }
-                    None => return None,
-                };
-            if !producer_sequences.contains(&producer.sequence()) {
-                producer_sequences.push(producer.sequence());
-            }
-            if let Some(write) = write {
-                if !forwarded_register_writes
-                    .iter()
-                    .any(|forwarded: &RegisterWrite| forwarded.register() == producer.source())
-                {
-                    forwarded_register_writes.push(write);
-                }
-            }
-            forwarded_ready_tick = forwarded_ready_tick.max(ready_tick);
-        }
-        if let Some(control_sequence) = scheduling.control_dependency {
-            if !producer_sequences.contains(&control_sequence) {
-                producer_sequences.push(control_sequence);
-            }
-        }
-        Some(O3LiveSpeculativeIssueCandidate {
-            scheduling: scheduling.clone(),
-            producer_sequences,
-            forwarded_register_writes,
-            forwarded_ready_tick,
-        })
-    }
-
     pub(crate) fn record_live_speculative_execution(
         &mut self,
         candidate: O3LiveSpeculativeIssueCandidate,
@@ -465,50 +102,12 @@ impl O3RuntimeState {
         } else {
             issue_tick
         };
-        if !candidate.scheduling.consumed_requests.is_empty()
-            && candidate.scheduling.consumed_requests != consumed_requests
+        if !candidate.recorded_consumed_requests_match(consumed_requests)
+            || !self
+                .live_staged_issue_packet(candidate.sequence())
+                .is_some_and(|packet| packet.matches_execution(&execution, consumed_requests))
+            || !candidate.valid_recorded_execution(&execution)
         {
-            return Ok(false);
-        }
-        if !self
-            .live_staged_issue_packet(candidate.sequence())
-            .is_some_and(|packet| packet.matches_execution(&execution, consumed_requests))
-            || Address::new(execution.pc()) != candidate.scheduling.pc
-            || execution.instruction() != candidate.instruction()
-            || execution.trap().is_some()
-            || execution.system_event().is_some()
-            || execution.memory_access().is_some()
-            || !execution.float_register_writes().is_empty()
-        {
-            return Ok(false);
-        }
-        let valid_kind = match candidate.scheduling.kind {
-            O3LiveSpeculativeIssueKind::PendingDataAddress { .. } => false,
-            O3LiveSpeculativeIssueKind::Scalar { destination } => {
-                execution.next_pc()
-                    == execution
-                        .pc()
-                        .wrapping_add(u64::from(execution.instruction_bytes()))
-                    && execution.register_writes().len() == 1
-                    && execution_writes_rename_destination(&execution, destination)
-            }
-            O3LiveSpeculativeIssueKind::Control { kind, destination } => {
-                o3_live_control_operands(execution.instruction()).is_some_and(|control| {
-                    control.kind() == kind
-                        && control_destination_matches_rename_entry(
-                            control.destination(),
-                            destination,
-                        )
-                }) && match destination {
-                    Some(destination) => {
-                        execution.register_writes().len() == 1
-                            && execution_writes_rename_destination(&execution, destination)
-                    }
-                    None => execution.register_writes().is_empty(),
-                }
-            }
-        };
-        if !valid_kind {
             return Ok(false);
         }
         let raw_ready_tick = issue_tick
@@ -516,25 +115,17 @@ impl O3RuntimeState {
                 execution.instruction(),
             ))
             .ok_or(O3RuntimeError::WritebackTickOverflow { tick: issue_tick })?;
-        let consumes_writeback_slot = matches!(
-            candidate.scheduling.kind,
-            O3LiveSpeculativeIssueKind::Scalar { .. }
-                | O3LiveSpeculativeIssueKind::Control {
-                    destination: Some(_),
-                    ..
-                }
-        );
         let (admitted_writeback_tick, writeback_slot) = self.reserve_fixed_fu_writeback(
             candidate.sequence(),
             raw_ready_tick,
-            consumes_writeback_slot,
+            candidate.consumes_writeback_slot(),
         )?;
 
         self.live_speculative_executions
             .push(O3LiveSpeculativeExecution {
                 consumed_requests: consumed_requests.to_vec(),
                 sequence: candidate.sequence(),
-                producer_sequences: candidate.producer_sequences,
+                producer_sequences: candidate.producer_sequences().to_vec(),
                 issue_tick,
                 raw_ready_tick,
                 admitted_writeback_tick,
@@ -556,35 +147,6 @@ impl O3RuntimeState {
                 && issued.execution == *execution
         })?;
         Some(issued.admitted_writeback_tick)
-    }
-
-    fn live_issue_source_producers(
-        &self,
-        consumer_index: usize,
-        sources: &[Register],
-    ) -> Vec<O3LiveIssueSourceProducer> {
-        let mut producers = Vec::new();
-        for source in sources.iter().copied().filter(|source| !source.is_zero()) {
-            let producer = self.snapshot.reorder_buffer[..consumer_index]
-                .iter()
-                .rev()
-                .copied()
-                .find(|producer| {
-                    producer.is_live_staged()
-                        && producer.rename_destination()
-                            == Some((O3RegisterClass::Integer, u32::from(source.index())))
-                });
-            if let Some(producer) = producer {
-                let source_producer = O3LiveIssueSourceProducer {
-                    sequence: producer.sequence(),
-                    source,
-                };
-                if !producers.contains(&source_producer) {
-                    producers.push(source_producer);
-                }
-            }
-        }
-        producers
     }
 
     pub(super) fn live_issue_source_value(
@@ -815,20 +377,6 @@ impl O3RuntimeState {
     }
 }
 
-pub(super) fn live_issue_op_class(instruction: RiscvInstruction) -> O3IssueOpClass {
-    if o3_live_control_operands(instruction).is_some() {
-        return O3IssueOpClass::Branch;
-    }
-    if matches!(
-        o3_fu_latency_class(instruction),
-        Some(O3RuntimeFuLatencyClass::ScalarIntegerMul | O3RuntimeFuLatencyClass::ScalarIntegerDiv)
-    ) {
-        O3IssueOpClass::IntMult
-    } else {
-        O3IssueOpClass::IntAlu
-    }
-}
-
 pub(super) fn valid_live_speculative_fetch_identity(consumed_requests: &[MemoryRequestId]) -> bool {
     let Some(first) = consumed_requests.first() else {
         return false;
@@ -840,20 +388,6 @@ pub(super) fn valid_live_speculative_fetch_identity(consumed_requests: &[MemoryR
         && consumed_requests
             .windows(2)
             .all(|requests| requests[0].sequence() < requests[1].sequence())
-}
-
-fn control_destination_matches_rename_entry(
-    destination: Option<rem6_isa_riscv::Register>,
-    rename: Option<O3RenameMapEntry>,
-) -> bool {
-    match (destination, rename) {
-        (Some(destination), Some(rename)) => {
-            rename.register_class() == O3RegisterClass::Integer
-                && rename.architectural() == u32::from(destination.index())
-        }
-        (None, None) => true,
-        (Some(_), None) | (None, Some(_)) => false,
-    }
 }
 
 pub(super) fn execution_writes_rename_destination(

@@ -5,7 +5,7 @@ use crate::o3_pipeline::{
     O3ScopedIssueScheduler, O3ScopedReadyInstruction,
 };
 
-use super::super::o3_runtime_control_window::live_issue_op_class;
+use super::queue::live_issue_op_class;
 use super::*;
 
 pub(in crate::o3_runtime) const LIVE_ISSUE_QUEUE: O3IssueQueueId = O3IssueQueueId::new(0);

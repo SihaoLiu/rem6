@@ -4,7 +4,6 @@ use rem6_isa_riscv::{
     RiscvDecodedInstruction, RiscvExecutionRecord, RiscvHartState, RiscvInstruction,
 };
 
-use super::o3_runtime_control_window::live_issue_op_class;
 use super::*;
 use crate::o3_pipeline::{O3IssueOpClass, O3ScopedReadyInstruction};
 
@@ -19,6 +18,9 @@ mod pending_address;
 pub(in crate::o3_runtime) mod queue;
 use calendar::{O3LiveIssueCalendar, O3LiveIssueTickDecision};
 pub(crate) use dependency::O3LiveIssueDependencyTable;
+use queue::{live_issue_op_class, O3LiveIssueSchedulingCandidate, O3LiveSpeculativeIssueCandidate};
+#[cfg(debug_assertions)]
+use queue::{O3LiveIssueQueue, O3LiveIssueQueueCapture};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct O3LiveIssueRequest {
@@ -103,6 +105,10 @@ impl O3LiveIssueHeadReservation {
             op_class: O3IssueOpClass::Memory,
         }
     }
+
+    pub(in crate::o3_runtime) const fn sequence(self) -> u64 {
+        self.sequence
+    }
 }
 
 impl O3RuntimeState {
@@ -123,7 +129,7 @@ impl O3RuntimeState {
         execution: RiscvExecutionRecord,
     ) -> Result<bool, O3RuntimeError> {
         if !self
-            .live_staged_issue_packet(head.sequence)
+            .live_staged_issue_packet(head.sequence())
             .is_some_and(|packet| packet.matches_execution(&execution, consumed_requests))
         {
             return Ok(false);
@@ -131,7 +137,7 @@ impl O3RuntimeState {
         if let Some(recorded) = self
             .live_speculative_executions
             .iter()
-            .find(|recorded| recorded.sequence == head.sequence)
+            .find(|recorded| recorded.sequence == head.sequence())
         {
             return Ok(recorded.consumed_requests == consumed_requests
                 && recorded.issue_tick == head.issue_tick
@@ -142,7 +148,7 @@ impl O3RuntimeState {
             .reorder_buffer
             .iter()
             .copied()
-            .find(|entry| entry.is_live_staged() && entry.sequence() == head.sequence)
+            .find(|entry| entry.is_live_staged() && entry.sequence() == head.sequence())
         else {
             return Ok(false);
         };
@@ -168,7 +174,7 @@ impl O3RuntimeState {
             })?;
         let consumes_writeback_slot = staged_rename_entry(entry).is_some();
         let (admitted_writeback_tick, writeback_slot) = self.reserve_fixed_fu_writeback(
-            head.sequence,
+            head.sequence(),
             raw_ready_tick,
             consumes_writeback_slot,
         )?;
@@ -176,14 +182,14 @@ impl O3RuntimeState {
             .snapshot
             .reorder_buffer
             .iter_mut()
-            .find(|entry| entry.is_live_staged() && entry.sequence() == head.sequence)
+            .find(|entry| entry.is_live_staged() && entry.sequence() == head.sequence())
         {
             entry.mark_ready_at(admitted_writeback_tick);
         }
         self.live_speculative_executions
             .push(O3LiveSpeculativeExecution {
                 consumed_requests: consumed_requests.to_vec(),
-                sequence: head.sequence,
+                sequence: head.sequence(),
                 producer_sequences: Vec::new(),
                 issue_tick: head.issue_tick,
                 raw_ready_tick,
@@ -241,12 +247,15 @@ impl O3RuntimeState {
         earliest_tick: u64,
         requests: &[O3LiveIssueRequest],
     ) -> Result<(), O3RuntimeError> {
+        #[cfg(debug_assertions)]
+        self.observe_live_issue_queue_capture_for_debug(head);
+
         if !self
             .snapshot
             .reorder_buffer
             .iter()
-            .any(|entry| entry.is_live_staged() && entry.sequence() == head.sequence)
-            && !self.pending_data_address_has_producer_sequence(head.sequence)
+            .any(|entry| entry.is_live_staged() && entry.sequence() == head.sequence())
+            && !self.pending_data_address_has_producer_sequence(head.sequence())
         {
             return Ok(());
         }
@@ -357,6 +366,25 @@ impl O3RuntimeState {
             }
         }
         Ok(())
+    }
+
+    #[cfg(debug_assertions)]
+    fn observe_live_issue_queue_capture_for_debug(&self, head: O3LiveIssueHeadReservation) {
+        let Ok(O3LiveIssueQueueCapture::Ready(queue)) = O3LiveIssueQueue::capture(self, head)
+        else {
+            return;
+        };
+        let mut count = 0;
+        for sequence in queue.sequences() {
+            let entry = queue.entry(sequence).expect("captured sequence is indexed");
+            debug_assert_eq!(entry.sequence(), sequence);
+            debug_assert_eq!(
+                entry.packet().instruction(),
+                entry.scheduling().instruction()
+            );
+            count += 1;
+        }
+        debug_assert_eq!(queue.entries().len(), count);
     }
 
     fn live_issue_candidates(

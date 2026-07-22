@@ -56,6 +56,9 @@ pub enum O3RuntimeError {
     InvalidLiveIssuePlan {
         error: O3PipelineError,
     },
+    InvalidLiveIssueQueueEntry {
+        sequence: u64,
+    },
     SelectedIssueCandidateNotExecutable {
         sequence: u64,
     },
@@ -192,6 +195,10 @@ impl fmt::Display for O3RuntimeError {
             Self::InvalidLiveIssuePlan { error } => {
                 write!(formatter, "O3 live issue plan is invalid: {error}")
             }
+            Self::InvalidLiveIssueQueueEntry { sequence } => write!(
+                formatter,
+                "O3 live issue queue entry {sequence} is inconsistent with canonical runtime state"
+            ),
             Self::SelectedIssueCandidateNotExecutable { sequence } => write!(
                 formatter,
                 "O3 selected issue candidate {sequence} could not be materialized"
