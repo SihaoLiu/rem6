@@ -14,6 +14,7 @@ fn inner_control_uses_staged_outer_ownership_before_execution_record() {
     let outer_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), outer)
         .unwrap();
+    bind_o3(&mut runtime, 0x8004, decoded(outer), &[request(11)]);
     runtime
         .record_live_speculative_execution(
             outer_candidate,
@@ -80,6 +81,7 @@ fn validated_outer_control_keeps_terminal_inner_timing_window_live() {
     let outer_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), outer)
         .unwrap();
+    bind_o3(&mut runtime, 0x8004, decoded(outer), &[request(11)]);
     runtime
         .record_live_speculative_execution(
             outer_candidate,
@@ -411,6 +413,7 @@ fn predicted_descendants_use_staged_branch_ownership_and_invalidate_with_it() {
     let branch_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), branch)
         .unwrap();
+    bind_o3(&mut runtime, 0x8004, decoded(branch), &[request(11)]);
     runtime
         .record_live_speculative_execution(
             branch_candidate,
@@ -427,6 +430,7 @@ fn predicted_descendants_use_staged_branch_ownership_and_invalidate_with_it() {
         vec![RegisterWrite::new(reg(7), 42)],
         None,
     );
+    bind_o3(&mut runtime, 0x8008, decoded(multiply), &[request(12)]);
     runtime
         .record_live_speculative_execution(
             multiply_candidate,
@@ -445,6 +449,7 @@ fn predicted_descendants_use_staged_branch_ownership_and_invalidate_with_it() {
     let dependent_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x800c), dependent)
         .unwrap();
+    bind_o3(&mut runtime, 0x800c, decoded(dependent), &[request(13)]);
     runtime
         .record_live_speculative_execution(
             dependent_candidate,

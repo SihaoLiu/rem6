@@ -1,3 +1,4 @@
+use super::producer_forwarded_return::decoded;
 use super::*;
 
 #[path = "producer_forwarded_target/nonadjacent.rs"]
@@ -26,11 +27,11 @@ fn live_no_link_and_split_link_controls_expose_exact_producer_forwarded_targets(
             ),
             2
         );
-
         let producer_candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8004), producer)
             .expect("JALR target producer candidate");
         let producer_sequence = producer_candidate.sequence();
+        bind_o3(&mut runtime, 0x8004, decoded(producer), &[request(11)]);
         assert!(runtime
             .record_live_speculative_execution(
                 producer_candidate,
@@ -50,6 +51,7 @@ fn live_no_link_and_split_link_controls_expose_exact_producer_forwarded_targets(
             .expect("producer-forwarded JALR candidate");
         let consumer_sequence = control_candidate.sequence();
         assert_eq!(control_candidate.producer_sequences(), &[producer_sequence]);
+        bind_o3(&mut runtime, 0x8008, decoded(control), &[request(12)]);
         let writes = if destination != 0 {
             vec![RegisterWrite::new(reg(destination), 0x800c)]
         } else {
@@ -63,7 +65,6 @@ fn live_no_link_and_split_link_controls_expose_exact_producer_forwarded_targets(
                 RiscvExecutionRecord::new(control, 0x8008, 0x9000, writes, None),
             )
             .unwrap());
-
         let forwarded = runtime
             .producer_forwarded_control_target()
             .unwrap_or_else(|| panic!("missing destination x{destination} target authority"));
@@ -120,6 +121,7 @@ fn live_same_link_control_exposes_exact_producer_forwarded_target() {
         .live_speculative_issue_candidate(Address::new(0x8004), producer)
         .expect("same-link target producer candidate");
     let producer_sequence = producer_candidate.sequence();
+    bind_o3(&mut runtime, 0x8004, decoded(producer), &[request(11)]);
     assert!(runtime
         .record_live_speculative_execution(
             producer_candidate,
@@ -139,6 +141,7 @@ fn live_same_link_control_exposes_exact_producer_forwarded_target() {
         .expect("same-link control candidate");
     let consumer_sequence = call_candidate.sequence();
     assert_eq!(call_candidate.producer_sequences(), &[producer_sequence]);
+    bind_o3(&mut runtime, 0x8008, decoded(call), &[request(12)]);
     assert!(runtime
         .record_live_speculative_execution(
             call_candidate,
@@ -187,7 +190,7 @@ fn live_same_link_control_exposes_exact_producer_forwarded_target() {
         runtime.append_producer_forwarded_control_descendant(
             forwarded,
             Address::new(0x9000),
-            addi(13, 4, 0),
+            decoded(addi(13, 4, 0)),
             &[request(98)],
         ),
         None
@@ -197,7 +200,7 @@ fn live_same_link_control_exposes_exact_producer_forwarded_target() {
         .append_producer_forwarded_control_descendant(
             forwarded,
             Address::new(0x9000),
-            descendant,
+            decoded(descendant),
             &[request(13)],
         )
         .expect("same-link target descendant append");

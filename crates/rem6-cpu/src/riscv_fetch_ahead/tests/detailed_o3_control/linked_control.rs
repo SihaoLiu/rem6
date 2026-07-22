@@ -3,6 +3,20 @@ use super::*;
 #[path = "linked_control/fetch_response.rs"]
 mod fetch_response;
 
+fn decoded(instruction: RiscvInstruction) -> rem6_isa_riscv::RiscvDecodedInstruction {
+    let RiscvInstruction::Addi { rd, rs1, imm } = instruction else {
+        panic!("unsupported linked-control test instruction: {instruction:?}");
+    };
+    RiscvInstruction::decode_with_length(i_type(
+        i32::try_from(imm.value()).unwrap(),
+        rs1.index(),
+        0x0,
+        rd.index(),
+        0x13,
+    ))
+    .unwrap()
+}
+
 fn producer_forwarded_target(
     decision: &RiscvFetchAheadDecision,
 ) -> crate::o3_runtime::O3ProducerForwardedControlTarget {
@@ -96,7 +110,7 @@ fn detailed_live_same_link_control_uses_runtime_forwarded_target() {
         .append_producer_forwarded_control_descendant(
             forwarded,
             Address::new(0x9000),
-            descendant,
+            decoded(descendant),
             &[request(3)],
         )
         .is_some());

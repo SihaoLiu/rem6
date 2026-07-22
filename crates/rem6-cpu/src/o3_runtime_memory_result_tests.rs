@@ -473,15 +473,29 @@ fn memory_result_replanning_invalidates_dependent_chain_until_authoritative_reis
     let producer_execution = record_fixed_fu_owner(
         &mut runtime,
         producer_sequence,
-        producer,
+        decoded_instruction(producer),
         0x8004,
         request(30),
         42,
     );
-    let child_execution =
-        record_speculative_owner(&mut runtime, 0x8008, child, request(31), 10, 7, 8);
-    let grandchild_execution =
-        record_speculative_owner(&mut runtime, 0x800c, grandchild, request(32), 10, 8, 9);
+    let child_execution = record_speculative_owner(
+        &mut runtime,
+        0x8008,
+        decoded_instruction(child),
+        request(31),
+        10,
+        7,
+        8,
+    );
+    let grandchild_execution = record_speculative_owner(
+        &mut runtime,
+        0x800c,
+        decoded_instruction(grandchild),
+        request(32),
+        10,
+        8,
+        9,
+    );
     assert_eq!(
         calendar_rows_with_raw(&runtime),
         vec![(1, 42, 42, 0), (2, 42, 43, 0), (3, 43, 44, 0)]
@@ -598,11 +612,32 @@ fn memory_result_replanning_reverses_provisional_deferred_stats() {
         .expect("width-two statistics fixture stages");
     let producer_sequence = sequence_for_pc(&runtime, 0x8008);
     let dependent_sequence = sequence_for_pc(&runtime, 0x800c);
-    record_fixed_fu_owner(&mut runtime, other_sequence, other, 0x8004, request(30), 40);
-    let producer_execution =
-        record_speculative_owner(&mut runtime, 0x8008, producer, request(31), 42, 7, 7);
-    let dependent_execution =
-        record_speculative_owner(&mut runtime, 0x800c, dependent, request(32), 42, 8, 8);
+    record_fixed_fu_owner(
+        &mut runtime,
+        other_sequence,
+        decoded_instruction(other),
+        0x8004,
+        request(30),
+        40,
+    );
+    let producer_execution = record_speculative_owner(
+        &mut runtime,
+        0x8008,
+        decoded_instruction(producer),
+        request(31),
+        42,
+        7,
+        7,
+    );
+    let dependent_execution = record_speculative_owner(
+        &mut runtime,
+        0x800c,
+        decoded_instruction(dependent),
+        request(32),
+        42,
+        8,
+        8,
+    );
     assert_writeback_stats(&runtime, 2, 3, 1, 1, 3, 1);
 
     let mut completed_older = older.clone();
@@ -893,7 +928,7 @@ fn fixed_fu_owner_reserved_before_older_memory_result(width: usize) -> RealOwner
     let fixed_execution = record_fixed_fu_owner(
         &mut runtime,
         fixed_sequence,
-        fixed,
+        decoded_instruction(fixed),
         0x8004,
         fixed_request,
         42,
@@ -944,7 +979,7 @@ fn memory_result_owner_reserved_before_older_fixed_fu(width: usize) -> RealOwner
     let fixed_execution = record_fixed_fu_owner(
         &mut runtime,
         fixed_sequence,
-        fixed,
+        decoded_instruction(fixed),
         0x8000,
         fixed_request,
         42,
@@ -1027,11 +1062,12 @@ fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u3
 fn record_fixed_fu_owner(
     runtime: &mut O3RuntimeState,
     sequence: u64,
-    instruction: RiscvInstruction,
+    decoded: RiscvDecodedInstruction,
     pc: u64,
     fetch_request: MemoryRequestId,
     issue_tick: u64,
 ) -> RiscvExecutionRecord {
+    let instruction = decoded.instruction();
     let execution = RiscvExecutionRecord::new(
         instruction,
         pc,
@@ -1040,6 +1076,7 @@ fn record_fixed_fu_owner(
         None,
     );
     let head = O3LiveIssueHeadReservation::for_instruction(sequence, issue_tick, instruction);
+    assert!(runtime.bind_live_staged_issue_packet(Address::new(pc), decoded, &[fetch_request]));
     assert!(runtime
         .record_live_issue_head_execution(head, &[fetch_request], execution.clone())
         .unwrap());
@@ -1049,12 +1086,13 @@ fn record_fixed_fu_owner(
 fn record_speculative_owner(
     runtime: &mut O3RuntimeState,
     pc: u64,
-    instruction: RiscvInstruction,
+    decoded: RiscvDecodedInstruction,
     fetch_request: MemoryRequestId,
     earliest_issue_tick: u64,
     rd: u8,
     value: u64,
 ) -> RiscvExecutionRecord {
+    let instruction = decoded.instruction();
     let candidate = runtime
         .live_speculative_issue_candidate(Address::new(pc), instruction)
         .expect("dependent speculative issue candidate is available");
@@ -1065,6 +1103,7 @@ fn record_speculative_owner(
         vec![RegisterWrite::new(reg(rd), value)],
         None,
     );
+    assert!(runtime.bind_live_staged_issue_packet(Address::new(pc), decoded, &[fetch_request]));
     assert!(runtime
         .record_live_speculative_execution(
             candidate,

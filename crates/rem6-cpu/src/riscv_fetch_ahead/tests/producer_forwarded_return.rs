@@ -1,5 +1,4 @@
 use super::*;
-
 pub(super) fn live_return_core(
     branch_lookahead: usize,
     target_source: u8,
@@ -9,8 +8,10 @@ pub(super) fn live_return_core(
     let producer_raw = i_type(0, 11, 0x0, target_source, 0x13);
     let call_raw = i_type(0, target_source, 0x0, link_destination, 0x67);
     let return_raw = i_type(0, link_destination, 0x0, 0, 0x67);
-    let producer = RiscvInstruction::decode(producer_raw).unwrap();
-    let call = RiscvInstruction::decode(call_raw).unwrap();
+    let producer_decoded = RiscvInstruction::decode_with_length(producer_raw).unwrap();
+    let call_decoded = RiscvInstruction::decode_with_length(call_raw).unwrap();
+    let producer = producer_decoded.instruction();
+    let call = call_decoded.instruction();
     let core = core_with_completed_fetches([
         (0, 0x8000, load_raw.to_le_bytes().to_vec()),
         (1, 0x8004, producer_raw.to_le_bytes().to_vec()),
@@ -40,6 +41,11 @@ pub(super) fn live_return_core(
             .o3_runtime
             .live_speculative_issue_candidate(Address::new(0x8004), producer)
             .unwrap();
+        assert!(state.o3_runtime.bind_live_staged_issue_packet(
+            Address::new(0x8004),
+            producer_decoded,
+            &[request(1)],
+        ));
         assert!(state
             .o3_runtime
             .record_live_speculative_execution(
@@ -62,6 +68,11 @@ pub(super) fn live_return_core(
             .o3_runtime
             .live_speculative_issue_candidate(Address::new(0x8008), call)
             .unwrap();
+        assert!(state.o3_runtime.bind_live_staged_issue_packet(
+            Address::new(0x8008),
+            call_decoded,
+            &[request(2)],
+        ));
         assert!(state
             .o3_runtime
             .record_live_speculative_execution(
@@ -83,7 +94,6 @@ pub(super) fn live_return_core(
     }
     core
 }
-
 #[test]
 fn pending_data_gate_admits_producer_forwarded_call_target_return() {
     let core = live_return_core(2, 1, 1);

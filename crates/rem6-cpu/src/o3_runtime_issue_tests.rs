@@ -16,6 +16,9 @@ mod dependency_scopes;
 #[path = "o3_runtime_issue/calendar_tests.rs"]
 mod calendar;
 
+#[path = "o3_runtime_issue/queue_tests.rs"]
+mod queue;
+
 #[test]
 fn scoped_issue_reserves_head_width() {
     let mut fixture = ScalarIssueFixture::new(1, ScalarIssueCase::CrossResource);
@@ -271,9 +274,9 @@ fn scoped_issue_isolates_cross_candidate_dependency_readiness() {
         (THIRD_PC, data_only, 12),
         (FOURTH_PC, serializing, 13),
     ] {
-        assert!(runtime.bind_live_staged_fetch_identity(
+        assert!(runtime.bind_live_staged_issue_packet(
             Address::new(pc),
-            instruction,
+            decoded(instruction),
             &[request(request_sequence)],
         ));
     }
@@ -305,7 +308,6 @@ fn scoped_issue_isolates_cross_candidate_dependency_readiness() {
             decoded(serializing),
         ),
     ];
-
     runtime
         .schedule_live_speculative_issues(&hart, head, 20, &requests)
         .unwrap();
@@ -503,9 +505,9 @@ fn scoped_issue_tracks_long_fu_head_dependency() {
     hart.write(reg(2), 7);
     let mut head_hart = hart.clone();
     head_hart.set_pc(LOAD_PC);
-    let head_execution = head_hart
-        .execute_decoded(decoded(head_instruction))
-        .unwrap();
+    let head_decoded = decoded(head_instruction);
+    bind_o3(&mut runtime, LOAD_PC, head_decoded, &[request(10)]);
+    let head_execution = head_hart.execute_decoded(head_decoded).unwrap();
     assert!(runtime
         .record_live_issue_head_execution(head, &[request(10)], head_execution,)
         .unwrap());
@@ -521,6 +523,13 @@ fn scoped_issue_tracks_long_fu_head_dependency() {
             decoded(dependent),
         ),
     ];
+    for request in &requests {
+        assert!(runtime.bind_live_staged_issue_packet(
+            request.pc(),
+            request.decoded(),
+            request.consumed_requests(),
+        ));
+    }
 
     runtime
         .schedule_live_speculative_issues(&hart, head, 14, &requests)
@@ -593,6 +602,33 @@ fn scoped_issue_partial_reentry_does_not_overbook_prior_tick() {
     assert_eq!(fixture.issue_tick(BRANCH_PC), 20);
     assert_eq!(fixture.issue_tick(SECOND_PC), 21);
     assert_eq!(fixture.issue_tick(THIRD_PC), 21);
+}
+
+#[test]
+#[ignore = "RED until Task 3 delegates inventory to the derived queue"]
+fn scoped_issue_partial_reentry_keeps_previously_bound_rows_visible() {
+    let mut fixture = ScalarIssueFixture::new(3, ScalarIssueCase::SameWindowLinkReturn);
+    assert!(fixture.runtime.set_writeback_width(1));
+    let call = fixture.requests[0].clone();
+    let return_request = fixture.requests[1].clone();
+    let descendant = fixture.requests[2].clone();
+
+    fixture
+        .runtime
+        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20, &[call])
+        .unwrap();
+    fixture
+        .runtime
+        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20, &[descendant])
+        .unwrap();
+    assert_eq!(fixture.executions_at(THIRD_PC), 0);
+
+    fixture
+        .runtime
+        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20, &[return_request])
+        .unwrap();
+    assert_eq!(fixture.executions_at(SECOND_PC), 1);
+    assert_eq!(fixture.executions_at(THIRD_PC), 1);
 }
 
 #[test]
@@ -850,9 +886,9 @@ impl ScalarIssueFixture {
             .zip(younger)
             .enumerate()
         {
-            assert!(runtime.bind_live_staged_fetch_identity(
+            assert!(runtime.bind_live_staged_issue_packet(
                 Address::new(pc),
-                instruction,
+                decoded(instruction),
                 &[request(11 + index as u64)],
             ));
         }
@@ -944,8 +980,17 @@ fn fetch_event(pc: u64, sequence: u64) -> CpuFetchEvent {
     )
 }
 
-fn decoded(instruction: RiscvInstruction) -> RiscvDecodedInstruction {
+pub(super) fn decoded(instruction: RiscvInstruction) -> RiscvDecodedInstruction {
     RiscvInstruction::decode_with_length(raw(instruction)).unwrap()
+}
+
+pub(super) fn bind_o3(
+    runtime: &mut O3RuntimeState,
+    pc: u64,
+    decoded: RiscvDecodedInstruction,
+    consumed_requests: &[MemoryRequestId],
+) {
+    assert!(runtime.bind_live_staged_issue_packet(Address::new(pc), decoded, consumed_requests,));
 }
 
 fn raw(instruction: RiscvInstruction) -> u32 {
@@ -958,6 +1003,15 @@ fn raw(instruction: RiscvInstruction) -> u32 {
         }
         RiscvInstruction::Beq { rs1, rs2, offset } => {
             b_type(offset.value(), rs2.index(), rs1.index(), 0b000)
+        }
+        RiscvInstruction::Bne { rs1, rs2, offset } => {
+            b_type(offset.value(), rs2.index(), rs1.index(), 0b001)
+        }
+        RiscvInstruction::Blt { rs1, rs2, offset } => {
+            b_type(offset.value(), rs2.index(), rs1.index(), 0b100)
+        }
+        RiscvInstruction::Bgeu { rs1, rs2, offset } => {
+            b_type(offset.value(), rs2.index(), rs1.index(), 0b111)
         }
         RiscvInstruction::Mul { rd, rs1, rs2 } => {
             r_type(1, rs2.index(), rs1.index(), 0x0, rd.index(), 0x33)

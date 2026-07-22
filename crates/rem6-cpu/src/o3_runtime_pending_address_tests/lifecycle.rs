@@ -247,9 +247,9 @@ fn stage_future_pending_wake_with_head(runtime: &mut O3RuntimeState) -> RiscvCpu
         (FIRST_SUFFIX_PC, addi(7, 5, 8), 12),
         (SECOND_SUFFIX_PC, add(8, 6, 7), 13),
     ] {
-        assert!(runtime.bind_live_staged_fetch_identity(
+        assert!(runtime.bind_live_staged_issue_packet(
             Address::new(pc),
-            decoded(raw).instruction(),
+            decoded(raw),
             &[request(sequence)],
         ));
     }

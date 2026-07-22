@@ -1,3 +1,4 @@
+use super::producer_forwarded_return::decoded;
 use super::*;
 
 pub(super) fn recorded_linked_scalar_runtime(
@@ -15,7 +16,7 @@ pub(super) fn recorded_linked_scalar_runtime(
         .append_producer_forwarded_control_descendant(
             forwarded,
             Address::new(0x9000),
-            scalar,
+            decoded(scalar),
             &[request(13)],
         )
         .expect("linked-call scalar descendant append");
@@ -86,7 +87,7 @@ fn producer_forwarded_scalar_return_waits_for_data_head_retirement() {
         runtime.append_producer_forwarded_scalar_return_descendant(
             &scalar_chain,
             Address::new(0x9004),
-            return_jump,
+            decoded(return_jump),
             &[request(14)],
         ),
         None
@@ -98,7 +99,7 @@ fn producer_forwarded_scalar_return_waits_for_data_head_retirement() {
         .append_producer_forwarded_scalar_return_descendant(
             &scalar_chain,
             Address::new(0x9004),
-            return_jump,
+            decoded(return_jump),
             &[request(14)],
         )
         .expect("post-head scalar-sequential return append");
@@ -143,7 +144,7 @@ fn producer_forwarded_split_link_scalar_return_uses_link_destination() {
         .append_producer_forwarded_scalar_return_descendant(
             &scalar_chain,
             Address::new(0x9004),
-            return_jump,
+            decoded(return_jump),
             &[request(14)],
         )
         .is_some());
@@ -183,7 +184,7 @@ fn producer_forwarded_scalar_return_rejects_nonordinary_shapes() {
             runtime.append_producer_forwarded_scalar_return_descendant(
                 &scalar_chain,
                 pc,
-                instruction,
+                decoded(instruction),
                 &[request(14)],
             ),
             None,
@@ -209,7 +210,7 @@ fn producer_forwarded_scalar_lineage_fails_closed_after_identity_change() {
         runtime.append_producer_forwarded_scalar_return_descendant(
             &scalar_chain,
             Address::new(0x9004),
-            jalr_return(1),
+            decoded(jalr_return(1)),
             &[request(14)],
         ),
         None

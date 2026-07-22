@@ -7,6 +7,7 @@ use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryRequestId};
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
+use super::o3_runtime_issue_tests::{bind_o3, decoded};
 use crate::o3_pipeline::{
     O3DependencyScopeId, O3IssueOpClass, O3IssueQueueId, O3PendingStateSnapshot, O3PipelineStage,
     O3ScopedReadyInstruction, O3WritebackCompletion, O3WritebackTransferPolicy,
@@ -596,6 +597,12 @@ fn runtime_with_live_speculative_writeback() -> (O3RuntimeState, u64, u64) {
         .live_speculative_issue_candidate(Address::new(0x8004), younger)
         .unwrap();
     let sequence = candidate.sequence();
+    bind_o3(
+        &mut runtime,
+        0x8004,
+        decoded(younger),
+        &[memory_request(11)],
+    );
     runtime
         .record_live_speculative_execution(
             candidate,

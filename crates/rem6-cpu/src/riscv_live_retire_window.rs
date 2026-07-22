@@ -698,9 +698,9 @@ fn stage_o3_live_retire_window(
     if head_instruction.decoded != decoded {
         return Ok(None);
     }
-    if !state.o3_runtime.bind_live_staged_fetch_identity(
+    if !state.o3_runtime.bind_live_staged_issue_packet(
         pc,
-        decoded.instruction(),
+        decoded,
         &head_instruction.consumed_requests,
     ) {
         return Ok(None);
@@ -827,14 +827,15 @@ pub(crate) fn stage_o3_producer_forwarded_scalar_return_descendant(
     ) else {
         return false;
     };
-    let instruction = returned.decoded().instruction();
+    let decoded = returned.decoded();
+    let instruction = decoded.instruction();
     if crate::o3_runtime::o3_exact_link_return_source(instruction) != parent.link_destination()
         || state
             .o3_runtime
             .append_producer_forwarded_scalar_return_descendant(
                 &scalar_chain,
                 returned.pc(),
-                instruction,
+                decoded,
                 returned.consumed_requests(),
             )
             .is_none()
@@ -932,9 +933,9 @@ fn schedule_o3_live_speculative_younger_executions(
 ) -> Result<bool, RiscvCpuError> {
     let pending_window = state.o3_runtime.has_pending_data_address();
     for younger in younger {
-        if !state.o3_runtime.bind_live_staged_fetch_identity(
+        if !state.o3_runtime.bind_live_staged_issue_packet(
             younger.pc,
-            younger.decoded.instruction(),
+            younger.decoded,
             &younger.consumed_requests,
         ) {
             if pending_window {
@@ -1617,6 +1618,7 @@ mod tests {
             rs1: Register::new(1).unwrap(),
             rs2: Register::new(2).unwrap(),
         };
+        let raw = 0x0220_83b3_u32;
         state.o3_runtime.stage_live_retire_window(
             Address::new(0x8000),
             head,
@@ -1627,6 +1629,11 @@ mod tests {
             .o3_runtime
             .live_speculative_issue_candidate(Address::new(0x8004), multiply)
             .unwrap();
+        assert!(state.o3_runtime.bind_live_staged_issue_packet(
+            Address::new(0x8004),
+            RiscvInstruction::decode_with_length(raw).unwrap(),
+            &[request(7, 11), request(7, 12)],
+        ));
         state
             .o3_runtime
             .record_live_speculative_execution(
@@ -1647,7 +1654,6 @@ mod tests {
             .unwrap();
         state.hart.write(Register::new(1).unwrap(), 6);
         state.hart.write(Register::new(2).unwrap(), 7);
-        let raw = 0x0220_83b3_u32;
         let bytes = raw.to_le_bytes();
         let events = vec![
             completed_fetch_with_data(7, 11, Address::new(0x8004), bytes[..2].to_vec()),

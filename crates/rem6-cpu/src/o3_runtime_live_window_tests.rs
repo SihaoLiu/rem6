@@ -6,6 +6,7 @@ use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, AgentId};
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
+use super::super::o3_runtime_issue_tests::{bind_o3, decoded};
 use super::*;
 use crate::{CpuFetchEvent, CpuFetchRecord};
 
@@ -216,10 +217,10 @@ fn scalar_load_head_younger_alus_wake_transitively_with_fan_in() {
             (Address::new(0x800c), third),
         ],
     );
-
     let first_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), first)
         .unwrap();
+    bind_o3(&mut runtime, 0x8004, decoded(first), &[request(11)]);
     runtime
         .record_live_speculative_execution(
             first_candidate,
@@ -238,6 +239,7 @@ fn scalar_load_head_younger_alus_wake_transitively_with_fan_in() {
         .live_speculative_issue_candidate(Address::new(0x8008), second)
         .expect("the first younger ALU should wake the second");
     assert_eq!(second_candidate.issue_tick(10), 10);
+    bind_o3(&mut runtime, 0x8008, decoded(second), &[request(12)]);
     runtime
         .record_live_speculative_execution(
             second_candidate,
@@ -252,11 +254,9 @@ fn scalar_load_head_younger_alus_wake_transitively_with_fan_in() {
             ),
         )
         .unwrap();
-
     let third_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x800c), third)
         .expect("both younger ALU producers should wake the fan-in row");
-
     assert_eq!(
         third_candidate.forwarded_register_writes(),
         &[
@@ -385,9 +385,9 @@ fn scalar_load_head_discard_removes_every_younger_row() {
 
 fn retire_live(runtime: &mut O3RuntimeState, execution: &RiscvCpuExecutionEvent, retire_tick: u64) {
     let consumed_requests = [execution.fetch().request_id()];
-    assert!(runtime.bind_live_staged_fetch_identity(
+    assert!(runtime.bind_live_staged_issue_packet(
         Address::new(execution.execution().pc()),
-        execution.instruction(),
+        decoded(execution.instruction()),
         &consumed_requests,
     ));
     runtime.retire_live_staged_instruction(execution, &consumed_requests, retire_tick);
@@ -476,6 +476,8 @@ fn independent_live_staged_scalar_execution_keeps_early_issue_timing() {
     let candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
         .unwrap();
+    let packet = decoded(younger_instruction);
+    bind_o3(&mut runtime, 0x8004, packet, &[request(2)]);
     runtime
         .record_live_speculative_execution(
             candidate,
@@ -496,7 +498,6 @@ fn independent_live_staged_scalar_execution_keeps_early_issue_timing() {
     let younger = execution_event(younger_instruction, 0x8004, 2, 4);
     retire_live(&mut runtime, &younger, 30);
     runtime.record_retired_instruction_with_trace(&younger, true);
-
     let trace = runtime.trace_records().last().copied().unwrap();
     assert_eq!(trace.issue_tick(), 10);
     assert_eq!(trace.writeback_tick(), 10);
@@ -518,10 +519,13 @@ fn matching_split_fetch_identity_keeps_early_issue_timing() {
     let candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
         .unwrap();
+    let requests = [request(2), request(3)];
+    let packet = decoded(younger_instruction);
+    bind_o3(&mut runtime, 0x8004, packet, &requests);
     runtime
         .record_live_speculative_execution(
             candidate,
-            &[request(2), request(3)],
+            &requests,
             10,
             RiscvExecutionRecord::new(
                 younger_instruction,
@@ -532,14 +536,12 @@ fn matching_split_fetch_identity_keeps_early_issue_timing() {
             ),
         )
         .unwrap();
-
     let divide = execution_event(div_x3(), 0x8000, 1, 3);
     retire_live(&mut runtime, &divide, 29);
     runtime.record_retired_instruction_with_trace(&divide, true);
     let younger = execution_event(younger_instruction, 0x8004, 2, 4);
-    runtime.retire_live_staged_instruction(&younger, &[request(2), request(3)], 30);
+    runtime.retire_live_staged_instruction(&younger, &requests, 30);
     runtime.record_retired_instruction_with_trace(&younger, true);
-
     let trace = runtime.trace_records().last().copied().unwrap();
     assert_eq!(trace.issue_tick(), 10);
     assert_eq!(trace.writeback_tick(), 10);
@@ -622,6 +624,7 @@ fn speculative_predecessor_wakes_and_forwards_to_dependent_younger() {
     let producer_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), producer)
         .unwrap();
+    bind_o3(&mut runtime, 0x8004, decoded(producer), &[request(2)]);
     runtime
         .record_live_speculative_execution(
             producer_candidate,
@@ -636,7 +639,6 @@ fn speculative_predecessor_wakes_and_forwards_to_dependent_younger() {
             ),
         )
         .unwrap();
-
     let consumer_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8008), consumer)
         .expect("speculative x4 write should wake the x5 consumer");
@@ -668,6 +670,7 @@ fn speculative_scalar_chain_wakes_transitively_with_fan_in() {
     let first_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), first)
         .unwrap();
+    bind_o3(&mut runtime, 0x8004, decoded(first), &[request(2)]);
     runtime
         .record_live_speculative_execution(
             first_candidate,
@@ -686,6 +689,7 @@ fn speculative_scalar_chain_wakes_transitively_with_fan_in() {
         .live_speculative_issue_candidate(Address::new(0x8008), second)
         .unwrap();
     assert_eq!(second_candidate.issue_tick(10), 10);
+    bind_o3(&mut runtime, 0x8008, decoded(second), &[request(3)]);
     runtime
         .record_live_speculative_execution(
             second_candidate,
@@ -739,10 +743,12 @@ fn invalidated_first_speculative_row_discards_two_downstream_rows() {
         let candidate = runtime
             .live_speculative_issue_candidate(Address::new(pc), instruction)
             .unwrap();
+        let fetch_request = request(request_id);
+        bind_o3(&mut runtime, pc, decoded(instruction), &[fetch_request]);
         runtime
             .record_live_speculative_execution(
                 candidate,
-                &[request(request_id)],
+                &[fetch_request],
                 10,
                 RiscvExecutionRecord::new(
                     instruction,
@@ -759,7 +765,6 @@ fn invalidated_first_speculative_row_discards_two_downstream_rows() {
     }
     assert_eq!(runtime.live_speculative_executions.len(), 3);
     let mismatched = execution_event(first, 0x8004, 2, 4);
-
     runtime.retire_live_staged_instruction(&mismatched, &[request(2)], 20);
 
     assert!(runtime.live_speculative_executions.is_empty());
@@ -780,6 +785,7 @@ fn speculative_consumer_uses_nearest_live_producer() {
     let producer_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), producer)
         .unwrap();
+    bind_o3(&mut runtime, 0x8004, decoded(producer), &[request(2)]);
     runtime
         .record_live_speculative_execution(
             producer_candidate,
@@ -823,6 +829,7 @@ fn invalidated_speculative_producer_revokes_dependent_issue_timing() {
     let producer_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), producer)
         .unwrap();
+    bind_o3(&mut runtime, 0x8004, decoded(producer), &[request(2)]);
     runtime
         .record_live_speculative_execution(
             producer_candidate,
@@ -840,6 +847,7 @@ fn invalidated_speculative_producer_revokes_dependent_issue_timing() {
     let consumer_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8008), consumer)
         .unwrap();
+    bind_o3(&mut runtime, 0x8008, decoded(consumer), &[request(3)]);
     runtime
         .record_live_speculative_execution(
             consumer_candidate,

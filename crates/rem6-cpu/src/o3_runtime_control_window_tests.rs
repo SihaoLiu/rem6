@@ -6,6 +6,7 @@ use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, Address, AgentId, MemoryRequestId};
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
+use super::o3_runtime_issue_tests::{bind_o3, decoded};
 use super::*;
 use crate::{CpuFetchEvent, CpuFetchRecord, RiscvCpuExecutionEvent};
 
@@ -35,6 +36,7 @@ fn predicted_control_branch_candidate_has_no_destination_and_keeps_issue_tick() 
     assert_eq!(candidate.issue_tick(11), 11);
 
     let execution = RiscvExecutionRecord::new(branch, 0x8004, 0x8008, Vec::new(), None);
+    bind_o3(&mut runtime, 0x8004, decoded(branch), &[request(11)]);
     runtime
         .record_live_speculative_execution(candidate, &[request(11)], 11, execution.clone())
         .unwrap();
@@ -121,6 +123,7 @@ fn blocked_younger_fu_and_branch_trace_commit_in_program_order_after_load() {
         let writes = value
             .map(|(register, value)| vec![RegisterWrite::new(reg(register), value)])
             .unwrap_or_default();
+        bind_o3(&mut runtime, pc, decoded(instruction), &[request(sequence)]);
         runtime
             .record_live_speculative_execution(
                 candidate,
@@ -267,6 +270,7 @@ fn blocked_prefix_dependency_chain_uses_preceding_staged_rename_across_stats_res
         let candidate = runtime
             .live_speculative_issue_candidate(Address::new(pc), instruction)
             .expect("staged dependency chain should issue before the load completes");
+        bind_o3(&mut runtime, pc, decoded(instruction), &[request(sequence)]);
         runtime
             .record_live_speculative_execution(
                 candidate,
@@ -519,6 +523,7 @@ fn same_window_return_candidate_uses_link_call_forwarding() {
         .live_speculative_issue_candidate(Address::new(0x8004), call)
         .expect("linked call candidate");
     let call_sequence = call_candidate.sequence();
+    bind_o3(&mut runtime, 0x8004, decoded(call), &[request(11)]);
     assert!(runtime
         .record_live_speculative_execution(
             call_candidate,
@@ -561,23 +566,25 @@ fn linked_control_candidate_rejects_mismatched_staged_destination() {
 
 #[test]
 fn linked_control_execution_requires_exact_link_write_and_reserves_writeback() {
-    let mut runtime = scalar_load_runtime_with_branch(jal_link(1, 4));
+    let call = jal_link(1, 4);
+    let mut runtime = scalar_load_runtime_with_branch(call);
     assert!(runtime.set_writeback_width(1));
     let sequence = runtime.snapshot().reorder_buffer()[1].sequence();
     let candidate = runtime
-        .live_speculative_issue_candidate(Address::new(0x8004), jal_link(1, 4))
+        .live_speculative_issue_candidate(Address::new(0x8004), call)
         .expect("linked control candidate");
     let destination = candidate
         .destination()
         .expect("linked control candidate destination");
 
+    bind_o3(&mut runtime, 0x8004, decoded(call), &[request(11)]);
     assert!(runtime
         .record_live_speculative_execution(
             candidate,
             &[request(11)],
             20,
             RiscvExecutionRecord::new(
-                jal_link(1, 4),
+                call,
                 0x8004,
                 0x8008,
                 vec![RegisterWrite::new(reg(1), 0x8008)],
@@ -624,6 +631,7 @@ fn no_link_control_execution_rejects_integer_writes_and_uses_no_writeback_slot()
         .live_speculative_issue_candidate(Address::new(0x8004), jal(4))
         .expect("no-link control candidate");
 
+    bind_o3(&mut runtime, 0x8004, decoded(jal(4)), &[request(11)]);
     assert!(runtime
         .record_live_speculative_execution(
             candidate,
@@ -644,6 +652,7 @@ fn no_link_control_execution_rejects_integer_writes_and_uses_no_writeback_slot()
     let candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), jal(4))
         .expect("no-link control candidate");
+    bind_o3(&mut runtime, 0x8004, decoded(jal(4)), &[request(12)]);
     assert!(!runtime
         .record_live_speculative_execution(
             candidate,
@@ -686,6 +695,7 @@ fn predicted_mul_wakes_dependent_add_candidate() {
         vec![RegisterWrite::new(reg(7), 42)],
         None,
     );
+    bind_o3(&mut runtime, 0x8004, decoded(multiply), &[request(11)]);
     runtime
         .record_live_speculative_execution(
             multiply_candidate,
@@ -735,6 +745,7 @@ fn discarding_control_descendants_removes_younger_rename_state() {
     let branch_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), branch)
         .unwrap();
+    bind_o3(&mut runtime, 0x8004, decoded(branch), &[request(11)]);
     runtime
         .record_live_speculative_execution(
             branch_candidate,
@@ -746,6 +757,7 @@ fn discarding_control_descendants_removes_younger_rename_state() {
     let multiply_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8008), multiply)
         .unwrap();
+    bind_o3(&mut runtime, 0x8008, decoded(multiply), &[request(12)]);
     runtime
         .record_live_speculative_execution(
             multiply_candidate,
@@ -763,6 +775,7 @@ fn discarding_control_descendants_removes_younger_rename_state() {
     let dependent_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x800c), dependent)
         .unwrap();
+    bind_o3(&mut runtime, 0x800c, decoded(dependent), &[request(13)]);
     runtime
         .record_live_speculative_execution(
             dependent_candidate,
@@ -827,6 +840,7 @@ fn discarding_older_branch_removes_linked_call_descendant_state() {
     let branch_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), branch)
         .expect("older branch candidate");
+    bind_o3(&mut runtime, 0x8004, decoded(branch), &[request(11)]);
     assert!(runtime
         .record_live_speculative_execution(
             branch_candidate,
@@ -838,6 +852,7 @@ fn discarding_older_branch_removes_linked_call_descendant_state() {
     let call_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8008), call)
         .expect("linked call descendant candidate");
+    bind_o3(&mut runtime, 0x8008, decoded(call), &[request(12)]);
     assert!(runtime
         .record_live_speculative_execution(
             call_candidate,
@@ -855,6 +870,7 @@ fn discarding_older_branch_removes_linked_call_descendant_state() {
     let descendant_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x800c), descendant)
         .expect("scalar descendant of linked call");
+    bind_o3(&mut runtime, 0x800c, decoded(descendant), &[request(13)]);
     assert!(runtime
         .record_live_speculative_execution(
             descendant_candidate,
@@ -941,6 +957,7 @@ fn linked_call_rollback_restores_prior_committed_rename() {
     let branch_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), branch)
         .expect("older branch candidate");
+    bind_o3(&mut runtime, 0x8004, decoded(branch), &[request(11)]);
     assert!(runtime
         .record_live_speculative_execution(
             branch_candidate,
@@ -952,6 +969,7 @@ fn linked_call_rollback_restores_prior_committed_rename() {
     let call_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8008), call)
         .expect("linked call descendant candidate");
+    bind_o3(&mut runtime, 0x8008, decoded(call), &[request(12)]);
     assert!(runtime
         .record_live_speculative_execution(
             call_candidate,
@@ -1028,6 +1046,7 @@ fn issued_nested_control_runtime() -> (
     let outer_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), outer)
         .unwrap();
+    bind_o3(&mut runtime, 0x8004, decoded(outer), &[request(11)]);
     runtime
         .record_live_speculative_execution(
             outer_candidate,
@@ -1040,6 +1059,7 @@ fn issued_nested_control_runtime() -> (
     let inner_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8008), inner)
         .unwrap();
+    bind_o3(&mut runtime, 0x8008, decoded(inner), &[request(12)]);
     runtime
         .record_live_speculative_execution(
             inner_candidate,
@@ -1052,6 +1072,7 @@ fn issued_nested_control_runtime() -> (
     let descendant_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x800c), descendant)
         .unwrap();
+    bind_o3(&mut runtime, 0x800c, decoded(descendant), &[request(13)]);
     runtime
         .record_live_speculative_execution(
             descendant_candidate,
@@ -1108,6 +1129,7 @@ fn issued_three_deep_control_runtime() -> (
         let candidate = runtime
             .live_speculative_issue_candidate(Address::new(pc), instruction)
             .unwrap();
+        bind_o3(&mut runtime, pc, decoded(instruction), &[request(sequence)]);
         runtime
             .record_live_speculative_execution(
                 candidate,
@@ -1159,6 +1181,7 @@ fn issued_mixed_control_runtime() -> (
         let candidate = runtime
             .live_speculative_issue_candidate(Address::new(pc), instruction)
             .unwrap();
+        bind_o3(&mut runtime, pc, decoded(instruction), &[request(sequence)]);
         runtime
             .record_live_speculative_execution(
                 candidate,
@@ -1303,18 +1326,20 @@ fn mul(rd: u8, rs1: u8, rs2: u8) -> RiscvInstruction {
 }
 
 fn assert_invalid_linked_control_writes_do_not_leak_state(writes: Vec<RegisterWrite>) {
-    let mut runtime = scalar_load_runtime_with_branch(jal_link(1, 4));
+    let call = jal_link(1, 4);
+    let mut runtime = scalar_load_runtime_with_branch(call);
     assert!(runtime.set_writeback_width(1));
     let call_sequence = runtime.snapshot().reorder_buffer()[1].sequence();
     let candidate = runtime
-        .live_speculative_issue_candidate(Address::new(0x8004), jal_link(1, 4))
+        .live_speculative_issue_candidate(Address::new(0x8004), call)
         .expect("linked control candidate");
+    bind_o3(&mut runtime, 0x8004, decoded(call), &[request(11)]);
     assert!(!runtime
         .record_live_speculative_execution(
             candidate,
             &[request(11)],
             20,
-            RiscvExecutionRecord::new(jal_link(1, 4), 0x8004, 0x8008, writes, None),
+            RiscvExecutionRecord::new(call, 0x8004, 0x8008, writes, None),
         )
         .unwrap());
     assert!(runtime.live_speculative_executions.is_empty());

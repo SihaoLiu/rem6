@@ -1,5 +1,6 @@
-use rem6_isa_riscv::RiscvInstruction;
+use rem6_isa_riscv::{RiscvDecodedInstruction, RiscvInstruction};
 
+use super::o3_runtime_issue::queue::O3LiveIssuePacket;
 use super::*;
 use crate::riscv_o3_window_policy::RiscvScalarIntegerYoungerDecision;
 
@@ -22,7 +23,7 @@ pub(super) struct O3LiveRetiredInstruction {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct O3LiveStagedFetchIdentity {
     instruction: RiscvInstruction,
-    consumed_requests: Option<Vec<MemoryRequestId>>,
+    issue_packet: Option<O3LiveIssuePacket>,
     pub(super) producer_forwarded_control_target: Option<O3ProducerForwardedControlTarget>,
     pub(super) producer_forwarded_control_speculation: Option<BranchSpeculationId>,
     producer_forwarded_return_descendant: Option<O3ProducerForwardedReturnDescendant>,
@@ -32,7 +33,7 @@ impl O3LiveStagedFetchIdentity {
     pub(super) const fn new(instruction: RiscvInstruction) -> Self {
         Self {
             instruction,
-            consumed_requests: None,
+            issue_packet: None,
             producer_forwarded_control_target: None,
             producer_forwarded_control_speculation: None,
             producer_forwarded_return_descendant: None,
@@ -54,14 +55,21 @@ impl O3LiveStagedFetchIdentity {
     ) -> Option<&O3ProducerForwardedReturnDescendant> {
         self.producer_forwarded_return_descendant.as_ref()
     }
-    fn bind_consumed_requests(&mut self, consumed_requests: &[MemoryRequestId]) -> bool {
-        if !valid_live_speculative_fetch_identity(consumed_requests) {
+    fn bind_issue_packet(
+        &mut self,
+        decoded: RiscvDecodedInstruction,
+        consumed_requests: &[MemoryRequestId],
+    ) -> bool {
+        if decoded.instruction() != self.instruction
+            || !valid_live_speculative_fetch_identity(consumed_requests)
+        {
             return false;
         }
-        if let Some(bound) = &self.consumed_requests {
-            return bound == consumed_requests;
+        let packet = O3LiveIssuePacket::new(decoded, consumed_requests);
+        if let Some(bound) = &self.issue_packet {
+            return *bound == packet;
         }
-        self.consumed_requests = Some(consumed_requests.to_vec());
+        self.issue_packet = Some(packet);
         true
     }
     fn matches(
@@ -71,24 +79,28 @@ impl O3LiveStagedFetchIdentity {
     ) -> bool {
         self.instruction == instruction
             && valid_live_speculative_fetch_identity(consumed_requests)
-            && self
-                .consumed_requests
-                .as_deref()
-                .is_none_or(|bound| bound == consumed_requests)
+            && self.issue_packet.as_ref().is_none_or(|packet| {
+                packet.instruction() == instruction
+                    && packet.consumed_requests() == consumed_requests
+            })
     }
     fn matches_bound(
         &self,
         instruction: RiscvInstruction,
         consumed_requests: &[MemoryRequestId],
     ) -> bool {
-        self.instruction == instruction
-            && valid_live_speculative_fetch_identity(consumed_requests)
-            && self.consumed_requests.as_deref() == Some(consumed_requests)
+        self.issue_packet.as_ref().is_some_and(|packet| {
+            packet.decoded().instruction() == instruction
+                && packet.consumed_requests() == consumed_requests
+        })
+    }
+    pub(super) fn issue_packet(&self) -> Option<&O3LiveIssuePacket> {
+        self.issue_packet.as_ref()
     }
     pub(super) fn owns_fetch_request(&self, request: MemoryRequestId) -> bool {
-        self.consumed_requests
+        self.issue_packet
             .as_ref()
-            .and_then(|requests| requests.first())
+            .and_then(|packet| packet.consumed_requests().first())
             .copied()
             == Some(request)
     }
@@ -98,9 +110,10 @@ impl O3RuntimeState {
         &mut self,
         authority: O3ProducerForwardedControlTarget,
         pc: Address,
-        instruction: RiscvInstruction,
+        decoded: RiscvDecodedInstruction,
         consumed_requests: &[MemoryRequestId],
     ) -> Option<u64> {
+        let instruction = decoded.instruction();
         let live_data_head = self.retained_producer_forwarded_control_target() == Some(authority);
         let retired_data_head =
             self.producer_forwarded_control_target_after_head_retire() == Some(authority);
@@ -131,11 +144,7 @@ impl O3RuntimeState {
             return None;
         }
         let sequence = self.stage_live_instruction(pc, instruction, 0)?;
-        if !self.bind_live_staged_fetch_identity_at_sequence(
-            sequence,
-            instruction,
-            consumed_requests,
-        ) {
+        if !self.bind_live_staged_issue_packet_at_sequence(sequence, decoded, consumed_requests) {
             self.discard_live_staged_window_from(sequence);
             return None;
         }
@@ -582,10 +591,10 @@ impl O3RuntimeState {
         snapshot.with_committed_rename_map(committed_rename_map)
     }
 
-    pub(crate) fn bind_live_staged_fetch_identity(
+    pub(crate) fn bind_live_staged_issue_packet(
         &mut self,
         pc: Address,
-        instruction: RiscvInstruction,
+        decoded: RiscvDecodedInstruction,
         consumed_requests: &[MemoryRequestId],
     ) -> bool {
         let Some(sequence) = self
@@ -597,21 +606,26 @@ impl O3RuntimeState {
         else {
             return false;
         };
-        self.bind_live_staged_fetch_identity_at_sequence(sequence, instruction, consumed_requests)
+        self.bind_live_staged_issue_packet_at_sequence(sequence, decoded, consumed_requests)
     }
-
-    pub(super) fn bind_live_staged_fetch_identity_at_sequence(
+    pub(super) fn bind_live_staged_issue_packet_at_sequence(
         &mut self,
         sequence: u64,
-        instruction: RiscvInstruction,
+        decoded: RiscvDecodedInstruction,
         consumed_requests: &[MemoryRequestId],
     ) -> bool {
-        let Some(identity) = self.live_staged_fetch_identities.get_mut(&sequence) else {
-            return false;
-        };
-        identity.instruction == instruction && identity.bind_consumed_requests(consumed_requests)
+        self.live_staged_fetch_identities
+            .get_mut(&sequence)
+            .is_some_and(|identity| identity.bind_issue_packet(decoded, consumed_requests))
     }
-
+    pub(in crate::o3_runtime) fn live_staged_issue_packet(
+        &self,
+        sequence: u64,
+    ) -> Option<&O3LiveIssuePacket> {
+        self.live_staged_fetch_identities
+            .get(&sequence)
+            .and_then(O3LiveStagedFetchIdentity::issue_packet)
+    }
     pub(super) fn live_staged_instruction_matches(
         &self,
         sequence: u64,
@@ -621,7 +635,6 @@ impl O3RuntimeState {
             .get(&sequence)
             .is_some_and(|identity| identity.instruction == instruction)
     }
-
     pub(super) fn live_staged_fetch_identity_matches(
         &self,
         sequence: u64,
@@ -645,9 +658,11 @@ impl O3RuntimeState {
             .filter(|entry| entry.is_live_staged() && entry.pc() == pc)
             .map(|entry| entry.sequence())
             .find(|sequence| {
-                self.live_staged_fetch_identities
-                    .get(sequence)
-                    .is_some_and(|identity| identity.matches_bound(instruction, consumed_requests))
+                self.live_staged_issue_packet(*sequence)
+                    .is_some_and(|packet| {
+                        packet.instruction() == instruction
+                            && packet.consumed_requests() == consumed_requests
+                    })
             })
     }
 

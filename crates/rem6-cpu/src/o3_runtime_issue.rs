@@ -15,6 +15,8 @@ mod dependency;
 pub(in crate::o3_runtime) mod calendar;
 #[path = "o3_runtime_issue/pending_address.rs"]
 mod pending_address;
+#[path = "o3_runtime_issue/queue.rs"]
+pub(in crate::o3_runtime) mod queue;
 use calendar::{O3LiveIssueCalendar, O3LiveIssueTickDecision};
 pub(crate) use dependency::O3LiveIssueDependencyTable;
 
@@ -120,11 +122,10 @@ impl O3RuntimeState {
         consumed_requests: &[MemoryRequestId],
         execution: RiscvExecutionRecord,
     ) -> Result<bool, O3RuntimeError> {
-        if !self.live_staged_fetch_identity_matches(
-            head.sequence,
-            execution.instruction(),
-            consumed_requests,
-        ) {
+        if !self
+            .live_staged_issue_packet(head.sequence)
+            .is_some_and(|packet| packet.matches_execution(&execution, consumed_requests))
+        {
             return Ok(false);
         }
         if let Some(recorded) = self

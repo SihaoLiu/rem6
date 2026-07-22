@@ -133,7 +133,7 @@ fn width_one_serializes_store_conditional_against_older_fu() {
     let fixed_execution = record_fixed_fu_owner(
         &mut runtime,
         fixed_sequence,
-        fixed,
+        decoded_instruction(fixed),
         0x8000,
         fixed_request,
         42,

@@ -26,6 +26,7 @@ fn same_window_coroutine_uses_call_forwarding_and_link_destination() {
         .live_speculative_issue_candidate(Address::new(0x8004), call)
         .expect("linked call candidate");
     let call_sequence = call_candidate.sequence();
+    bind_o3(&mut runtime, 0x8004, decoded(call), &[request(11)]);
     assert!(runtime
         .record_live_speculative_execution(
             call_candidate,
@@ -57,6 +58,7 @@ fn same_window_coroutine_uses_call_forwarding_and_link_destination() {
         &[RegisterWrite::new(reg(1), 0x8008)]
     );
     assert_eq!(coroutine_candidate.issue_tick(1), 20);
+    bind_o3(&mut runtime, 0x800c, decoded(coroutine), &[request(12)]);
     assert!(runtime
         .record_live_speculative_execution(
             coroutine_candidate,
@@ -103,6 +105,7 @@ fn same_window_coroutine_uses_call_forwarding_and_link_destination() {
         descendant_candidate.issue_tick(1),
         coroutine_admitted_writeback_tick
     );
+    bind_o3(&mut runtime, 0x8008, decoded(descendant), &[request(13)]);
     assert!(runtime
         .record_live_speculative_execution(
             descendant_candidate,
@@ -209,6 +212,7 @@ fn same_window_coroutine_round_trip_serializes_three_controls() {
         .live_speculative_issue_candidate(Address::new(0x8004), call)
         .expect("linked call candidate");
     let call_sequence = call_candidate.sequence();
+    bind_o3(&mut runtime, 0x8004, decoded(call), &[request(11)]);
     assert!(runtime
         .record_live_speculative_execution(
             call_candidate,
@@ -243,6 +247,7 @@ fn same_window_coroutine_round_trip_serializes_three_controls() {
         coroutine_candidate.issue_tick(1),
         call_admitted_writeback_tick
     );
+    bind_o3(&mut runtime, 0x800c, decoded(coroutine), &[request(12)]);
     assert!(runtime
         .record_live_speculative_execution(
             coroutine_candidate,
@@ -278,6 +283,7 @@ fn same_window_coroutine_round_trip_serializes_three_controls() {
         return_candidate.issue_tick(1),
         coroutine_admitted_writeback_tick
     );
+    bind_o3(&mut runtime, 0x8008, decoded(return_jump), &[request(13)]);
     assert!(runtime
         .record_live_speculative_execution(
             return_candidate,
@@ -364,6 +370,7 @@ fn same_window_reverse_coroutine_forwards_both_links_and_discards_descendant() {
     assert_eq!(call_candidate.destination().unwrap().architectural(), 5);
     assert!(call_candidate.producer_sequences().is_empty());
     assert!(call_candidate.forwarded_register_writes().is_empty());
+    bind_o3(&mut runtime, 0x8004, decoded(call), &[request(11)]);
     assert!(runtime
         .record_live_speculative_execution(
             call_candidate,
@@ -412,6 +419,7 @@ fn same_window_reverse_coroutine_forwards_both_links_and_discards_descendant() {
         coroutine_candidate.issue_tick(1),
         call_admitted_writeback_tick
     );
+    bind_o3(&mut runtime, 0x800c, decoded(coroutine), &[request(12)]);
     assert!(runtime
         .record_live_speculative_execution(
             coroutine_candidate,
@@ -468,6 +476,7 @@ fn same_window_reverse_coroutine_forwards_both_links_and_discards_descendant() {
         descendant_candidate.issue_tick(1),
         coroutine_admitted_writeback_tick
     );
+    bind_o3(&mut runtime, 0x8008, decoded(descendant), &[request(13)]);
     assert!(runtime
         .record_live_speculative_execution(
             descendant_candidate,

@@ -50,7 +50,8 @@ fn stage_o3_producer_forwarded_control_descendant_inner(
     if completed_request.is_some_and(|request| !descendant.consumed_requests().contains(&request)) {
         return false;
     }
-    let descendant_instruction = descendant.decoded().instruction();
+    let descendant_decoded = descendant.decoded();
+    let descendant_instruction = descendant_decoded.instruction();
     if crate::o3_runtime::o3_exact_link_return_source(descendant_instruction).is_some()
         && state.branch_speculations.len() >= state.branch_lookahead
     {
@@ -61,7 +62,7 @@ fn stage_o3_producer_forwarded_control_descendant_inner(
         .append_producer_forwarded_control_descendant(
             authority,
             descendant.pc(),
-            descendant_instruction,
+            descendant_decoded,
             descendant.consumed_requests(),
         )
         .is_none()

@@ -34,8 +34,10 @@ pub(super) fn live_same_link_core(with_target_fetch: bool) -> (RiscvCore, RiscvC
     let producer_raw = i_type(0, 11, 0x0, 1, 0x13);
     let call_raw = i_type(0, 1, 0x0, 1, 0x67);
     let descendant_raw = i_type(0, 1, 0x0, 13, 0x13);
-    let producer = RiscvInstruction::decode(producer_raw).unwrap();
-    let call = RiscvInstruction::decode(call_raw).unwrap();
+    let producer_decoded = RiscvInstruction::decode_with_length(producer_raw).unwrap();
+    let call_decoded = RiscvInstruction::decode_with_length(call_raw).unwrap();
+    let producer = producer_decoded.instruction();
+    let call = call_decoded.instruction();
     let mut fetches = vec![
         (0, 0x8000, load_raw.to_le_bytes().to_vec()),
         (1, 0x8004, producer_raw.to_le_bytes().to_vec()),
@@ -66,6 +68,11 @@ pub(super) fn live_same_link_core(with_target_fetch: bool) -> (RiscvCore, RiscvC
             .o3_runtime
             .live_speculative_issue_candidate(Address::new(0x8004), producer)
             .unwrap();
+        assert!(state.o3_runtime.bind_live_staged_issue_packet(
+            Address::new(0x8004),
+            producer_decoded,
+            &[request(1)],
+        ));
         assert!(state
             .o3_runtime
             .record_live_speculative_execution(
@@ -88,6 +95,11 @@ pub(super) fn live_same_link_core(with_target_fetch: bool) -> (RiscvCore, RiscvC
             .o3_runtime
             .live_speculative_issue_candidate(Address::new(0x8008), call)
             .unwrap();
+        assert!(state.o3_runtime.bind_live_staged_issue_packet(
+            Address::new(0x8008),
+            call_decoded,
+            &[request(2)],
+        ));
         assert!(state
             .o3_runtime
             .record_live_speculative_execution(

@@ -4,7 +4,7 @@ use rem6_memory::{Address, AgentId, MemoryRequestId};
 use crate::RiscvCpuExecutionEvent;
 
 use super::super::super::{O3RuntimeState, O3WritebackReservation};
-use super::{addi, div_x3, execution_event, fetch_event, request, retire_live};
+use super::{addi, bind_o3, decoded, div_x3, execution_event, fetch_event, request, retire_live};
 
 #[test]
 fn mismatched_live_speculative_record_does_not_claim_early_issue() {
@@ -19,6 +19,12 @@ fn mismatched_live_speculative_record_does_not_claim_early_issue() {
     let candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
         .unwrap();
+    bind_o3(
+        &mut runtime,
+        0x8004,
+        decoded(younger_instruction),
+        &[request(2)],
+    );
     runtime
         .record_live_speculative_execution(
             candidate,
@@ -69,6 +75,12 @@ fn mismatched_split_fetch_suffix_does_not_claim_early_issue() {
     let candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
         .unwrap();
+    bind_o3(
+        &mut runtime,
+        0x8004,
+        decoded(younger_instruction),
+        &[request(2), request(3)],
+    );
     runtime
         .record_live_speculative_execution(
             candidate,
@@ -126,6 +138,12 @@ fn malformed_live_speculative_fetch_identity_does_not_occupy_candidate() {
         let candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
             .unwrap();
+        bind_o3(
+            &mut runtime,
+            0x8004,
+            decoded(younger_instruction),
+            &[request(9)],
+        );
         runtime
             .record_live_speculative_execution(
                 candidate,
@@ -161,6 +179,12 @@ fn live_speculative_execution_and_fetch_identity_are_transient_across_restore() 
     let candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
         .unwrap();
+    bind_o3(
+        &mut runtime,
+        0x8004,
+        decoded(younger_instruction),
+        &[request(2)],
+    );
     runtime
         .record_live_speculative_execution(
             candidate,
@@ -196,6 +220,12 @@ fn live_speculative_execution_and_fetch_identity_are_transient_across_restore() 
         .live_speculative_issue_candidate(Address::new(0x8004), younger_instruction)
         .unwrap();
 
+    bind_o3(
+        &mut runtime,
+        0x8004,
+        decoded(younger_instruction),
+        &[request(3)],
+    );
     runtime
         .record_live_speculative_execution(
             candidate,
@@ -260,10 +290,14 @@ fn wrong_same_pc_retirement_does_not_claim_bound_live_staged_row() {
         None,
         "unbound live rows must not claim selected prediction authority"
     );
-    assert!(runtime.bind_live_staged_fetch_identity(Address::new(0x8000), div_x3(), &[request(1)],));
-    assert!(runtime.bind_live_staged_fetch_identity(
+    assert!(runtime.bind_live_staged_issue_packet(
+        Address::new(0x8000),
+        decoded(div_x3()),
+        &[request(1)],
+    ));
+    assert!(runtime.bind_live_staged_issue_packet(
         Address::new(0x8004),
-        younger_instruction,
+        decoded(younger_instruction),
         &[request(2)],
     ));
     assert_eq!(
@@ -342,10 +376,14 @@ fn restored_live_staged_row_without_transient_identity_fails_closed() {
         29,
         Some((Address::new(0x8004), younger_instruction)),
     );
-    assert!(runtime.bind_live_staged_fetch_identity(Address::new(0x8000), div_x3(), &[request(1)],));
-    assert!(runtime.bind_live_staged_fetch_identity(
+    assert!(runtime.bind_live_staged_issue_packet(
+        Address::new(0x8000),
+        decoded(div_x3()),
+        &[request(1)],
+    ));
+    assert!(runtime.bind_live_staged_issue_packet(
         Address::new(0x8004),
-        younger_instruction,
+        decoded(younger_instruction),
         &[request(2)],
     ));
 
@@ -424,6 +462,12 @@ fn invalidated_descendant_fetch_identity_keeps_retirement_authority() {
         let candidate = runtime
             .live_speculative_issue_candidate(Address::new(pc), instruction)
             .unwrap();
+        bind_o3(
+            &mut runtime,
+            pc,
+            decoded(instruction),
+            &[request(request_id)],
+        );
         runtime
             .record_live_speculative_execution(
                 candidate,

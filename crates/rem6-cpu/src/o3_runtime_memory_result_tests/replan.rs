@@ -29,15 +29,50 @@ fn memory_result_replanning_invalidates_fu_conflict_chain_for_authoritative_reis
     let child_sequence = sequence_for_pc(&runtime, 0x800c);
     let grandchild_sequence = sequence_for_pc(&runtime, 0x8010);
     let unaffected_sequence = sequence_for_pc(&runtime, 0x8014);
-    record_fixed_fu_owner(&mut runtime, other_sequence, other, 0x8004, request(30), 40);
-    let producer_execution =
-        record_speculative_owner(&mut runtime, 0x8008, producer, request(31), 42, 7, 7);
-    let child_execution =
-        record_speculative_owner(&mut runtime, 0x800c, child, request(32), 42, 8, 0);
-    let grandchild_execution =
-        record_speculative_owner(&mut runtime, 0x8010, grandchild, request(33), 42, 9, 1);
-    let unaffected_execution =
-        record_speculative_owner(&mut runtime, 0x8014, unaffected, request(34), 43, 10, 0);
+    record_fixed_fu_owner(
+        &mut runtime,
+        other_sequence,
+        decoded_instruction(other),
+        0x8004,
+        request(30),
+        40,
+    );
+    let producer_execution = record_speculative_owner(
+        &mut runtime,
+        0x8008,
+        decoded_instruction(producer),
+        request(31),
+        42,
+        7,
+        7,
+    );
+    let child_execution = record_speculative_owner(
+        &mut runtime,
+        0x800c,
+        decoded_instruction(child),
+        request(32),
+        42,
+        8,
+        0,
+    );
+    let grandchild_execution = record_speculative_owner(
+        &mut runtime,
+        0x8010,
+        decoded_instruction(grandchild),
+        request(33),
+        42,
+        9,
+        1,
+    );
+    let unaffected_execution = record_speculative_owner(
+        &mut runtime,
+        0x8014,
+        decoded_instruction(unaffected),
+        request(34),
+        43,
+        10,
+        0,
+    );
     assert_eq!(
         issue_rows_by_tick(&runtime),
         vec![
@@ -189,7 +224,7 @@ fn invalidated_descendant_reissue_counts_additional_authoritative_planner_activi
     record_fixed_fu_owner(
         &mut runtime,
         producer_sequence,
-        producer,
+        decoded_instruction(producer),
         0x8004,
         request(30),
         42,
@@ -198,6 +233,11 @@ fn invalidated_descendant_reissue_counts_additional_authoritative_planner_activi
         .live_data_access_head_reservation(older.fetch().request_id())
         .expect("memory head remains live");
     let child_request = issue_request(0x8008, request(31), child);
+    assert!(runtime.bind_live_staged_issue_packet(
+        Address::new(0x8008),
+        decoded_instruction(child),
+        &[request(31)],
+    ));
     runtime
         .schedule_live_speculative_issues(
             &RiscvHartState::new(0x8000),

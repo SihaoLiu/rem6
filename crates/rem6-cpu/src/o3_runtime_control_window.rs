@@ -470,11 +470,10 @@ impl O3RuntimeState {
         {
             return Ok(false);
         }
-        if !self.live_staged_fetch_identity_matches(
-            candidate.sequence(),
-            candidate.instruction(),
-            consumed_requests,
-        ) || Address::new(execution.pc()) != candidate.scheduling.pc
+        if !self
+            .live_staged_issue_packet(candidate.sequence())
+            .is_some_and(|packet| packet.matches_execution(&execution, consumed_requests))
+            || Address::new(execution.pc()) != candidate.scheduling.pc
             || execution.instruction() != candidate.instruction()
             || execution.trap().is_some()
             || execution.system_event().is_some()
@@ -510,13 +509,6 @@ impl O3RuntimeState {
             }
         };
         if !valid_kind {
-            return Ok(false);
-        }
-        if !self.bind_live_staged_fetch_identity_at_sequence(
-            candidate.sequence(),
-            candidate.instruction(),
-            consumed_requests,
-        ) {
             return Ok(false);
         }
         let raw_ready_tick = issue_tick

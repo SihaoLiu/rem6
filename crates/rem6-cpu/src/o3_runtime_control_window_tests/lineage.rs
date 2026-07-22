@@ -88,6 +88,7 @@ fn invalidated_resident_control_and_descendant_do_not_keep_window_live() {
     let candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), branch)
         .expect("resident branch should issue while the load is pending");
+    bind_o3(&mut runtime, 0x8004, decoded(branch), &[request(11)]);
     runtime
         .record_live_speculative_execution(
             candidate,

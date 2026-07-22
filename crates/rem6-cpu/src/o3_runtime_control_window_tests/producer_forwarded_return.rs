@@ -1,5 +1,22 @@
 use super::*;
 
+pub(super) fn decoded(instruction: RiscvInstruction) -> rem6_isa_riscv::RiscvDecodedInstruction {
+    let raw = match instruction {
+        RiscvInstruction::Addi { rd, rs1, imm } => {
+            i_type(imm.value(), rs1.index(), rd.index(), 0x13)
+        }
+        RiscvInstruction::Jalr { rd, rs1, offset } => {
+            i_type(offset.value(), rs1.index(), rd.index(), 0x67)
+        }
+        _ => panic!("unsupported producer-forwarded test instruction: {instruction:?}"),
+    };
+    RiscvInstruction::decode_with_length(raw).unwrap()
+}
+
+fn i_type(imm: i64, rs1: u8, rd: u8, opcode: u32) -> u32 {
+    (((imm as u32) & 0xfff) << 20) | (u32::from(rs1) << 15) | (u32::from(rd) << 7) | opcode
+}
+
 pub(super) fn recorded_linked_runtime(
     target_source: u8,
     link: u8,
@@ -24,6 +41,7 @@ pub(super) fn recorded_linked_runtime(
     let producer_candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), producer)
         .expect("linked-call target producer candidate");
+    bind_o3(&mut runtime, 0x8004, decoded(producer), &[request(11)]);
     assert!(runtime
         .record_live_speculative_execution(
             producer_candidate,
@@ -42,6 +60,7 @@ pub(super) fn recorded_linked_runtime(
         .live_speculative_issue_candidate(Address::new(0x8008), call)
         .expect("linked-call control candidate");
     let consumer_sequence = call_candidate.sequence();
+    bind_o3(&mut runtime, 0x8008, decoded(call), &[request(12)]);
     assert!(runtime
         .record_live_speculative_execution(
             call_candidate,
@@ -75,7 +94,7 @@ fn producer_forwarded_linked_calls_append_target_returns() {
             .append_producer_forwarded_control_descendant(
                 forwarded,
                 Address::new(0x9000),
-                return_jump,
+                decoded(return_jump),
                 &[request(13)],
             )
             .expect("linked call target return append");
@@ -141,7 +160,7 @@ fn producer_forwarded_linked_call_rejects_nonordinary_target_controls() {
             runtime.append_producer_forwarded_control_descendant(
                 forwarded,
                 Address::new(0x9000),
-                instruction,
+                decoded(instruction),
                 &[request(13)],
             ),
             None,
@@ -161,7 +180,7 @@ fn producer_forwarded_split_link_call_appends_return_after_data_head_retires() {
         .append_producer_forwarded_control_descendant(
             forwarded,
             Address::new(0x9000),
-            return_jump,
+            decoded(return_jump),
             &[request(13)],
         )
         .expect("recorded split-link call survives successful data-head retirement");

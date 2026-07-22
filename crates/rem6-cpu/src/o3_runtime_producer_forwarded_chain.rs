@@ -1,3 +1,5 @@
+use rem6_isa_riscv::RiscvDecodedInstruction;
+
 use super::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -517,9 +519,10 @@ impl O3RuntimeState {
         &mut self,
         scalar_chain: &O3ProducerForwardedScalarChain,
         pc: Address,
-        instruction: RiscvInstruction,
+        decoded: RiscvDecodedInstruction,
         consumed_requests: &[MemoryRequestId],
     ) -> Option<u64> {
+        let instruction = decoded.instruction();
         let current = self.producer_forwarded_scalar_return_issue_context()?.0;
         let scalar = scalar_chain.last()?;
         if current != *scalar_chain
@@ -531,11 +534,7 @@ impl O3RuntimeState {
             return None;
         }
         let sequence = self.stage_live_instruction(pc, instruction, 0)?;
-        if !self.bind_live_staged_fetch_identity_at_sequence(
-            sequence,
-            instruction,
-            consumed_requests,
-        ) {
+        if !self.bind_live_staged_issue_packet_at_sequence(sequence, decoded, consumed_requests) {
             self.discard_live_staged_window_from(sequence);
             return None;
         }

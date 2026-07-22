@@ -56,7 +56,11 @@ fn deep_runtime() -> (
         .enumerate()
         .map(|(index, (pc, instruction))| {
             let consumed = vec![memory_request(100 + index as u64)];
-            assert!(runtime.bind_live_staged_fetch_identity(pc, instruction, &consumed));
+            assert!(runtime.bind_live_staged_issue_packet(
+                pc,
+                decoded_addi(instruction),
+                &consumed,
+            ));
             O3LiveIssueRequest::new(pc, consumed, decoded_addi(instruction))
         })
         .collect::<Vec<_>>();

@@ -112,13 +112,29 @@ fn replan_three_live_rows_down_to_two(runtime: &mut O3RuntimeState) {
     record_fixed_fu_owner(
         runtime,
         producer_sequence,
-        producer,
+        decoded_instruction(producer),
         0x8004,
         request(30),
         42,
     );
-    record_speculative_owner(runtime, 0x8008, child, request(31), 42, 7, 7);
-    record_speculative_owner(runtime, 0x800c, grandchild, request(32), 42, 8, 8);
+    record_speculative_owner(
+        runtime,
+        0x8008,
+        decoded_instruction(child),
+        request(31),
+        42,
+        7,
+        7,
+    );
+    record_speculative_owner(
+        runtime,
+        0x800c,
+        decoded_instruction(grandchild),
+        request(32),
+        42,
+        8,
+        8,
+    );
     runtime
         .live_speculative_executions
         .iter_mut()

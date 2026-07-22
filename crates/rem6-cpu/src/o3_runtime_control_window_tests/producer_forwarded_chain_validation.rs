@@ -1,3 +1,4 @@
+use super::producer_forwarded_return::decoded;
 use super::*;
 
 fn executed_direct_return_runtime(
@@ -14,7 +15,7 @@ fn executed_direct_return_runtime(
         .append_producer_forwarded_control_descendant(
             forwarded,
             Address::new(0x9000),
-            instruction,
+            decoded(instruction),
             &[request(13)],
         )
         .expect("same-link direct return append");
@@ -42,7 +43,7 @@ fn executed_scalar_return_runtime() -> (O3RuntimeState, u64) {
         .append_producer_forwarded_scalar_return_descendant(
             &scalar_chain,
             Address::new(0x9004),
-            instruction,
+            decoded(instruction),
             &[request(14)],
         )
         .expect("linked-call scalar return append");

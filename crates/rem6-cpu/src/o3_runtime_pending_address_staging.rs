@@ -88,9 +88,9 @@ impl O3RuntimeState {
                 u32::from(pending_rd.index()),
                 physical_destination,
             );
-            if !self.bind_live_staged_fetch_identity_at_sequence(
+            if !self.bind_live_staged_issue_packet_at_sequence(
                 sequence,
-                pending.decoded.instruction(),
+                pending.decoded,
                 &pending.consumed_requests,
             ) {
                 return None;

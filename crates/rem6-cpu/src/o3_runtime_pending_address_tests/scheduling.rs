@@ -23,9 +23,9 @@ impl PendingAddressSchedulingFixture {
             (FIRST_SUFFIX_PC, addi(7, 5, 8), 12),
             (SECOND_SUFFIX_PC, add(8, 6, 7), 13),
         ] {
-            assert!(staging.runtime.bind_live_staged_fetch_identity(
+            assert!(staging.runtime.bind_live_staged_issue_packet(
                 Address::new(pc),
-                decoded(raw).instruction(),
+                decoded(raw),
                 &[request(sequence)],
             ));
         }

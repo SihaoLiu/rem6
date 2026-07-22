@@ -28,6 +28,7 @@ fn nonadjacent_forwarded_runtime(destination: u8) -> (O3RuntimeState, u64, u64, 
         .live_speculative_issue_candidate(Address::new(0x8004), producer)
         .expect("non-adjacent target producer candidate");
     let producer_sequence = producer_candidate.sequence();
+    bind_o3(&mut runtime, 0x8004, decoded(producer), &[request(11)]);
     assert!(runtime
         .record_live_speculative_execution(
             producer_candidate,
@@ -47,6 +48,7 @@ fn nonadjacent_forwarded_runtime(destination: u8) -> (O3RuntimeState, u64, u64, 
         .live_speculative_issue_candidate(Address::new(0x8008), spacer)
         .expect("independent spacer candidate");
     let spacer_sequence = spacer_candidate.sequence();
+    bind_o3(&mut runtime, 0x8008, decoded(spacer), &[request(12)]);
     assert!(runtime
         .record_live_speculative_execution(
             spacer_candidate,
@@ -72,6 +74,7 @@ fn nonadjacent_forwarded_runtime(destination: u8) -> (O3RuntimeState, u64, u64, 
     } else {
         vec![RegisterWrite::new(reg(destination), 0x8010)]
     };
+    bind_o3(&mut runtime, 0x800c, decoded(control), &[request(13)]);
     assert!(runtime
         .record_live_speculative_execution(
             control_candidate,

@@ -95,9 +95,9 @@ fn ready_two_pending_issue(
         ),
         3
     );
-    assert!(fixture.runtime.bind_live_staged_fetch_identity(
+    assert!(fixture.runtime.bind_live_staged_issue_packet(
         Address::new(SCALAR_SUFFIX_PC),
-        decoded(addi(8, 5, 1)).instruction(),
+        decoded(addi(8, 5, 1)),
         &[request(13)],
     ));
     let head = fixture
