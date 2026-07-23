@@ -88,6 +88,37 @@ fn translated_result_pair_authorizes_two_virtual_rows_without_physical_targets()
 }
 
 #[test]
+fn translated_result_pair_at_depth_two_retains_two_authorizations_without_next_fetch() {
+    let head = ld(11, 2);
+    let younger = ld(12, 3);
+    let core = translated_result_pair_core(head, [(1, 0x8004, younger.to_le_bytes().to_vec())]);
+    core.set_o3_scalar_memory_depth(2);
+
+    assert_eq!(
+        core.next_cached_translated_memory_fetch_ahead_before_retire(),
+        None
+    );
+    let state = core.state.lock().expect("riscv core lock");
+    assert_eq!(state.memory_result_window_authorizations.len(), 2);
+    assert_eq!(
+        state
+            .memory_result_window_authorizations
+            .get(&request(0))
+            .copied()
+            .map(O3MemoryResultWindowAuthorization::role),
+        Some(O3MemoryResultWindowRole::Head)
+    );
+    assert_eq!(
+        state
+            .memory_result_window_authorizations
+            .get(&request(1))
+            .copied()
+            .map(O3MemoryResultWindowAuthorization::role),
+        Some(O3MemoryResultWindowRole::YoungerRead)
+    );
+}
+
+#[test]
 fn translated_result_pair_binds_each_physical_range_and_target_once() {
     let virtual_range =
         AddressRange::new(Address::new(0x5000), AccessSize::new(8).unwrap()).unwrap();
@@ -191,5 +222,24 @@ fn translated_result_pair_rejects_dependent_second_address_and_third_result() {
         None
     );
     let state = three_results.state.lock().expect("riscv core lock");
-    assert!(state.memory_result_window_authorizations.is_empty());
+    assert_eq!(state.memory_result_window_authorizations.len(), 2);
+    assert_eq!(
+        state
+            .memory_result_window_authorizations
+            .get(&request(0))
+            .copied()
+            .map(O3MemoryResultWindowAuthorization::role),
+        Some(O3MemoryResultWindowRole::Head)
+    );
+    assert_eq!(
+        state
+            .memory_result_window_authorizations
+            .get(&request(1))
+            .copied()
+            .map(O3MemoryResultWindowAuthorization::role),
+        Some(O3MemoryResultWindowRole::YoungerRead)
+    );
+    assert!(!state
+        .memory_result_window_authorizations
+        .contains_key(&request(2)));
 }
