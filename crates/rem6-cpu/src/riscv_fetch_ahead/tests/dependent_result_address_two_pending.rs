@@ -202,17 +202,17 @@ fn dependent_address_two_pending_authorizes_one_deep_chain_before_suffix() {
 }
 
 #[test]
-fn dependent_address_two_pending_rejects_third_unresolved_load() {
+fn dependent_address_depth_three_rejects_a_second_pending_row() {
     let (core, head, first, second, third) =
         completed_result_quad(ld(5, 2, 0), ld(6, 5, 8), ld(7, 6, 16), ld(8, 7, 24));
-    let mut authorizer = authorizer_for(&core, &head);
+    let mut authorizer = authorizer_for_with_row_limit(&core, &head, 3);
 
     assert!(authorizer.try_authorize_next(&first).is_some());
-    assert!(authorizer.try_authorize_next(&second).is_some());
+    assert_eq!(authorizer.try_authorize_next(&second), None);
     assert_eq!(authorizer.try_authorize_next(&third), None);
 
-    assert_eq!(authorizer.dependent_rows(), 2);
-    assert_eq!(authorizer.result_destinations(), &[reg(5), reg(6), reg(7)]);
+    assert_eq!(authorizer.dependent_rows(), 1);
+    assert_eq!(authorizer.result_destinations(), &[reg(5), reg(6)]);
 }
 
 #[test]

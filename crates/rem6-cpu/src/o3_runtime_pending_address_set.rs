@@ -4,7 +4,7 @@ use rem6_memory::{AccessSize, Address, MemoryRequestId};
 use super::o3_runtime_pending_address::{O3PendingDataAddress, PENDING_DATA_ADDRESS_LSQ_BYTES};
 use super::*;
 
-pub(super) const O3_PENDING_DATA_ADDRESS_CAPACITY: usize = 2;
+pub(crate) const O3_PENDING_DATA_ADDRESS_CAPACITY: usize = 3;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct O3PendingDataAddresses {

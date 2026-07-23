@@ -3,7 +3,7 @@ use rem6_memory::{Address, MemoryRequestId};
 
 use super::*;
 use crate::{
-    o3_runtime::O3PendingDataAddressRequest,
+    o3_runtime::{O3PendingDataAddressRequest, O3_PENDING_DATA_ADDRESS_CAPACITY},
     riscv_fetch_ahead::{O3MemoryResultWindowAuthorization, O3MemoryResultWindowRole},
 };
 
@@ -28,11 +28,16 @@ pub(super) fn stage_dependent_result_address_window(
     };
     let mut predecessor = head_completed.last_consumed_request();
     let mut next_pc = sequential_pc(&head_completed);
-    let mut requests = Vec::with_capacity(2);
-    let mut dependent_requests = Vec::with_capacity(2);
-    let mut scheduled = Vec::with_capacity(3);
-    let mut result_destinations = Vec::with_capacity(3);
-    for _ in 0..2 {
+    let pending_capacity = O3_PENDING_DATA_ADDRESS_CAPACITY;
+    let scheduled_capacity = state
+        .o3_runtime
+        .scalar_memory_window_limit()
+        .saturating_sub(1);
+    let mut requests = Vec::with_capacity(pending_capacity);
+    let mut dependent_requests = Vec::with_capacity(pending_capacity);
+    let mut scheduled = Vec::with_capacity(scheduled_capacity);
+    let mut result_destinations = Vec::with_capacity(pending_capacity + 1);
+    for _ in 0..pending_capacity {
         let Some(dependent) =
             completed_fetch_instruction_at(state, fetch_events, predecessor, next_pc)
         else {

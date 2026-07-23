@@ -11,7 +11,7 @@ use crate::{
 pub(in crate::riscv_fetch_ahead) struct DependentResultAddressAuthorizer {
     row_limit: usize,
     head_destination: Register,
-    first_pending_destination: Option<Register>,
+    previous_pending_destination: Option<Register>,
     result_destinations: Vec<Register>,
     dependent_rows: usize,
 }
@@ -49,11 +49,13 @@ impl DependentResultAddressAuthorizer {
         if head_authorization.integer_destination() != Some(head_destination) {
             return None;
         }
+        let mut result_destinations = Vec::with_capacity(row_limit.saturating_add(1));
+        result_destinations.push(head_destination);
         Some(Self {
             row_limit,
             head_destination,
-            first_pending_destination: None,
-            result_destinations: vec![head_destination],
+            previous_pending_destination: None,
+            result_destinations,
             dependent_rows: 0,
         })
     }
@@ -62,7 +64,7 @@ impl DependentResultAddressAuthorizer {
         &mut self,
         younger: &RiscvCompletedFetchInstruction,
     ) -> Option<O3MemoryResultWindowAuthorization> {
-        if self.dependent_rows >= 2 || (self.dependent_rows == 1 && self.row_limit < 4) {
+        if self.dependent_rows >= 3 || (self.dependent_rows >= 1 && self.row_limit < 4) {
             return None;
         }
         let RiscvInstruction::Load {
@@ -85,14 +87,12 @@ impl DependentResultAddressAuthorizer {
         let allowed_source = if self.dependent_rows == 0 {
             rs1 == self.head_destination
         } else {
-            rs1 == self.head_destination || Some(rs1) == self.first_pending_destination
+            rs1 == self.head_destination || Some(rs1) == self.previous_pending_destination
         };
         if !allowed_source {
             return None;
         }
-        if self.dependent_rows == 0 {
-            self.first_pending_destination = Some(rd);
-        }
+        self.previous_pending_destination = Some(rd);
         self.result_destinations.push(rd);
         self.dependent_rows += 1;
         Some(O3MemoryResultWindowAuthorization::dependent(

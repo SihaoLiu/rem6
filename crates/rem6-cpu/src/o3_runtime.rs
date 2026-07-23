@@ -60,6 +60,7 @@ mod o3_runtime_memory_window;
 mod o3_runtime_pending_address;
 #[path = "o3_runtime_pending_address_set.rs"]
 mod o3_runtime_pending_address_set;
+pub(crate) use o3_runtime_pending_address_set::O3_PENDING_DATA_ADDRESS_CAPACITY;
 #[path = "o3_runtime_pending_address_staging.rs"]
 mod o3_runtime_pending_address_staging;
 #[cfg(test)]

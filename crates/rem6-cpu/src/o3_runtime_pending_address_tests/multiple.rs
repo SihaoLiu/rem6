@@ -115,21 +115,31 @@ fn ready_two_pending_issue(
     (fixture.runtime, hart, head)
 }
 #[test]
-fn two_pending_collection_orders_by_sequence_and_rejects_third() {
+fn pending_address_collection_orders_by_sequence_and_rejects_fourth() {
     let mut fixture = PendingAddressFixture::new(4, 4);
     assert!(stage_pending(&mut fixture, sibling_pending_requests(), []) == 2);
     let rows = fixture.runtime.pending_data_address_rows_for_test();
-    assert_eq!(rows.len(), O3_PENDING_DATA_ADDRESS_CAPACITY);
+    assert_eq!(rows.len(), 2);
     assert!(rows[0].sequence < rows[1].sequence);
     let mut collection = O3PendingDataAddresses::default();
     assert!(collection.try_push(rows[0].clone()));
     assert!(collection.try_push(rows[1].clone()));
-    let mut third = rows[1].clone();
-    third.sequence = third.sequence.saturating_add(1);
-    third.fetch = fetch_event_with_raw(SCALAR_SUFFIX_PC, 13, ld(8, 5, 16));
-    third.consumed_requests = vec![request(13)];
-    third.fetch_predecessor_request = request(12);
-    assert!(!collection.try_push(third));
+    for sequence in [13, 14] {
+        let mut row = rows[1].clone();
+        row.sequence = sequence;
+        row.fetch = fetch_event_with_raw(
+            SCALAR_SUFFIX_PC + 4 * (sequence - 13),
+            sequence,
+            ld(8, 5, 16),
+        );
+        row.consumed_requests = vec![request(sequence)];
+        row.fetch_predecessor_request = request(sequence - 1);
+        assert_eq!(
+            collection.try_push(row),
+            sequence == 13,
+            "sequence {sequence}"
+        );
+    }
     assert_eq!(collection.len(), O3_PENDING_DATA_ADDRESS_CAPACITY);
     let mut out_of_order = O3PendingDataAddresses::default();
     assert!(out_of_order.try_push(rows[1].clone()));
@@ -141,18 +151,6 @@ fn two_pending_collection_orders_by_sequence_and_rejects_third() {
             .collect::<Vec<_>>(),
         [rows[1].sequence]
     );
-    let mut three = PendingAddressFixture::new(4, 4);
-    let before = three.runtime.clone();
-    let mut requests = sibling_pending_requests();
-    requests.push(pending_request(
-        request(12),
-        13,
-        SCALAR_SUFFIX_PC,
-        ld(8, 5, 16),
-        reg(5),
-    ));
-    assert_eq!(stage_pending(&mut three, requests, []), 0);
-    assert_eq!(three.runtime, before);
 }
 #[test]
 fn two_pending_sibling_stages_two_addressless_lsq_rows_and_one_suffix() {

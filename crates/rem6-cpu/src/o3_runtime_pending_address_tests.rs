@@ -23,10 +23,13 @@ mod multiple;
 mod scheduling;
 #[path = "o3_runtime_pending_address_tests/staging.rs"]
 mod staging;
+#[path = "o3_runtime_pending_address_tests/three_pending.rs"]
+mod three_pending;
 
 const HEAD_PC: u64 = 0x8000;
 const FIRST_PENDING_PC: u64 = 0x8004;
 const SECOND_PENDING_PC: u64 = 0x8008;
+const THIRD_PENDING_PC: u64 = 0x800c;
 const SCALAR_SUFFIX_PC: u64 = 0x800c;
 const EXTRA_SUFFIX_PC: u64 = 0x8010;
 const PENDING_PC: u64 = FIRST_PENDING_PC;

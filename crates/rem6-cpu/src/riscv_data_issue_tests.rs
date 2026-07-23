@@ -27,6 +27,8 @@ mod atomic;
 mod dependent_result_address;
 #[path = "riscv_data_issue_tests/dependent_result_address_multiple.rs"]
 mod dependent_result_address_multiple;
+#[path = "riscv_data_issue_tests/dependent_result_address_three_pending.rs"]
+mod dependent_result_address_three_pending;
 #[path = "riscv_data_issue_tests/forwarding.rs"]
 mod forwarding;
 #[path = "riscv_data_issue_tests/lifecycle.rs"]

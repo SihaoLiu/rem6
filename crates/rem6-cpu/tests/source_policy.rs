@@ -39,10 +39,12 @@ const MAX_RISCV_DATA_ACCESS_RESULT_EFFECT_POLICY_LINES: usize = 120;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_LINES: usize = 200;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_FETCH_TEST_LINES: usize = 450;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_TWO_PENDING_FETCH_TEST_LINES: usize = 350;
+const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_THREE_PENDING_FETCH_TEST_LINES: usize = 450;
 const MAX_RISCV_UNISSUED_DATA_LINES: usize = 110;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_ISSUE_LINES: usize = 350;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_ISSUE_TEST_LINES: usize = 550;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_MULTIPLE_ISSUE_TEST_LINES: usize = 500;
+const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_THREE_PENDING_ISSUE_TEST_LINES: usize = 450;
 const MAX_RISCV_RETAINED_DATA_ACCESS_RESULT_LINES: usize = 100;
 const MAX_RISCV_MEMORY_RESULT_AUTHORIZATION_LINES: usize = 150;
 const MAX_RISCV_BUFFERED_EFFECT_LINES: usize = 220;
@@ -55,7 +57,8 @@ const MAX_O3_RUNTIME_PENDING_ADDRESS_STAGING_TEST_LINES: usize = 450;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_SCHEDULING_TEST_LINES: usize = 550;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_LIFECYCLE_TEST_LINES: usize = 650;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_MULTIPLE_TEST_LINES: usize = 550;
-const MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FAMILY_LINES: usize = 2100;
+const MAX_O3_RUNTIME_PENDING_ADDRESS_THREE_PENDING_TEST_LINES: usize = 450;
+const MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FAMILY_LINES: usize = 2550;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_STAGE_LINES: usize = 250;
 const MAX_RISCV_DETAILED_O3_CONTROL_TEST_ROOT_LINES: usize = 450;
 const MAX_RISCV_DETAILED_O3_LINKED_CONTROL_TEST_LINES: usize = 1500;
@@ -727,6 +730,8 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let scheduling_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/scheduling.rs");
     let lifecycle_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/lifecycle.rs");
     let multiple_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/multiple.rs");
+    let three_pending_test_path =
+        crate_dir.join("src/o3_runtime_pending_address_tests/three_pending.rs");
     let stage_child_path =
         crate_dir.join("src/riscv_live_retire_window/dependent_result_address.rs");
 
@@ -743,6 +748,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         &scheduling_test_path,
         &lifecycle_test_path,
         &multiple_test_path,
+        &three_pending_test_path,
         &stage_child_path,
     ] {
         assert!(
@@ -767,6 +773,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let scheduling_test = fs::read_to_string(&scheduling_test_path).unwrap();
     let lifecycle_test = fs::read_to_string(&lifecycle_test_path).unwrap();
     let multiple_test = fs::read_to_string(&multiple_test_path).unwrap();
+    let three_pending_test = fs::read_to_string(&three_pending_test_path).unwrap();
     let stage_child = fs::read_to_string(&stage_child_path).unwrap();
 
     assert_eq!(
@@ -851,6 +858,15 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "pending-address tests must use the focused multiple-row child exactly once"
     );
     assert_eq!(
+        path_owned_module_declaration_count(
+            &test_root,
+            "o3_runtime_pending_address_tests/three_pending.rs",
+            "three_pending"
+        ),
+        1,
+        "pending-address tests must use the focused three-pending child exactly once"
+    );
+    assert_eq!(
         rust_code_without_comments_and_literals(&retire)
             .matches("mod dependent_result_address;")
             .count(),
@@ -867,6 +883,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     assert!(include_macro_lines(&scheduling_test).is_empty());
     assert!(include_macro_lines(&lifecycle_test).is_empty());
     assert!(include_macro_lines(&multiple_test).is_empty());
+    assert!(include_macro_lines(&three_pending_test).is_empty());
     assert!(include_macro_lines(&stage_child).is_empty());
     assert!(
         external_module_declaration_lines(&pending).is_empty()
@@ -885,6 +902,8 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
             && path_attribute_lines(&lifecycle_test).is_empty()
             && external_module_declaration_lines(&multiple_test).is_empty()
             && path_attribute_lines(&multiple_test).is_empty()
+            && external_module_declaration_lines(&three_pending_test).is_empty()
+            && path_attribute_lines(&three_pending_test).is_empty()
             && external_module_declaration_lines(&stage_child).is_empty()
             && path_attribute_lines(&stage_child).is_empty(),
         "Task 3 leaf owners must not declare child modules"
@@ -927,11 +946,17 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "o3_runtime_pending_address_tests/multiple.rs exceeds {MAX_O3_RUNTIME_PENDING_ADDRESS_MULTIPLE_TEST_LINES} lines"
     );
     assert!(
+        line_count(&three_pending_test_path)
+            <= MAX_O3_RUNTIME_PENDING_ADDRESS_THREE_PENDING_TEST_LINES,
+        "o3_runtime_pending_address_tests/three_pending.rs exceeds {MAX_O3_RUNTIME_PENDING_ADDRESS_THREE_PENDING_TEST_LINES} lines"
+    );
+    assert!(
         line_count(&test_root_path)
             + line_count(&staging_test_path)
             + line_count(&scheduling_test_path)
             + line_count(&lifecycle_test_path)
             + line_count(&multiple_test_path)
+            + line_count(&three_pending_test_path)
             < MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FAMILY_LINES,
         "pending-address test family must remain below {MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FAMILY_LINES} lines"
     );
@@ -1037,10 +1062,19 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     );
     assert_eq!(
         pending_set_code
-            .matches("pub(super) const O3_PENDING_DATA_ADDRESS_CAPACITY: usize = 2;")
+            .matches("pub(crate) const O3_PENDING_DATA_ADDRESS_CAPACITY: usize = 3;")
             .count(),
         1,
-        "pending-address set owner must define the exact capacity-two constant"
+        "pending-address set owner must define the exact capacity-three constant"
+    );
+    assert_eq!(
+        runtime_code
+            .matches(
+                "pub(crate) use o3_runtime_pending_address_set::O3_PENDING_DATA_ADDRESS_CAPACITY;"
+            )
+            .count(),
+        1,
+        "o3_runtime.rs must re-export the pending-address capacity exactly once"
     );
     assert_eq!(
         pending_set_code
@@ -1341,7 +1375,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "live_issue_capacities_after_reservations",
     )
     .unwrap();
-    assert!(capacities.contains("1_usize.saturating_sub(reservations.memory)"));
+    assert!(capacities.contains("memory_issue_width.saturating_sub(reservations.memory)"));
     let wake_window =
         rust_function_definition(&retire_code, "wake_o3_data_access_younger_window").unwrap();
     for anchor in [
@@ -1376,10 +1410,28 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let stage_child_definition =
         rust_function_definition(&stage_child_code, "stage_dependent_result_address_window")
             .unwrap();
+    assert!(
+        stage_child.contains(
+            "o3_runtime::{O3PendingDataAddressRequest, O3_PENDING_DATA_ADDRESS_CAPACITY}"
+        ),
+        "live-retire staging must import pending-address capacity through crate::o3_runtime"
+    );
+    assert!(
+        !stage_child.contains(
+            "o3_runtime_pending_address_set::O3_PENDING_DATA_ADDRESS_CAPACITY"
+        ),
+        "live-retire staging must not import pending-address capacity from the private child module"
+    );
     for anchor in [
         "let mut predecessor = head_completed.last_consumed_request();",
-        "let mut requests = Vec::with_capacity(2);",
-        "for _ in 0..2 {",
+        "let pending_capacity = O3_PENDING_DATA_ADDRESS_CAPACITY;",
+        "let scheduled_capacity = state",
+        ".scalar_memory_window_limit()",
+        ".saturating_sub(1);",
+        "let mut requests = Vec::with_capacity(pending_capacity);",
+        "for _ in 0..pending_capacity {",
+        "let mut scheduled = Vec::with_capacity(scheduled_capacity);",
+        "let mut result_destinations = Vec::with_capacity(pending_capacity + 1);",
         "dependent_authorization(state, dependent.first_consumed_request())",
         "O3PendingDataAddressRequest::new(",
         "predecessor,",
@@ -1474,7 +1526,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     }
 
     let expected_multiple_tests = [
-        "two_pending_collection_orders_by_sequence_and_rejects_third",
+        "pending_address_collection_orders_by_sequence_and_rejects_fourth",
         "two_pending_sibling_stages_two_addressless_lsq_rows_and_one_suffix",
         "two_pending_chain_stages_second_with_first_as_immediate_producer",
         "two_pending_staging_failure_rolls_back_both_rows_and_rename",
@@ -1506,6 +1558,33 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
             "missing or duplicated pending-address multiple-row test `{anchor}`"
         );
     }
+
+    let expected_three_pending_tests = [
+        "three_pending_staging_allocates_three_addressless_lsq_rows",
+        "three_pending_sibling_width_one_issues_in_sequence",
+        "three_pending_sibling_width_two_issues_two_then_one",
+        "three_pending_sibling_width_four_issues_all_three_together",
+        "three_pending_chain_waits_for_each_admitted_writeback",
+        "three_pending_mixed_fanout_coissues_two_and_blocks_third",
+        "three_pending_resource_wake_updates_only_the_blocked_suffix",
+        "three_pending_replay_from_middle_preserves_older_and_discards_younger",
+        "three_pending_interrupt_reset_htm_and_mode_cleanup_remove_all_rows",
+        "three_pending_live_checkpoint_and_addressless_handoff_reject",
+    ];
+    let three_pending_test_code = rust_code_without_comments_and_literals(&three_pending_test);
+    assert!(three_pending_test_code.contains("use super::*;"));
+    assert_eq!(
+        three_pending_test_code.matches("#[test]").count(),
+        expected_three_pending_tests.len(),
+        "pending-address three-pending tests must expose exactly the Task 3 inventory"
+    );
+    for anchor in expected_three_pending_tests {
+        assert_eq!(
+            rust_function_definition_count(&three_pending_test_code, anchor),
+            1,
+            "missing or duplicated pending-address three-pending test `{anchor}`"
+        );
+    }
 }
 
 #[test]
@@ -1521,6 +1600,8 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
     let issue_test_path = crate_dir.join("src/riscv_data_issue_tests/dependent_result_address.rs");
     let issue_multiple_test_path =
         crate_dir.join("src/riscv_data_issue_tests/dependent_result_address_multiple.rs");
+    let issue_three_pending_test_path =
+        crate_dir.join("src/riscv_data_issue_tests/dependent_result_address_three_pending.rs");
     let memory_path = crate_dir.join("src/o3_runtime_memory.rs");
     let pending_path = crate_dir.join("src/o3_runtime_pending_address.rs");
     let pending_set_path = crate_dir.join("src/o3_runtime_pending_address_set.rs");
@@ -1534,6 +1615,7 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
         &issue_test_root_path,
         &issue_test_path,
         &issue_multiple_test_path,
+        &issue_three_pending_test_path,
         &memory_path,
         &pending_path,
         &pending_set_path,
@@ -1550,6 +1632,7 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
     let issue_test_root = fs::read_to_string(&issue_test_root_path).unwrap();
     let issue_test = fs::read_to_string(&issue_test_path).unwrap();
     let issue_multiple_test = fs::read_to_string(&issue_multiple_test_path).unwrap();
+    let issue_three_pending_test = fs::read_to_string(&issue_three_pending_test_path).unwrap();
     let memory = fs::read_to_string(&memory_path).unwrap();
     let pending = fs::read_to_string(&pending_path).unwrap();
     let pending_set = fs::read_to_string(&pending_set_path).unwrap();
@@ -1583,10 +1666,19 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
         ),
         1
     );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &issue_test_root,
+            "riscv_data_issue_tests/dependent_result_address_three_pending.rs",
+            "dependent_result_address_three_pending",
+        ),
+        1
+    );
     assert!(include_macro_lines(&unissued).is_empty());
     assert!(include_macro_lines(&issue_child).is_empty());
     assert!(include_macro_lines(&issue_test).is_empty());
     assert!(include_macro_lines(&issue_multiple_test).is_empty());
+    assert!(include_macro_lines(&issue_three_pending_test).is_empty());
     assert!(
         external_module_declaration_lines(&unissued).is_empty()
             && path_attribute_lines(&unissued).is_empty()
@@ -1596,6 +1688,8 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
             && path_attribute_lines(&issue_test).is_empty()
             && external_module_declaration_lines(&issue_multiple_test).is_empty()
             && path_attribute_lines(&issue_multiple_test).is_empty()
+            && external_module_declaration_lines(&issue_three_pending_test).is_empty()
+            && path_attribute_lines(&issue_three_pending_test).is_empty()
     );
     assert!(line_count(&unissued_path) <= MAX_RISCV_UNISSUED_DATA_LINES);
     assert!(line_count(&issue_child_path) <= MAX_RISCV_DEPENDENT_RESULT_ADDRESS_ISSUE_LINES);
@@ -1603,6 +1697,10 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
     assert!(
         line_count(&issue_multiple_test_path)
             <= MAX_RISCV_DEPENDENT_RESULT_ADDRESS_MULTIPLE_ISSUE_TEST_LINES
+    );
+    assert!(
+        line_count(&issue_three_pending_test_path)
+            <= MAX_RISCV_DEPENDENT_RESULT_ADDRESS_THREE_PENDING_ISSUE_TEST_LINES
     );
 
     let translation_code = production_rust_source(&translation_root);
@@ -1776,6 +1874,26 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
     for test in expected_multiple_tests {
         assert_eq!(
             rust_function_definition_count(&issue_multiple_test_code, test),
+            1
+        );
+    }
+    let expected_three_pending_tests = [
+        "three_pending_unissued_selector_returns_oldest_materialized_first",
+        "three_pending_bind_removes_exact_rows_in_sequence",
+        "three_pending_first_replay_discards_complete_suffix",
+        "three_pending_middle_replay_preserves_first_live_access",
+        "three_pending_last_replay_preserves_two_older_live_accesses",
+        "three_pending_atomic_root_range_applies_to_every_descendant",
+    ];
+    let issue_three_pending_test_code =
+        rust_code_without_comments_and_literals(&issue_three_pending_test);
+    assert_eq!(
+        issue_three_pending_test_code.matches("#[test]").count(),
+        expected_three_pending_tests.len()
+    );
+    for test in expected_three_pending_tests {
+        assert_eq!(
+            rust_function_definition_count(&issue_three_pending_test_code, test),
             1
         );
     }
@@ -1994,10 +2112,10 @@ fn task8_dependent_result_address_production_ownership_is_final() {
     );
     assert_eq!(
         pending_set_owner
-            .matches("pub(super) const O3_PENDING_DATA_ADDRESS_CAPACITY: usize = 2;")
+            .matches("pub(crate) const O3_PENDING_DATA_ADDRESS_CAPACITY: usize = 3;")
             .count(),
         1,
-        "the pending-address collection must have one exact capacity-two constant"
+        "the pending-address collection must have one exact capacity-three constant"
     );
     assert_eq!(
         production
@@ -2008,6 +2126,15 @@ fn task8_dependent_result_address_production_ownership_is_final() {
             .sum::<usize>(),
         1,
         "production must declare exactly one O3_PENDING_DATA_ADDRESS_CAPACITY constant"
+    );
+    assert_eq!(
+        runtime_owner
+            .matches(
+                "pub(crate) use o3_runtime_pending_address_set::O3_PENDING_DATA_ADDRESS_CAPACITY;"
+            )
+            .count(),
+        1,
+        "o3_runtime.rs must expose exactly one crate-visible capacity re-export"
     );
     assert_eq!(
         pending_set_owner
@@ -2484,6 +2611,8 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
         crate_dir.join("src/riscv_fetch_ahead/tests/dependent_result_address.rs");
     let dependent_address_two_pending_test_path =
         crate_dir.join("src/riscv_fetch_ahead/tests/dependent_result_address_two_pending.rs");
+    let dependent_address_three_pending_test_path =
+        crate_dir.join("src/riscv_fetch_ahead/tests/dependent_result_address_three_pending.rs");
     let root = fs::read_to_string(&root_path).unwrap();
     let fetch_tests_root = fs::read_to_string(&fetch_tests_root_path).unwrap();
 
@@ -2672,6 +2801,13 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
         1,
         "fetch-ahead tests must attach dependent_result_address_two_pending exactly once"
     );
+    assert_eq!(
+        rust_code_without_comments_and_literals(&fetch_tests_root)
+            .matches("mod dependent_result_address_three_pending;")
+            .count(),
+        1,
+        "fetch-ahead tests must attach dependent_result_address_three_pending exactly once"
+    );
     assert!(dependent_address_test_path.is_file());
     let dependent_address_test_source = fs::read_to_string(&dependent_address_test_path).unwrap();
     assert!(include_macro_lines(&dependent_address_test_source).is_empty());
@@ -2728,7 +2864,7 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
     let expected_two_pending_tests = [
         "dependent_address_two_pending_authorizes_sibling_loads_before_suffix",
         "dependent_address_two_pending_authorizes_one_deep_chain_before_suffix",
-        "dependent_address_two_pending_rejects_third_unresolved_load",
+        "dependent_address_depth_three_rejects_a_second_pending_row",
         "dependent_address_two_pending_rejects_duplicate_self_cycle_and_unrelated_graphs",
         "dependent_address_two_pending_window_records_both_authorizations",
         "dependent_address_two_pending_split_fetch_uses_previous_last_request",
@@ -2745,6 +2881,42 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
             rust_function_definition_count(&two_pending_test, anchor),
             1,
             "missing or duplicated two-pending dependent-result address fetch test `{anchor}`"
+        );
+    }
+
+    assert!(dependent_address_three_pending_test_path.is_file());
+    let three_pending_test_source =
+        fs::read_to_string(&dependent_address_three_pending_test_path).unwrap();
+    assert!(include_macro_lines(&three_pending_test_source).is_empty());
+    assert!(
+        line_count(&dependent_address_three_pending_test_path)
+            <= MAX_RISCV_DEPENDENT_RESULT_ADDRESS_THREE_PENDING_FETCH_TEST_LINES,
+        "dependent_result_address_three_pending.rs exceeds {MAX_RISCV_DEPENDENT_RESULT_ADDRESS_THREE_PENDING_FETCH_TEST_LINES} lines"
+    );
+    let three_pending_test = rust_code_without_comments_and_literals(&three_pending_test_source);
+    assert!(
+        external_module_declaration_lines(&three_pending_test_source).is_empty()
+            && path_attribute_lines(&three_pending_test_source).is_empty(),
+        "three-pending dependent-result address fetch tests must remain a leaf child"
+    );
+    let expected_three_pending_tests = [
+        "dependent_address_three_pending_authorizes_siblings_at_depth_four",
+        "dependent_address_three_pending_authorizes_full_chain_at_depth_four",
+        "dependent_address_three_pending_authorizes_mixed_fanout_at_depth_four",
+        "dependent_address_three_pending_rejects_fourth_and_nonadjacent_graphs",
+        "dependent_address_three_pending_window_records_three_split_fetch_authorizations",
+        "dependent_address_three_pending_rejects_late_memory_after_scalar_start",
+    ];
+    assert_eq!(
+        three_pending_test.matches("#[test]").count(),
+        expected_three_pending_tests.len(),
+        "three-pending dependent-result address fetch tests must expose exactly the focused inventory"
+    );
+    for anchor in expected_three_pending_tests {
+        assert_eq!(
+            rust_function_definition_count(&three_pending_test, anchor),
+            1,
+            "missing or duplicated three-pending dependent-result address fetch test `{anchor}`"
         );
     }
 

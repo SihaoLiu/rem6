@@ -23,8 +23,7 @@ impl O3RuntimeState {
         let pending = pending.into_iter().collect::<Vec<_>>();
         if pending.is_empty()
             || pending.len() > O3_PENDING_DATA_ADDRESS_CAPACITY
-            || (pending.len() == O3_PENDING_DATA_ADDRESS_CAPACITY
-                && self.scalar_memory_window_limit < 4)
+            || (pending.len() >= 2 && self.scalar_memory_window_limit < 4)
         {
             return 0;
         }
@@ -50,7 +49,8 @@ impl O3RuntimeState {
     ) -> Option<usize> {
         let (head_destination, _) = self.pending_data_address_head_metadata(head_fetch)?;
         let pending_count = pending.len();
-        let mut result_destinations = vec![head_destination];
+        let mut result_destinations = Vec::with_capacity(O3_PENDING_DATA_ADDRESS_CAPACITY + 1);
+        result_destinations.push(head_destination);
         let mut previous_consumed_request = None;
         for pending in pending {
             if previous_consumed_request.is_some()
