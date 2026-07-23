@@ -406,7 +406,9 @@ impl RiscvCluster {
             if core.has_pending_trap() {
                 continue;
             }
-            if !pending_data_blocks && core.has_unissued_data_access() {
+            if (!pending_data_blocks || core.has_issuable_pending_data_address())
+                && core.has_unissued_data_access()
+            {
                 let prepared = core
                     .prepare_data_parallel_access(
                         scheduler.now(),
@@ -541,7 +543,9 @@ impl RiscvCluster {
             if core.has_pending_trap() {
                 continue;
             }
-            if !pending_data_blocks && core.has_unissued_data_access() {
+            if (!pending_data_blocks || core.has_issuable_pending_data_address())
+                && core.has_unissued_data_access()
+            {
                 let prepared = core
                     .prepare_data_parallel_access(
                         scheduler.now(),
@@ -1062,7 +1066,9 @@ impl RiscvCluster {
             if core.has_pending_trap() {
                 continue;
             }
-            if !pending_data_blocks && core.has_unissued_data_access() {
+            if (!pending_data_blocks || core.has_issuable_pending_data_address())
+                && core.has_unissued_data_access()
+            {
                 if core
                     .next_unissued_data_access_targets_mmio(bus)
                     .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
@@ -1188,7 +1194,9 @@ impl RiscvCluster {
             if core.has_pending_trap() {
                 continue;
             }
-            if !pending_data_blocks && core.has_unissued_data_access() {
+            if (!pending_data_blocks || core.has_issuable_pending_data_address())
+                && core.has_unissued_data_access()
+            {
                 if core
                     .next_unissued_data_access_targets_mmio(bus)
                     .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?

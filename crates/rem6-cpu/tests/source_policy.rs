@@ -1880,6 +1880,7 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
     let expected_three_pending_tests = [
         "three_pending_unissued_selector_returns_oldest_materialized_first",
         "three_pending_bind_removes_exact_rows_in_sequence",
+        "selected_three_pending_addresses_remain_driveable_between_submissions",
         "three_pending_first_replay_discards_complete_suffix",
         "three_pending_middle_replay_preserves_first_live_access",
         "three_pending_last_replay_preserves_two_older_live_accesses",

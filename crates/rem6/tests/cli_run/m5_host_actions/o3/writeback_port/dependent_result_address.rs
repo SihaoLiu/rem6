@@ -11,6 +11,9 @@ mod boundaries;
 #[path = "dependent_result_address/two_pending.rs"]
 mod two_pending;
 
+#[path = "dependent_result_address/three_pending.rs"]
+mod three_pending;
+
 const HEAD_PC: &str = "0x80000030";
 const DEPENDENT_PC: &str = "0x80000034";
 const SCALAR_PC: &str = "0x80000038";

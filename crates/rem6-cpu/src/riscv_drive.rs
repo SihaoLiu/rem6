@@ -29,12 +29,14 @@ impl RiscvCore {
         if self.has_pending_trap() {
             return Ok(None);
         }
-        if !pending_data_blocks {
+        if !pending_data_blocks || self.has_issuable_pending_data_address() {
             if let Some(event) =
                 self.issue_next_data_access(scheduler, transport, data_trace, data_responder)?
             {
                 return Ok(Some(RiscvCoreDriveAction::DataAccessIssued { event }));
             }
+        }
+        if !pending_data_blocks {
             self.sync_in_order_fetch_state()?;
             if self.core.has_pending_fetch() {
                 if !self.can_retire_completed_fetch_while_fetch_pending()? {

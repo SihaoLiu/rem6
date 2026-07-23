@@ -2,6 +2,7 @@ use super::*;
 
 use super::dependent_result_address::materialized_load;
 use crate::o3_runtime::{O3DataAccessWindowPolicy, O3PendingDataAddressRequest};
+use crate::RiscvCoreDriveAction;
 use rem6_isa_riscv::RiscvInstruction;
 
 const HEAD_PC: u64 = 0x8000;
@@ -143,6 +144,27 @@ impl ThreePendingIssueFixture {
             .is_some()
     }
 
+    fn pending_data_blocks_new_work(&self) -> bool {
+        self.core.pending_data_access_blocks_new_work()
+    }
+
+    fn has_issuable_pending_data_address(&self) -> bool {
+        self.core.has_issuable_pending_data_address()
+    }
+
+    fn drive(&mut self) -> Option<RiscvCoreDriveAction> {
+        self.core
+            .drive_next_action(
+                &mut self.scheduler,
+                &self.transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                |_delivery, _context| TargetOutcome::NoResponse,
+                |_delivery, _context| TargetOutcome::NoResponse,
+            )
+            .unwrap()
+    }
+
     fn assert_live_count_and_pending(&self, live: usize, pending: usize) {
         let state = self.core.state.lock().expect("riscv core lock");
         assert_eq!(state.o3_runtime.live_data_access_count_for_test(), live);
@@ -244,6 +266,25 @@ fn three_pending_bind_removes_exact_rows_in_sequence() {
         .iter()
         .filter(|entry| fixture.sequences.contains(&entry.sequence()))
         .all(|entry| entry.address().is_some()));
+}
+
+#[test]
+fn selected_three_pending_addresses_remain_driveable_between_submissions() {
+    let mut fixture =
+        ThreePendingIssueFixture::new([0x9000, 0x9008, 0x9010], [true, true, true], false);
+
+    for pending_after_issue in [2, 1, 0] {
+        assert!(matches!(
+            fixture.drive(),
+            Some(RiscvCoreDriveAction::DataAccessIssued { .. })
+        ));
+        fixture.assert_live_count_and_pending(4 - pending_after_issue, pending_after_issue);
+        assert!(fixture.pending_data_blocks_new_work());
+        assert_eq!(
+            fixture.has_issuable_pending_data_address(),
+            pending_after_issue != 0
+        );
+    }
 }
 
 #[test]

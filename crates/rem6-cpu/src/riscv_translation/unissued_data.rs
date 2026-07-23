@@ -1,6 +1,14 @@
 use super::*;
 
 impl RiscvCoreState {
+    pub(crate) fn has_issuable_pending_data_address(&self) -> bool {
+        self.next_unissued_data_access()
+            .is_some_and(|(fetch_request, _)| {
+                self.o3_runtime
+                    .pending_data_address_owns_fetch(fetch_request)
+            })
+    }
+
     pub(crate) fn next_unissued_data_access(
         &self,
     ) -> Option<(MemoryRequestId, rem6_isa_riscv::MemoryAccessKind)> {

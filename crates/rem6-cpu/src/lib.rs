@@ -428,6 +428,13 @@ impl RiscvCore {
             && !state.can_extend_detailed_memory_result_window()
     }
 
+    pub(crate) fn has_issuable_pending_data_address(&self) -> bool {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .has_issuable_pending_data_address()
+    }
+
     pub fn data_access_lifecycle_is_quiescent(&self) -> bool {
         let state = self.state.lock().expect("riscv core lock");
         state.pending_callback_error.is_none()
