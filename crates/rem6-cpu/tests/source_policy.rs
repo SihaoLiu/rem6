@@ -2550,6 +2550,10 @@ fn o3_data_access_younger_window_has_focused_owners() {
         crate_dir.join("src/riscv_fetch_ahead/detailed_o3/data_access_result.rs"),
     )
     .unwrap();
+    let data_access_result_translation = fs::read_to_string(
+        crate_dir.join("src/riscv_fetch_ahead/detailed_o3/data_access_result_translation.rs"),
+    )
+    .unwrap();
     let fetch_driver =
         fs::read_to_string(crate_dir.join("src/riscv_fetch_ahead/driver.rs")).unwrap();
     let cluster_translation =
@@ -2567,11 +2571,17 @@ fn o3_data_access_younger_window_has_focused_owners() {
             &data_access_result,
             "fn data_access_result_fetch_ahead_shape(",
         ),
-        (&data_access_result, "fn data_access_result_head_probe("),
-        (&data_access_result, "masked_vector_memory_request_span("),
-        (&data_access_result, "fault_only_first: false"),
         (
-            &data_access_result,
+            &data_access_result_translation,
+            "fn data_access_result_head_probe(",
+        ),
+        (
+            &data_access_result_translation,
+            "masked_vector_memory_request_span(",
+        ),
+        (&data_access_result_translation, "fault_only_first: false"),
+        (
+            &data_access_result_translation,
             "pub(in crate::riscv_fetch_ahead) fn data_access_result_head_physical_probe(",
         ),
         (
