@@ -77,8 +77,10 @@ const MAX_RISCV_O3_WRITEBACK_WAKE_LINES: usize = 800;
 const MAX_RISCV_DATA_ISSUE_TEST_ROOT_LINES: usize = 1500;
 const MAX_RISCV_DATA_ISSUE_LIFECYCLE_TEST_LINES: usize = 450;
 const MAX_RISCV_O3_RESULT_PAIR_ADMISSION_LINES: usize = 300;
+const MAX_RISCV_TRANSLATED_RESULT_PAIR_TRANSLATION_LINES: usize = 500;
 const MAX_RISCV_TRANSLATED_RESULT_PAIR_ISSUE_TEST_LINES: usize = 450;
 const MAX_RISCV_TRANSLATED_RESULT_PAIR_ISSUE_FIXTURE_LINES: usize = 400;
+const MAX_RISCV_TRANSLATED_RESULT_PAIR_ISSUE_REVIEW_LINES: usize = 160;
 const MAX_RISCV_FAILURE_DIAGNOSTIC_LINES: usize = 300;
 const MAX_RISCV_PRODUCER_FORWARDED_DESCENDANT_LINES: usize = 120;
 const MAX_SOURCE_LINES: usize = 1800;
@@ -234,23 +236,40 @@ fn o3_translated_result_pair_issue_admission_has_focused_ownership() {
         src_dir.join("o3_runtime_memory_result_tests/translated_mmio_result_pair.rs");
     let issue_root_path = src_dir.join("riscv_data_issue.rs");
     let progress_owner_path = src_dir.join("riscv_data_issue/o3_result_pair_admission.rs");
+    let translation_root_path = src_dir.join("riscv_translation.rs");
+    let translation_owner_path = src_dir.join("riscv_translation/o3_result_pair.rs");
     let issue_test_root_path = src_dir.join("riscv_data_issue_tests.rs");
     let issue_test_path = src_dir.join("riscv_data_issue_tests/translated_mmio_result_pair.rs");
     let issue_test_fixture_path =
         src_dir.join("riscv_data_issue_tests/translated_mmio_result_pair/fixture.rs");
+    let issue_test_review_path =
+        src_dir.join("riscv_data_issue_tests/translated_mmio_result_pair/review_boundaries.rs");
     let window_path = src_dir.join("riscv_memory_result_window.rs");
 
     let o3_root = fs::read_to_string(&o3_root_path).unwrap();
     let runtime_test_root = fs::read_to_string(&runtime_test_root_path).unwrap();
     let issue_root = fs::read_to_string(&issue_root_path).unwrap();
+    let translation_root = fs::read_to_string(&translation_root_path).unwrap();
     let issue_test_root = fs::read_to_string(&issue_test_root_path).unwrap();
-    assert!(o3_root.contains(
-        "#[path = \"o3_runtime_memory_result_admission.rs\"]\nmod o3_runtime_memory_result_admission;"
-    ));
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &o3_root,
+            "o3_runtime_memory_result_admission.rs",
+            "o3_runtime_memory_result_admission",
+        ),
+        1
+    );
     assert!(runtime_test_root.contains(
         "#[path = \"o3_runtime_memory_result_tests/translated_mmio_result_pair.rs\"]\nmod translated_mmio_result_pair;"
     ));
-    assert!(issue_root.contains("mod o3_result_pair_admission;"));
+    assert_eq!(
+        top_level_external_module_declaration_count(&issue_root, "o3_result_pair_admission"),
+        1
+    );
+    assert_eq!(
+        top_level_external_module_declaration_count(&translation_root, "o3_result_pair"),
+        1
+    );
     assert!(issue_root.contains(
         "#[cfg(test)]\n#[path = \"riscv_data_issue_tests.rs\"]\nmod riscv_data_issue_tests;"
     ));
@@ -263,8 +282,10 @@ fn o3_translated_result_pair_issue_admission_has_focused_ownership() {
         &calendar_path,
         &runtime_test_path,
         &progress_owner_path,
+        &translation_owner_path,
         &issue_test_path,
         &issue_test_fixture_path,
+        &issue_test_review_path,
         &window_path,
     ] {
         assert!(path.is_file(), "missing focused owner {}", path.display());
@@ -272,10 +293,25 @@ fn o3_translated_result_pair_issue_admission_has_focused_ownership() {
     assert!(line_count(&o3_owner_path) <= MAX_O3_RUNTIME_MEMORY_RESULT_ADMISSION_LINES);
     assert!(line_count(&runtime_test_path) <= MAX_O3_RUNTIME_TRANSLATED_RESULT_PAIR_TEST_LINES);
     assert!(line_count(&progress_owner_path) <= MAX_RISCV_O3_RESULT_PAIR_ADMISSION_LINES);
+    assert!(
+        line_count(&translation_owner_path) <= MAX_RISCV_TRANSLATED_RESULT_PAIR_TRANSLATION_LINES
+    );
+    for owner_path in [
+        &o3_owner_path,
+        &progress_owner_path,
+        &translation_owner_path,
+    ] {
+        let owner = fs::read_to_string(owner_path).unwrap();
+        assert!(include_macro_lines(&owner).is_empty());
+        assert!(external_module_declaration_lines(&owner).is_empty());
+    }
     assert!(line_count(&issue_test_path) <= MAX_RISCV_TRANSLATED_RESULT_PAIR_ISSUE_TEST_LINES);
     assert!(
         line_count(&issue_test_fixture_path)
             <= MAX_RISCV_TRANSLATED_RESULT_PAIR_ISSUE_FIXTURE_LINES
+    );
+    assert!(
+        line_count(&issue_test_review_path) <= MAX_RISCV_TRANSLATED_RESULT_PAIR_ISSUE_REVIEW_LINES
     );
 
     let runtime_tests = fs::read_to_string(&runtime_test_path).unwrap();
@@ -284,8 +320,8 @@ fn o3_translated_result_pair_issue_admission_has_focused_ownership() {
 
     let issue_tests = fs::read_to_string(&issue_test_path).unwrap();
     assert!(include_macro_lines(&issue_tests).is_empty());
-    assert_eq!(path_attribute_lines(&issue_tests).len(), 1);
-    assert_eq!(external_module_declaration_lines(&issue_tests).len(), 1);
+    assert_eq!(path_attribute_lines(&issue_tests).len(), 2);
+    assert_eq!(external_module_declaration_lines(&issue_tests).len(), 2);
     assert_eq!(
         path_owned_module_declaration_count(
             &issue_tests,
@@ -294,11 +330,23 @@ fn o3_translated_result_pair_issue_admission_has_focused_ownership() {
         ),
         1
     );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &issue_tests,
+            "translated_mmio_result_pair/review_boundaries.rs",
+            "review_boundaries",
+        ),
+        1
+    );
 
     let issue_test_fixture = fs::read_to_string(&issue_test_fixture_path).unwrap();
     assert!(include_macro_lines(&issue_test_fixture).is_empty());
     assert!(path_attribute_lines(&issue_test_fixture).is_empty());
     assert!(external_module_declaration_lines(&issue_test_fixture).is_empty());
+    let issue_test_review = fs::read_to_string(&issue_test_review_path).unwrap();
+    assert!(include_macro_lines(&issue_test_review).is_empty());
+    assert!(path_attribute_lines(&issue_test_review).is_empty());
+    assert!(external_module_declaration_lines(&issue_test_review).is_empty());
 
     for test in [
         "translated_result_pair_memory_width_one_selects_the_next_tick",
@@ -326,12 +374,65 @@ fn o3_translated_result_pair_issue_admission_has_focused_ownership() {
     ] {
         assert_eq!(rust_test_function_definition_count(&issue_tests, test), 1);
     }
+    for test in [
+        "translated_result_pair_rejects_aliased_physical_ranges",
+        "translated_alias_waits_for_older_o3_retirement_after_response",
+        "serial_driver_rechecks_physical_alias_after_translation_completion",
+        "serial_translated_result_pair_wait_requests_selected_issue_tick",
+        "parallel_translated_result_pair_wait_requests_selected_issue_tick",
+    ] {
+        assert_eq!(
+            rust_test_function_definition_count(&issue_test_review, test),
+            1
+        );
+    }
 
     for (function, owner_path) in [
         ("next_memory_slot_at_or_after", &calendar_path),
+        ("memory_result_head_identity", &o3_owner_path),
         ("next_memory_result_issue_tick", &o3_owner_path),
         ("matches_exact_memory_result_head", &o3_owner_path),
+        ("sole_memory_result_head", &o3_owner_path),
+        (
+            "discard_live_staged_suffix_for_fetch_identity",
+            &o3_owner_path,
+        ),
+        (
+            "translated_result_pair_has_translation_work",
+            &progress_owner_path,
+        ),
         ("translated_result_pair_progress", &progress_owner_path),
+        (
+            "has_unbound_translated_result_state",
+            &translation_owner_path,
+        ),
+        (
+            "translated_result_pair_retry_wake_tick",
+            &translation_owner_path,
+        ),
+        (
+            "discard_translated_result_pair_from",
+            &translation_owner_path,
+        ),
+        (
+            "translated_result_authorization_is_pending",
+            &translation_owner_path,
+        ),
+        ("bind_translated_result_range", &translation_owner_path),
+        ("bind_translated_result_target", &translation_owner_path),
+        (
+            "translated_result_pair_prepare_result",
+            &translation_owner_path,
+        ),
+        (
+            "reject_uncacheable_translated_result_memory_target",
+            &translation_owner_path,
+        ),
+        (
+            "prepare_ready_translated_mmio_data_access",
+            &translation_owner_path,
+        ),
+        ("prepare_translated_data_access", &translation_owner_path),
         ("has_exact_translated_result_pair_window", &window_path),
     ] {
         let owner = production_rust_source(&fs::read_to_string(owner_path).unwrap());
@@ -2803,6 +2904,23 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
         ),
         "detailed_o3.rs must delegate result translation probing to the focused child"
     );
+    assert_eq!(
+        path_owned_module_path_declaration_count(
+            &root,
+            "detailed_o3/data_access_result_translation.rs"
+        ),
+        1,
+        "detailed_o3.rs must attach result translation probing exactly once"
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &root,
+            "detailed_o3/data_access_result_translation.rs",
+            "data_access_result_translation"
+        ),
+        1,
+        "detailed_o3.rs must declare result translation probing exactly once"
+    );
     assert!(
         root.contains(
             "#[path = \"detailed_o3/data_access_result_pair_policy.rs\"]\nmod data_access_result_pair_policy;"
@@ -3320,6 +3438,23 @@ fn riscv_memory_result_authorization_has_focused_ownership() {
         translated.lines().count() <= MAX_RISCV_MEMORY_RESULT_TRANSLATED_AUTHORIZATION_LINES,
         "memory_result_authorization/translated.rs exceeds {MAX_RISCV_MEMORY_RESULT_TRANSLATED_AUTHORIZATION_LINES} lines"
     );
+    assert_eq!(
+        path_owned_module_path_declaration_count(
+            &owner,
+            "memory_result_authorization/translated.rs"
+        ),
+        1,
+        "memory-result authorization must attach its translated child exactly once"
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &owner,
+            "memory_result_authorization/translated.rs",
+            "translated"
+        ),
+        1,
+        "memory-result authorization must declare its translated child exactly once"
+    );
     for anchor in [
         "#[path = \"memory_result_authorization/translated.rs\"]\nmod translated;",
         "enum O3MemoryResultWindowRoute",
@@ -3353,22 +3488,29 @@ fn riscv_memory_result_authorization_has_focused_ownership() {
             "riscv_fetch_ahead.rs still owns `{anchor}`"
         );
     }
-    for anchor in [
-        "const fn translated_unbound(",
-        "fn bind_translated(",
-        "fn bind_target(",
-        "const fn is_translated(",
-        "const fn virtual_range(",
-        "fn matches_virtual_range(",
-        "fn matches_bound_target(",
+    for method in [
+        "translated_unbound",
+        "bind_translated",
+        "bind_target",
+        "is_translated",
+        "virtual_range",
+        "matches_virtual_range",
+        "matches_bound_target",
     ] {
-        assert!(
-            translated.contains(anchor),
-            "translated memory-result authorization is missing `{anchor}`"
+        assert_eq!(
+            rust_function_definition_count(&production_rust_source(&translated), method),
+            1,
+            "translated memory-result authorization must define `{method}` exactly once"
         );
-        assert!(
-            !owner.contains(anchor) && !root.contains(anchor),
-            "translated authorization method escaped its focused child `{anchor}`"
+        assert_eq!(
+            rust_function_definition_count(&production_rust_source(&owner), method),
+            0,
+            "memory-result authorization parent must not define translated method `{method}`"
+        );
+        assert_eq!(
+            rust_function_definition_count(&production_rust_source(&root), method),
+            0,
+            "fetch-ahead root must not define translated method `{method}`"
         );
     }
     assert!(
@@ -7920,6 +8062,25 @@ fn external_module_declaration_name(line: &str) -> Option<&str> {
     let chars = name.chars().collect::<Vec<_>>();
     let (_, end) = rust_identifier_at(&chars, 0)?;
     (end == chars.len()).then_some(name)
+}
+
+fn top_level_external_module_declaration_count(source: &str, module: &str) -> usize {
+    let code = rust_code_without_comments_and_literals(source);
+    let mut depth = 0_i64;
+    code.lines()
+        .filter(|line| {
+            let top_level = depth == 0;
+            let matches = top_level && external_module_declaration_name(line) == Some(module);
+            for byte in line.bytes() {
+                match byte {
+                    b'{' => depth += 1,
+                    b'}' => depth -= 1,
+                    _ => {}
+                }
+            }
+            matches
+        })
+        .count()
 }
 
 fn production_rust_source(source: &str) -> String {

@@ -167,10 +167,6 @@ impl TranslatedMemoryMmioPairFixture {
         Self::with_delays(latency, 2)
     }
 
-    fn with_mmio_delay(delay: u64) -> Self {
-        Self::with_delays(0, delay)
-    }
-
     fn with_delays(translation_latency: u64, mmio_delay: u64) -> Self {
         let scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
         let mut transport = MemoryTransport::new();

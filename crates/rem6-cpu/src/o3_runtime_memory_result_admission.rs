@@ -38,6 +38,21 @@ impl O3RuntimeState {
         })
     }
 
+    pub(crate) fn discard_live_staged_suffix_for_fetch_identity(
+        &mut self,
+        pc: Address,
+        instruction: RiscvInstruction,
+        consumed_requests: &[MemoryRequestId],
+    ) -> bool {
+        let Some(sequence) =
+            self.live_staged_sequence_for_fetch_identity(pc, instruction, consumed_requests)
+        else {
+            return false;
+        };
+        self.discard_live_staged_window_from(sequence);
+        true
+    }
+
     pub(crate) fn next_memory_result_issue_tick(&self, earliest_tick: u64) -> Option<u64> {
         let head = self.sole_memory_result_head()?;
         if !self.can_consider_memory_result_younger() {

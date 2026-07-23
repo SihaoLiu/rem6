@@ -1,5 +1,6 @@
 use rem6_isa_riscv::{
-    MemoryWidth, RiscvInstruction, RiscvVectorMaskMode, RiscvVectorMemoryInstruction,
+    MemoryWidth, RiscvInstruction, RiscvVectorMaskMode,
+    RiscvVectorMemoryInstruction::LoadUnitStride,
 };
 
 use crate::{
@@ -44,21 +45,23 @@ pub(in crate::riscv_fetch_ahead) fn result_head_allows_younger_read(
 ) -> bool {
     let head_translated = head_authorization.is_translated();
     let younger_translated = younger_authorization.is_translated();
+    let translated_ranges_are_disjoint = head_authorization
+        .virtual_range()
+        .zip(younger_authorization.virtual_range())
+        .is_some_and(|(head, younger)| !head.overlaps(younger));
     if head_authorization.role() != O3MemoryResultWindowRole::Head
         || younger_authorization.role() != O3MemoryResultWindowRole::YoungerRead
         || ((head_translated || younger_translated)
             && (!head_translated
                 || !younger_translated
-                || !exact_translated_result_pair_shape(head, younger)))
+                || !exact_translated_result_pair_shape(head, younger)
+                || !translated_ranges_are_disjoint))
         || head_authorization
             .integer_destination()
             .is_some_and(|destination| {
                 let instruction = younger.decoded().instruction();
                 let mut sources = o3_scalar_integer_source_registers(&instruction);
-                if let RiscvInstruction::VectorMemory(
-                    RiscvVectorMemoryInstruction::LoadUnitStride { rs1, .. },
-                ) = instruction
-                {
+                if let RiscvInstruction::VectorMemory(LoadUnitStride { rs1, .. }) = instruction {
                     sources.push(rs1);
                 }
                 sources.contains(&destination)
@@ -68,14 +71,11 @@ pub(in crate::riscv_fetch_ahead) fn result_head_allows_younger_read(
     }
     let head_writes_v0 = matches!(
         head.decoded().instruction(),
-        RiscvInstruction::VectorMemory(RiscvVectorMemoryInstruction::LoadUnitStride {
-            vd,
-            ..
-        }) if vd.index() == 0
+        RiscvInstruction::VectorMemory(LoadUnitStride { vd, .. }) if vd.index() == 0
     );
     let younger_reads_v0 = matches!(
         younger.decoded().instruction(),
-        RiscvInstruction::VectorMemory(RiscvVectorMemoryInstruction::LoadUnitStride {
+        RiscvInstruction::VectorMemory(LoadUnitStride {
             mask: RiscvVectorMaskMode::Masked,
             ..
         })

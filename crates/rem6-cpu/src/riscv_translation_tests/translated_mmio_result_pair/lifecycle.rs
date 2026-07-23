@@ -4,7 +4,7 @@ use super::*;
 fn younger_translation_fault_preserves_older_request_and_allocates_no_younger_request() {
     let mut fixture = TranslatedMemoryMmioPairFixture::new();
     fixture.authorize_and_execute_head();
-    let older = issue_memory_head_no_response(&mut fixture);
+    let older = issue_memory_head_completed(&mut fixture);
     execute_younger(&mut fixture);
     fixture.page_map = page_map_without_younger();
 
@@ -20,6 +20,27 @@ fn younger_translation_fault_preserves_older_request_and_allocates_no_younger_re
     assert!(state.pending_data_translations.is_empty());
     assert!(state.ready_translated_data.is_empty());
     assert!(state.memory_result_window_authorizations.is_empty());
+    assert_only_older_live_row(&state);
+    drop(state);
+
+    assert!(fixture.core.take_pending_trap_event().is_none());
+    fixture.scheduler.run_until_idle_parallel().unwrap();
+    assert!(fixture.core.take_pending_trap_event().is_none());
+    let older_event = fixture
+        .core
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, true)
+        .expect("older translated result retires before younger fault");
+    assert_eq!(older_event.fetch_pc(), Address::new(HEAD_PC));
+    assert_eq!(fixture.core.read_register(reg(11)), HEAD_VALUE);
+    let trap = fixture
+        .core
+        .take_pending_trap_event()
+        .expect("younger fault becomes visible after older retirement");
+    assert_eq!(trap.fetch_pc(), Address::new(YOUNGER_PC));
+    assert!(matches!(
+        trap.execution().trap().map(|trap| trap.kind()),
+        Some(rem6_isa_riscv::RiscvTrapKind::LoadPageFault { .. })
+    ));
 }
 
 #[test]
@@ -32,6 +53,7 @@ fn younger_target_mismatch_preserves_older_request_and_allocates_no_younger_requ
         .core
         .advance_next_data_translation(fixture.scheduler.now(), &fixture.page_map)
         .unwrap();
+    prime_ready_younger_lookahead(&fixture);
     let younger_fetch = {
         let mut state = fixture.core.state.lock().expect("riscv core lock");
         let younger_fetch = *state.ready_translated_data.keys().next().unwrap();
@@ -61,6 +83,7 @@ fn younger_target_mismatch_preserves_older_request_and_allocates_no_younger_requ
     assert!(state.pending_data_translations.is_empty());
     assert!(state.ready_translated_data.is_empty());
     assert!(state.memory_result_window_authorizations.is_empty());
+    assert_only_older_live_row(&state);
 }
 
 #[test]
@@ -79,7 +102,7 @@ fn translated_suffix_cleanup_preserves_other_agent_authorization() {
         .memory_result_window_authorizations
         .insert(unrelated_request, unrelated_authorization);
 
-    state.discard_translated_result_pair_from(request(0));
+    state.discard_translated_result_pair_from(request(1));
 
     assert_eq!(
         state
@@ -87,7 +110,7 @@ fn translated_suffix_cleanup_preserves_other_agent_authorization() {
             .keys()
             .copied()
             .collect::<Vec<_>>(),
-        vec![unrelated_request]
+        vec![request(0), unrelated_request]
     );
 }
 
@@ -127,14 +150,11 @@ fn older_retry_discards_younger_translation_and_ignores_stale_completion() {
 
 #[test]
 fn younger_retry_preserves_completed_older_result() {
-    let mut fixture = TranslatedMemoryMmioPairFixture::with_mmio_delay(20);
-    fixture
-        .core
-        .write_register(reg(3), YOUNGER_VIRTUAL_ADDRESS + 8);
+    let mut fixture = TranslatedMemoryMmioPairFixture::new();
     fixture.authorize_and_execute_head();
     let older = issue_memory_head_completed(&mut fixture);
     execute_younger(&mut fixture);
-    let younger = issue_younger_mmio(&mut fixture);
+    let younger = issue_younger_memory_retry(&mut fixture);
     assert_ne!(older, younger);
     assert_state_counts(&fixture.core, 2, 0, 0, 0, 0);
 
@@ -156,6 +176,101 @@ fn younger_retry_preserves_completed_older_result() {
         .expect("completed older result remains publishable");
     assert_eq!(older_event.fetch_pc(), Address::new(HEAD_PC));
     assert_eq!(fixture.core.read_register(reg(11)), HEAD_VALUE);
+}
+
+#[test]
+fn younger_pma_failure_discards_ready_translation_and_live_suffix() {
+    let mut fixture = TranslatedMemoryMmioPairFixture::new();
+    fixture.authorize_and_execute_head();
+    let older = issue_memory_head_no_response(&mut fixture);
+    execute_younger(&mut fixture);
+    fixture
+        .core
+        .advance_next_data_translation(fixture.scheduler.now(), &fixture.page_map)
+        .unwrap();
+    {
+        let mut state = fixture.core.state.lock().expect("riscv core lock");
+        state
+            .ready_translated_data
+            .values_mut()
+            .next()
+            .unwrap()
+            .physical_address = Address::new(MMIO_PHYSICAL_ADDRESS + 1);
+    }
+    prime_ready_younger_lookahead(&fixture);
+
+    let error = fixture
+        .core
+        .issue_next_translated_mmio_data_access_parallel(
+            &mut fixture.scheduler,
+            &fixture.bus,
+            &fixture.page_map,
+        )
+        .unwrap_err();
+    assert!(matches!(error, RiscvCpuError::DataPmaAccess { .. }));
+    let state = fixture.core.state.lock().expect("riscv core lock");
+    assert_eq!(
+        state.outstanding_data.keys().copied().collect::<Vec<_>>(),
+        vec![older]
+    );
+    assert!(state.ready_translated_data.is_empty());
+    assert!(state.memory_result_window_authorizations.is_empty());
+    assert_only_older_live_row(&state);
+}
+
+#[test]
+fn uncacheable_unmapped_younger_target_fails_before_memory_submission() {
+    let mut fixture = TranslatedMemoryMmioPairFixture::new();
+    fixture.authorize_and_execute_head();
+    let older = issue_memory_head_no_response(&mut fixture);
+    execute_younger(&mut fixture);
+    fixture
+        .core
+        .advance_next_data_translation(fixture.scheduler.now(), &fixture.page_map)
+        .unwrap();
+    fixture
+        .core
+        .add_pma_uncacheable_range(
+            rem6_isa_riscv::RiscvPmaRange::new(
+                MMIO_PHYSICAL_ADDRESS,
+                MMIO_PHYSICAL_ADDRESS + 0x100,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    prime_ready_younger_lookahead(&fixture);
+    assert!(fixture
+        .core
+        .issue_next_translated_mmio_data_access_parallel(
+            &mut fixture.scheduler,
+            &MmioBus::new(),
+            &fixture.page_map,
+        )
+        .unwrap()
+        .is_none());
+
+    let error = fixture
+        .core
+        .issue_next_translated_data_access_parallel(
+            &mut fixture.scheduler,
+            &fixture.transport,
+            MemoryTrace::new(),
+            &fixture.page_map,
+            |_, _| TargetOutcome::NoResponse,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        RiscvCpuError::TranslatedResultAuthorizationMismatch { .. }
+    ));
+    let state = fixture.core.state.lock().expect("riscv core lock");
+    assert_eq!(
+        state.outstanding_data.keys().copied().collect::<Vec<_>>(),
+        vec![older]
+    );
+    assert!(state.ready_translated_data.is_empty());
+    assert!(state.memory_result_window_authorizations.is_empty());
+    assert_only_older_live_row(&state);
 }
 
 #[test]
@@ -330,6 +445,32 @@ fn issue_memory_head_completed(fixture: &mut TranslatedMemoryMmioPairFixture) ->
         .unwrap()
 }
 
+fn issue_younger_memory_retry(fixture: &mut TranslatedMemoryMmioPairFixture) -> MemoryRequestId {
+    fixture
+        .core
+        .issue_next_translated_data_access_parallel(
+            &mut fixture.scheduler,
+            &fixture.transport,
+            MemoryTrace::new(),
+            &fixture.page_map,
+            |delivery, _| TargetOutcome::RespondAfter {
+                delay: 20,
+                response: MemoryResponse::retry(delivery.request()),
+            },
+        )
+        .unwrap()
+        .expect("translated memory younger issues");
+    *fixture
+        .core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .outstanding_data
+        .keys()
+        .next_back()
+        .unwrap()
+}
+
 fn execute_younger(fixture: &mut TranslatedMemoryMmioPairFixture) {
     let action = fixture
         .core
@@ -348,20 +489,6 @@ fn execute_younger(fixture: &mut TranslatedMemoryMmioPairFixture) {
         Some(RiscvCoreDriveAction::InstructionExecuted(event))
             if event.fetch_pc() == Address::new(YOUNGER_PC)
     ));
-}
-
-fn issue_younger_mmio(fixture: &mut TranslatedMemoryMmioPairFixture) -> MemoryRequestId {
-    fixture
-        .core
-        .issue_next_translated_mmio_data_access_parallel(
-            &mut fixture.scheduler,
-            &fixture.bus,
-            &fixture.page_map,
-        )
-        .unwrap()
-        .expect("translated MMIO younger issues");
-    let state = fixture.core.state.lock().expect("riscv core lock");
-    *state.outstanding_data.keys().next_back().unwrap()
 }
 
 fn assert_state_counts(
@@ -389,6 +516,26 @@ fn assert_state_counts(
         authorizations
     );
     assert_eq!(state.translated_scalar_load_window_fetches.len(), lookahead);
+}
+
+fn assert_only_older_live_row(state: &RiscvCoreState) {
+    let snapshot = state.o3_runtime.snapshot();
+    assert_eq!(
+        snapshot
+            .reorder_buffer()
+            .iter()
+            .map(|entry| entry.sequence())
+            .collect::<Vec<_>>(),
+        vec![0]
+    );
+    assert_eq!(
+        snapshot
+            .load_store_queue()
+            .iter()
+            .map(|entry| entry.sequence())
+            .collect::<Vec<_>>(),
+        vec![0]
+    );
 }
 
 fn page_map_without_younger() -> TranslationPageMap {

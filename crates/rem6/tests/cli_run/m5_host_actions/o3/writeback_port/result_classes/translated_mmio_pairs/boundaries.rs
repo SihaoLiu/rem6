@@ -40,9 +40,31 @@ fn rem6_run_o3_translated_result_pair_dependency_and_fault_boundaries() {
             false,
         );
         let json = boundary_json(&fixture, "detailed", mapping, &[]);
-        let pair_start = event_u64(fetch_record_at_pc(&json, FIRST_PC), "tick");
+        let first = memory_result_event_at_pc(&json, FIRST_PC);
+        let completion = assert_data_completion_at_pc(&json, first, FIRST_PC, FIRST_PHYSICAL_PAGE);
+        assert_eq!(event_str(completion, "target"), "memory");
+        assert!(event_u64(first, "writeback_tick") <= event_u64(first, "commit_tick"));
+        assert_register(&json, "x11", "0x11");
+        assert_register_absent(&json, "x12");
+        assert_eq!(
+            json.pointer("/simulation/status").and_then(Value::as_str),
+            Some("executed_until_trap")
+        );
+        assert_eq!(
+            json.pointer("/simulation/stop_reason")
+                .and_then(Value::as_str),
+            Some("host_trap")
+        );
+        assert_eq!(
+            json.pointer("/simulation/trap").and_then(Value::as_str),
+            Some("load_page_fault")
+        );
+        assert_eq!(
+            json.pointer("/simulation/trap_pc").and_then(Value::as_str),
+            Some(SECOND_PC)
+        );
         fetch_record_at_pc(&json, SECOND_PC);
-        assert_eq!(requests_from(&json, pair_start), 1);
+        assert_eq!(requests_from(&json, event_u64(first, "issue_tick")), 1);
     }
 }
 #[test]
@@ -89,6 +111,28 @@ fn rem6_run_o3_translated_result_pair_target_ordering_and_capacity_boundaries() 
         .iter()
         .all(|event| event_u64(event, "issue_tick") < earliest));
     assert!(event_u64(third, "issue_tick") >= event_u64(pair[1], "writeback_tick"));
+
+    let alias = boundary_fixture(
+        "physical-alias",
+        [
+            i_type(0, 5, 0b011, 11, 0x03),
+            i_type(0, 6, 0b011, 12, 0x03),
+            r_type(0x01, 2, 1, 0b100, 3, 0x33),
+            i_type(1, 12, 0, 13, 0x13),
+        ],
+        0x11,
+        None,
+        true,
+    );
+    let json = boundary_json(&alias, "detailed", fixture::SecondMapping::Aliased, &[]);
+    let first = memory_result_event_at_pc(&json, FIRST_PC);
+    let second = memory_result_event_at_pc(&json, SECOND_PC);
+    assert!(event_u64(second, "issue_tick") >= event_u64(first, "lsq_data_response_tick"));
+    assert_eq!(requests_from(&json, event_u64(first, "issue_tick")), 2);
+    for (event, pc) in [(first, FIRST_PC), (second, SECOND_PC)] {
+        let completion = assert_data_completion_at_pc(&json, event, pc, FIRST_PHYSICAL_PAGE);
+        assert_eq!(event_str(completion, "target"), "memory");
+    }
 }
 #[test]
 fn rem6_run_o3_translated_result_pair_live_checkpoint_and_prebind_switch_reject() {
@@ -113,6 +157,7 @@ fn rem6_run_o3_translated_result_pair_live_checkpoint_and_prebind_switch_reject(
 fn rem6_run_host_switch_transfers_o3_translated_memory_mmio_result_pair() {
     let fixture = TranslatedMemoryPairFixture::new_mmio();
     let baseline = fixture.run_mixed("direct", DIRECT_ROUTE_DELAY, PAIR_MAX_TICK);
+    let baseline_identities = assert_mixed_completion_identities(&baseline);
     let first = memory_result_event_at_pc(&baseline, FIRST_PC);
     let second = memory_result_event_at_pc(&baseline, SECOND_PC);
     let switched = assert_mixed_live_handoff(
@@ -141,6 +186,12 @@ fn rem6_run_host_switch_transfers_o3_translated_memory_mmio_result_pair() {
             event_u64(event_at_pc(&baseline, pc), "lsq_data_response_tick")
         );
     }
+    assert_eq!(
+        assert_mixed_completion_identities(&switched),
+        baseline_identities
+    );
+    assert_mixed_final_witness(&switched);
+    assert_oldest_first_commit(&switched);
 }
 #[test]
 fn rem6_run_o3_translated_result_pair_drained_restore() {
@@ -302,6 +353,7 @@ pub(super) fn assert_mixed_pair(
     route_delay: u64,
 ) {
     let completed = fixture.run_mixed(memory_system, route_delay, PAIR_MAX_TICK);
+    assert_mixed_completion_identities(&completed);
     let first = memory_result_event_at_pc(&completed, FIRST_PC);
     let second = memory_result_event_at_pc(&completed, SECOND_PC);
     assert_data_completion_at_pc(&completed, first, FIRST_PC, FIRST_PHYSICAL_PAGE);

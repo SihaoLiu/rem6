@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use rem6_cpu::{CpuFetchEventKind, RiscvCluster, RiscvCoreDriveAction, RiscvDataAccessEventKind};
+use rem6_cpu::{
+    CpuFetchEventKind, RiscvCluster, RiscvCoreDriveAction, RiscvDataAccessEventKind,
+    RiscvDataAccessTarget,
+};
 use rem6_memory::MemoryOperation;
 use rem6_power::{PowerAnalysisRecord, PowerStateKind};
 use rem6_system::{RiscvSyscallTraceOutcome, RiscvSyscallTraceRecord, RiscvSystemRun};
@@ -111,6 +114,11 @@ struct Rem6DataTraceRecord {
     cpu: u32,
     tick: u64,
     kind: &'static str,
+    target: &'static str,
+    request_agent: u64,
+    request_sequence: u64,
+    fetch_request_agent: u64,
+    fetch_request_sequence: u64,
     address: u64,
     size: u64,
 }
@@ -1315,8 +1323,17 @@ impl Rem6FetchTraceRecord {
 impl Rem6DataTraceRecord {
     fn to_json(&self) -> String {
         format!(
-            "{{\"cpu\":{},\"tick\":{},\"kind\":\"{}\",\"address\":\"0x{:x}\",\"size\":{}}}",
-            self.cpu, self.tick, self.kind, self.address, self.size,
+            "{{\"cpu\":{},\"tick\":{},\"kind\":\"{}\",\"target\":\"{}\",\"request_agent\":{},\"request_sequence\":{},\"fetch_request_agent\":{},\"fetch_request_sequence\":{},\"address\":\"0x{:x}\",\"size\":{}}}",
+            self.cpu,
+            self.tick,
+            self.kind,
+            self.target,
+            self.request_agent,
+            self.request_sequence,
+            self.fetch_request_agent,
+            self.fetch_request_sequence,
+            self.address,
+            self.size,
         )
     }
 }
@@ -1641,13 +1658,34 @@ fn data_trace_records(cluster: &RiscvCluster, core_count: u32) -> Vec<Rem6DataTr
                 cpu: cpu.get(),
                 tick: event.tick(),
                 kind: data_trace_kind(event.operation())?,
+                target: data_trace_target(event.target()),
+                request_agent: u64::from(event.request_id().agent().get()),
+                request_sequence: event.request_id().sequence(),
+                fetch_request_agent: u64::from(event.fetch_request_id().agent().get()),
+                fetch_request_sequence: event.fetch_request_id().sequence(),
                 address: event.physical_address().get(),
                 size: event.size().bytes(),
             })
         }));
     }
-    records.sort_by_key(|record| (record.tick, record.cpu, record.address, record.size));
+    records.sort_by_key(|record| {
+        (
+            record.tick,
+            record.cpu,
+            record.address,
+            record.size,
+            record.request_agent,
+            record.request_sequence,
+        )
+    });
     records
+}
+
+fn data_trace_target(target: RiscvDataAccessTarget) -> &'static str {
+    match target {
+        RiscvDataAccessTarget::Memory { .. } => "memory",
+        RiscvDataAccessTarget::Mmio { .. } => "mmio",
+    }
 }
 
 fn data_trace_kind(operation: MemoryOperation) -> Option<&'static str> {

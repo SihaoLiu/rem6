@@ -718,6 +718,11 @@ impl RiscvCluster {
                 if advance_parallel_data_translation(*cpu, core, scheduler, page_map)? {
                     continue;
                 }
+                if translated_result_pair_ready
+                    && translated_result_pair_drive_ready(core, scheduler.now()) != Some(true)
+                {
+                    continue;
+                }
                 if !translated_result_pair_ready
                     && push_ready_translated_memory_fetch_ahead(
                         *cpu,
@@ -914,6 +919,11 @@ impl RiscvCluster {
                 };
             if has_data_work {
                 if advance_parallel_data_translation(*cpu, core, scheduler, page_map)? {
+                    continue;
+                }
+                if translated_result_pair_ready
+                    && translated_result_pair_drive_ready(core, scheduler.now()) != Some(true)
+                {
                     continue;
                 }
                 if let Some(event) = core

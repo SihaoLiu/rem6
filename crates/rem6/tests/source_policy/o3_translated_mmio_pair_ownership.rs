@@ -10,13 +10,23 @@ const FIXTURE: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/result_cl
 const BOUNDARIES: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/result_classes/translated_mmio_pairs/boundaries.rs";
 const HANDOFF: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/result_classes/translated_mmio_pairs/boundaries/handoff.rs";
 const POLICY: &str = "tests/source_policy/o3_translated_mmio_pair_ownership.rs";
+const MIGRATION_LEDGER: &str = "docs/architecture/gem5-to-rem6-migration.md";
 const PARENT_OWNER: &str = "crates/rem6/tests/cli_run/m5_host_actions/o3/writeback_port/result_classes/translated_mmio_pairs.rs";
-const TESTS: [&str; 5] = [
+const BOUNDARY_OWNER: &str = "crates/rem6/tests/cli_run/m5_host_actions/o3/writeback_port/result_classes/translated_mmio_pairs/boundaries.rs";
+pub(super) const POSITIVE_ANCHORS: [&str; 5] = [
     "rem6_run_o3_translated_memory_result_pair_width_one_direct",
     "rem6_run_o3_translated_memory_result_pair_width_two_exact_fit_direct",
     "rem6_run_o3_translated_memory_result_pair_width_one_cache_fabric_dram",
     "rem6_run_o3_translated_memory_mmio_result_pair_width_one_direct",
     "rem6_run_o3_translated_memory_mmio_result_pair_width_one_cache_fabric_dram",
+];
+pub(super) const BOUNDARY_ANCHORS: [&str; 6] = [
+    "rem6_run_o3_translated_result_pair_dependency_and_fault_boundaries",
+    "rem6_run_o3_translated_result_pair_target_ordering_and_capacity_boundaries",
+    "rem6_run_o3_translated_result_pair_live_checkpoint_and_prebind_switch_reject",
+    "rem6_run_host_switch_transfers_o3_translated_memory_mmio_result_pair",
+    "rem6_run_o3_translated_result_pair_drained_restore",
+    "rem6_run_timing_suppresses_o3_translated_result_pairs",
 ];
 
 #[test]
@@ -31,30 +41,58 @@ fn o3_translated_mmio_pair_ownership() {
     let handoff = rem6.join(HANDOFF);
     let policy = rem6.join(POLICY);
 
-    assert_external_module_path(
+    assert_external_modules(
         &result_classes,
-        "translated_mmio_pairs",
-        "result_classes/translated_mmio_pairs.rs",
+        &[(
+            "translated_mmio_pairs",
+            "result_classes/translated_mmio_pairs.rs",
+        )],
+        false,
     );
-    assert_external_module_path(
+    assert_external_modules(
         &source_policy,
-        "o3_translated_mmio_pair_ownership",
-        "source_policy/o3_translated_mmio_pair_ownership.rs",
+        &[(
+            "o3_translated_mmio_pair_ownership",
+            "source_policy/o3_translated_mmio_pair_ownership.rs",
+        )],
+        false,
     );
-    assert_external_module_path(&parent, "boundaries", "translated_mmio_pairs/boundaries.rs");
-    assert_external_module_path(&parent, "fixture", "translated_mmio_pairs/fixture.rs");
-    assert_external_module_path(&boundaries, "handoff", "boundaries/handoff.rs");
+    assert_external_modules(
+        &parent,
+        &[
+            ("boundaries", "translated_mmio_pairs/boundaries.rs"),
+            ("fixture", "translated_mmio_pairs/fixture.rs"),
+        ],
+        true,
+    );
+    assert_external_modules(&boundaries, &[("handoff", "boundaries/handoff.rs")], true);
+    assert_external_modules(&fixture, &[], true);
+    assert_external_modules(&handoff, &[], true);
 
     assert_line_cap(&parent, 500);
     assert_line_cap(&fixture, 600);
     assert_line_cap(&boundaries, 550);
     assert_line_cap(&handoff, 180);
     assert_line_cap(&policy, 350);
-    let aggregate =
-        line_count(&parent) + line_count(&fixture) + line_count(&boundaries) + line_count(&handoff);
+    let mut family = rust_sources_under(&parent.with_extension(""));
+    family.push(parent.clone());
+    family.sort();
+    let mut expected_family = [
+        parent.clone(),
+        fixture.clone(),
+        boundaries.clone(),
+        handoff.clone(),
+    ]
+    .to_vec();
+    expected_family.sort();
+    assert_eq!(
+        family, expected_family,
+        "translated pair recursive file inventory"
+    );
+    let aggregate = family.iter().map(|path| line_count(path)).sum::<usize>();
     assert!(
-        aggregate <= 1_550,
-        "translated result-pair family has {aggregate} lines, max 1550"
+        aggregate <= 1_625,
+        "translated result-pair family has {aggregate} lines, max 1625"
     );
 
     let parent_source = read(&parent);
@@ -75,26 +113,97 @@ fn o3_translated_mmio_pair_ownership() {
 
     assert_eq!(
         top_level_test_names(PARENT, &parent_source),
-        TESTS,
+        POSITIVE_ANCHORS,
         "{PARENT} must own exactly the translated result-pair rows in order"
     );
-    for test in TESTS {
-        assert_eq!(
-            duplicate_owners(repo, test),
-            vec![PARENT_OWNER.to_string()],
-            "{test} must have exactly one Rust-source owner"
-        );
+    assert_eq!(
+        top_level_test_names(BOUNDARIES, &boundaries_source),
+        BOUNDARY_ANCHORS,
+        "{BOUNDARIES} must own exactly the translated result-pair boundaries in order"
+    );
+    for (anchors, owner, source) in [
+        (
+            POSITIVE_ANCHORS.as_slice(),
+            PARENT_OWNER,
+            parent_source.as_str(),
+        ),
+        (
+            BOUNDARY_ANCHORS.as_slice(),
+            BOUNDARY_OWNER,
+            boundaries_source.as_str(),
+        ),
+    ] {
+        for test in anchors {
+            assert_eq!(source.matches(*test).count(), 1);
+            assert_eq!(
+                duplicate_owners(repo, test),
+                vec![owner.to_string()],
+                "{test} must have exactly one Rust-source owner"
+            );
+        }
     }
 
-    let core_anchors = read(&rem6.join("tests/source_policy/core_test_anchors.txt"));
-    for test in TESTS {
+    let registered = read(&rem6.join("tests/source_policy/core_test_anchors.txt"))
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let translated_anchors = POSITIVE_ANCHORS
+        .into_iter()
+        .chain(BOUNDARY_ANCHORS)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    for test in &translated_anchors {
         assert_eq!(
-            core_anchors
-                .lines()
-                .filter(|anchor| *anchor == test)
-                .count(),
-            0,
-            "Task 4 must not register core anchor {test} yet"
+            registered.iter().filter(|anchor| *anchor == test).count(),
+            1,
+            "core_test_anchors.txt must register {test} exactly once"
+        );
+    }
+    let untranslated_tail = registered
+        .iter()
+        .position(|anchor| anchor == "rem6_run_timing_suppresses_o3_memory_result_pairs")
+        .unwrap();
+    assert_eq!(
+        registered.get(untranslated_tail + 1..untranslated_tail + 1 + translated_anchors.len()),
+        Some(translated_anchors.as_slice()),
+        "translated result-pair anchors must immediately follow untranslated pair anchors"
+    );
+
+    let ledger = read(&repo.join(MIGRATION_LEDGER));
+    assert!(ledger.contains("### CPU Execution Models - 74% representative\n**Score calculation:** 8 of 10 items have executable evidence, or 80% raw, capped at the 74% representative bucket cap."));
+    let cpu_section = between(
+        &ledger,
+        "### CPU Execution Models - 74% representative",
+        "\n### ",
+    );
+    let overview = between(cpu_section, "**Score calculation:**", "\n**Migrated:**");
+    let migrated = between(cpu_section, "**Migrated:**", "\n**Not migrated:**");
+    let not_migrated = between(cpu_section, "**Not migrated:**", "\n**Evidence:**");
+    let evidence = between(cpu_section, "**Evidence:**", "\n**Next evidence:**");
+    let next_evidence = cpu_section.split_once("**Next evidence:**").unwrap().1;
+    let crosswalk = ledger
+        .lines()
+        .find(|line| line.starts_with("| `tests/gem5/cpu_tests` |"))
+        .expect("CPU crosswalk row");
+    for anchor in &translated_anchors {
+        for (surface, text) in [
+            ("overview", overview),
+            ("Migrated", migrated),
+            ("Evidence", evidence),
+            ("crosswalk", crosswalk),
+        ] {
+            assert!(text.contains(anchor), "{surface} missing `{anchor}`");
+        }
+    }
+    for (surface, text) in [
+        ("Not migrated", not_migrated),
+        ("Next evidence", next_evidence),
+        ("crosswalk", crosswalk),
+    ] {
+        assert!(
+            text.contains("page-table-walk transport"),
+            "{surface} must keep page-table-walk transport open"
         );
     }
 
@@ -103,58 +212,51 @@ fn o3_translated_mmio_pair_ownership() {
     }
 }
 
-fn assert_external_module_path(path: &Path, module_name: &str, expected_path: &str) {
+fn assert_external_modules(path: &Path, expected: &[(&str, &str)], exact: bool) {
     let source = read(path);
     let syntax = syn::parse_file(&source)
-        .unwrap_or_else(|error| panic!("failed to parse {}: {error}", relative(path).display()));
+        .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()));
     let modules = syntax
         .items
         .iter()
-        .filter_map(|item| {
-            let syn::Item::Mod(module) = item else {
-                return None;
-            };
-            (module.ident == module_name).then_some(module)
+        .filter_map(|item| match item {
+            syn::Item::Mod(module) => Some(module),
+            _ => None,
         })
+        .filter(|module| exact || expected.iter().any(|(name, _)| module.ident == *name))
         .collect::<Vec<_>>();
     assert_eq!(
         modules.len(),
-        1,
-        "{} must attach {module_name} exactly once",
-        relative(path).display()
+        expected.len(),
+        "{} external module inventory",
+        path.display()
     );
-    let module = modules[0];
-    assert!(
-        module.content.is_none(),
-        "{} module {module_name} must be external",
-        relative(path).display()
-    );
-    let paths = module
-        .attrs
-        .iter()
-        .filter(|attribute| attribute.path().is_ident("path"))
-        .map(path_attribute_literal)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        paths,
-        vec![Some(expected_path.to_string())],
-        "{} module {module_name} must use #[path = \"{expected_path}\"]",
-        relative(path).display()
-    );
+    for (module, (name, expected_path)) in modules.into_iter().zip(expected) {
+        assert_eq!(module.ident, *name, "{} module inventory", path.display());
+        assert!(
+            module.content.is_none(),
+            "{} module {name} must be external",
+            path.display()
+        );
+        let paths = module
+            .attrs
+            .iter()
+            .filter(|attribute| attribute.path().is_ident("path"))
+            .map(path_attribute_literal)
+            .collect::<Vec<_>>();
+        assert_eq!(paths, [expected_path.to_string()]);
+    }
 }
 
-fn path_attribute_literal(attribute: &syn::Attribute) -> Option<String> {
-    let syn::Meta::NameValue(value) = &attribute.meta else {
-        return None;
+fn path_attribute_literal(attribute: &syn::Attribute) -> String {
+    let value = attribute.meta.require_name_value().unwrap();
+    let syn::Expr::Lit(value) = &value.value else {
+        panic!("path attribute must be a literal");
     };
-    let syn::Expr::Lit(syn::ExprLit {
-        lit: syn::Lit::Str(path),
-        ..
-    }) = &value.value
-    else {
-        return None;
+    let syn::Lit::Str(path) = &value.lit else {
+        panic!("path attribute must be a string");
     };
-    Some(path.value())
+    path.value()
 }
 
 fn top_level_test_names(relative: &str, source: &str) -> Vec<String> {
@@ -175,12 +277,21 @@ fn top_level_test_names(relative: &str, source: &str) -> Vec<String> {
         .collect()
 }
 
+fn between<'a>(text: &'a str, start: &str, end: &str) -> &'a str {
+    text.split_once(start)
+        .unwrap_or_else(|| panic!("missing ledger start `{start}`"))
+        .1
+        .split_once(end)
+        .unwrap_or_else(|| panic!("missing ledger end `{end}`"))
+        .0
+}
+
 fn assert_line_cap(path: &Path, maximum: usize) {
     let lines = line_count(path);
     assert!(
         lines <= maximum,
         "{} has {lines} lines, max {maximum}",
-        relative(path).display()
+        path.display()
     );
 }
 
@@ -235,14 +346,5 @@ fn assert_rustfmt_clean(path: &Path) {
 
 fn read(path: &Path) -> String {
     fs::read_to_string(path)
-        .unwrap_or_else(|error| panic!("failed to read {}: {error}", relative(path).display()))
-}
-
-fn relative(path: &Path) -> PathBuf {
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-    path.strip_prefix(repo).unwrap_or(path).to_path_buf()
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
 }

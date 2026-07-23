@@ -107,7 +107,7 @@ fn run_translated_memory_result_pair(memory_system: &str, writeback_width: usize
             .map(|evidence| event_u64(evidence.event, "lsq_data_response_tick"))
             .max()
             .unwrap()
-            + 1,
+            + 2,
     );
     assert_route_resources(&before_pair, &through_pair, memory_system, &pair);
 }
@@ -250,17 +250,16 @@ fn assert_result_timing(json: &Value, memory_system: &str, writeback_width: usiz
         return;
     }
     let raw_ready = event_u64(div, "issue_tick") + 19;
-    for result in [first, second] {
-        assert_eq!(event_u64(result, "lsq_data_response_tick") + 1, raw_ready);
-    }
-    assert_eq!(event_u64(first, "writeback_tick"), raw_ready);
     assert_eq!(
-        event_u64(second, "writeback_tick"),
-        raw_ready + u64::from(writeback_width == 1)
+        event_u64(first, "lsq_data_response_tick") + 1,
+        raw_ready - 2
     );
+    assert_eq!(event_u64(first, "writeback_tick"), raw_ready - 2);
+    assert_eq!(event_u64(second, "lsq_data_response_tick") + 1, raw_ready);
+    assert_eq!(event_u64(second, "writeback_tick"), raw_ready);
     assert_eq!(
         event_u64(div, "writeback_tick"),
-        raw_ready + if writeback_width == 1 { 2 } else { 1 }
+        raw_ready + u64::from(writeback_width == 1)
     );
 }
 fn assert_oldest_first_commit(json: &Value) {
@@ -367,7 +366,9 @@ fn pair_request_evidence<'a>(
     std::array::from_fn(|index| {
         let (pc, physical_address) = specs[index];
         let event = events[index];
-        assert_data_completion_at_pc(json, event, pc, physical_address);
+        let completion = assert_data_completion_at_pc(json, event, pc, physical_address);
+        assert_eq!(event_str(completion, "target"), "memory");
+        assert_eq!(data_trace_identity(completion), identities[index]);
         let identity = identities[index].data;
         let sent = request_sent_for_identity(json, identity)
             .unwrap_or_else(|| panic!("missing main request for {pc} identity {identity:?}"));
@@ -388,19 +389,59 @@ fn pair_request_evidence<'a>(
         }
     })
 }
-fn assert_data_completion_at_pc(json: &Value, event: &Value, pc: &str, address: u64) {
+fn assert_data_completion_at_pc<'a>(
+    json: &'a Value,
+    event: &Value,
+    pc: &str,
+    address: u64,
+) -> &'a Value {
     let address = format!("0x{address:x}");
+    let response_tick = event_u64(event, "lsq_data_response_tick");
     let records = data_trace(json)
         .iter()
         .filter(|record| {
             event_str(record, "kind") == "load"
                 && event_str(record, "address") == address
                 && event_u64(record, "size") == 8
+                && event_u64(record, "tick") == response_tick
         })
         .collect::<Vec<_>>();
     assert_eq!(records.len(), 1, "exact translated Data completion at {pc}");
     let tick = event_u64(records[0], "tick");
-    assert_eq!(tick, event_u64(event, "lsq_data_response_tick"));
+    assert_eq!(tick, response_tick);
+    records[0]
+}
+fn assert_mixed_completion_identities(json: &Value) -> [PcRequestIdentity; 2] {
+    let specs = [
+        (FIRST_PC, FIRST_PHYSICAL_PAGE, "memory"),
+        (SECOND_PC, fixture::MMIO_PAGE, "mmio"),
+    ];
+    let identities = specs.map(|(pc, address, target)| {
+        let event = memory_result_event_at_pc(json, pc);
+        let record = assert_data_completion_at_pc(json, event, pc, address);
+        assert_eq!(event_str(record, "target"), target);
+        let identity = data_trace_identity(record);
+        assert_eq!(
+            identity.fetch,
+            fetch_request_identity(json, fetch_record_at_pc(json, pc))
+        );
+        identity
+    });
+    assert_ne!(identities[0].data, identities[1].data);
+    assert_ne!(identities[0].fetch, identities[1].fetch);
+    identities
+}
+fn data_trace_identity(record: &Value) -> PcRequestIdentity {
+    PcRequestIdentity {
+        data: RequestIdentity {
+            agent: event_u64(record, "request_agent"),
+            sequence: event_u64(record, "request_sequence"),
+        },
+        fetch: RequestIdentity {
+            agent: event_u64(record, "fetch_request_agent"),
+            sequence: event_u64(record, "fetch_request_sequence"),
+        },
+    }
 }
 fn request_sent_for_identity(json: &Value, identity: RequestIdentity) -> Option<&Value> {
     data_record_for_identity(json, "request_sent", identity)

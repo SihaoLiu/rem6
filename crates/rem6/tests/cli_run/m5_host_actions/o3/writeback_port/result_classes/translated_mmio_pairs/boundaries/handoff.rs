@@ -16,7 +16,7 @@ pub(super) fn assert_mixed_live_handoff(
     let switched = fixture.run_mixed_with_switch(memory_system, route_delay, switch_tick);
     let switched_first = memory_result_event_at_pc(&switched, FIRST_PC);
     let switched_second = memory_result_event_at_pc(&switched, SECOND_PC);
-    assert_data_completion_at_pc(&switched, switched_first, FIRST_PC, FIRST_PHYSICAL_PAGE);
+    let completion_identities = assert_mixed_completion_identities(&switched);
     assert_eq!(event_u64(switched_first, "issue_tick"), first_issue);
     assert_eq!(event_u64(switched_second, "issue_tick"), second_issue);
     let first_request = sole_data_request_at_tick(&switched, first_issue, FIRST_PC);
@@ -70,6 +70,7 @@ pub(super) fn assert_mixed_live_handoff(
         Some("memory")
     );
     let first_identity = request_identity(first_request);
+    assert_eq!(completion_identities[0].data, first_identity);
     assert_eq!(
         handoff
             .pointer("/first_data_request_agent")
@@ -83,7 +84,11 @@ pub(super) fn assert_mixed_live_handoff(
         Some(first_identity.sequence)
     );
     request_sent_for_identity(&switched, first_identity).unwrap();
-    assert_data_completion_at_pc(&switched, switched_second, SECOND_PC, fixture::MMIO_PAGE);
+    let o3_pcs = o3_trace_events(&switched)
+        .iter()
+        .map(|event| event_str(event, "pc"))
+        .collect::<Vec<_>>();
+    assert_eq!(o3_pcs, PAIR_PCS);
     switched
 }
 

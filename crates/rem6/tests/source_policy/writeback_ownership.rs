@@ -1,3 +1,4 @@
+use super::o3_translated_mmio_pair_ownership::{BOUNDARY_ANCHORS, POSITIVE_ANCHORS};
 use super::*;
 use syn::visit::Visit;
 
@@ -1386,6 +1387,53 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         .lines()
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
+    let translated_result_pair_anchors = POSITIVE_ANCHORS
+        .into_iter()
+        .chain(BOUNDARY_ANCHORS)
+        .collect::<Vec<_>>();
+    for anchor in &translated_result_pair_anchors {
+        assert_eq!(
+            registered_core_anchors
+                .iter()
+                .filter(|registered| *registered == anchor)
+                .count(),
+            1,
+            "core_test_anchors.txt must register translated pair anchor `{anchor}` exactly once"
+        );
+    }
+    for anchor in RESULT_PAIR_ANCHORS {
+        assert_eq!(
+            registered_core_anchors
+                .iter()
+                .filter(|registered| **registered == anchor)
+                .count(),
+            1,
+            "core_test_anchors.txt must register result-pair anchor `{anchor}` exactly once"
+        );
+    }
+    let untranslated_pair_start = registered_core_anchors
+        .iter()
+        .position(|anchor| *anchor == RESULT_PAIR_ANCHORS[0])
+        .unwrap();
+    assert_eq!(
+        registered_core_anchors
+            .get(untranslated_pair_start..untranslated_pair_start + RESULT_PAIR_ANCHORS.len()),
+        Some(RESULT_PAIR_ANCHORS.as_slice()),
+        "untranslated result-pair anchors must remain contiguous"
+    );
+    let translated_pair_start = untranslated_pair_start + RESULT_PAIR_ANCHORS.len();
+    assert_eq!(
+        registered_core_anchors.get(
+            translated_pair_start..translated_pair_start + translated_result_pair_anchors.len()
+        ),
+        Some(translated_result_pair_anchors.as_slice()),
+        "translated result-pair anchors must follow the untranslated pair matrix"
+    );
+    assert_eq!(
+        registered_core_anchors.get(translated_pair_start + translated_result_pair_anchors.len()),
+        Some(&RESULT_BOUNDARY_ANCHORS[0]),
+        "generic result-boundary anchors must follow translated result pairs"
+    );
     let two_pending_anchors = TWO_PENDING_RESULT_ADDRESS_ANCHORS
         .into_iter()
         .chain(TWO_PENDING_RESULT_ADDRESS_BOUNDARY_ANCHORS)

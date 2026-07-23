@@ -12,6 +12,7 @@ pub(super) enum TranslatedPairTarget {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum SecondMapping {
     Allowed,
+    Aliased,
     Missing,
     Denied,
 }
@@ -263,16 +264,21 @@ fn translated_pair_config(
     };
     let second_translation = match second_mapping {
         SecondMapping::Missing => String::new(),
-        SecondMapping::Allowed | SecondMapping::Denied => format!(
+        SecondMapping::Allowed | SecondMapping::Aliased | SecondMapping::Denied => format!(
             r#"
 [[run.riscv_data_translation.mappings]]
 virtual_base = 20480
-physical_base = {second_physical_page}
+physical_base = {}
 pages = 1
 read = {}
 write = true
 "#,
-            second_mapping == SecondMapping::Allowed
+            if second_mapping == SecondMapping::Aliased {
+                FIRST_PHYSICAL_PAGE
+            } else {
+                second_physical_page
+            },
+            second_mapping == SecondMapping::Allowed || second_mapping == SecondMapping::Aliased
         ),
     };
     let translation = translated.then(|| {
@@ -322,7 +328,7 @@ fn translated_memory_pair_binary(target: TranslatedPairTarget) -> std::path::Pat
         u_type(FIRST_VIRTUAL_PAGE as i32, 5, 0x37),
         u_type(SECOND_VIRTUAL_PAGE as i32, 6, 0x37),
         i_type(SETUP_PROBE_OFFSET, 5, 0b011, 0, 0x03),
-        i_type(SETUP_PROBE_OFFSET, 6, 0b011, 0, 0x03),
+        i_type(0, 0, 0, 0, 0x13),
         i_type(84, 0, 0, 1, 0x13),
         i_type(2, 0, 0, 2, 0x13),
     ];
@@ -472,7 +478,7 @@ pub(super) fn assert_route_resources(
                 ("/memory_resources/cache/data/l2/activity", 2),
                 ("/memory_resources/cache/data/l3/activity", 2),
                 ("/memory_resources/cache/instruction/dram_accesses", 0),
-                ("/memory_resources/fabric/activity", 4),
+                ("/memory_resources/fabric/activity", 5),
                 ("/memory_resources/dram/activity", 4),
                 ("/memory_resources/dram/accesses", 2),
                 ("/memory_resources/dram/reads", 2),

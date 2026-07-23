@@ -145,6 +145,12 @@ impl RiscvO3WritebackWakeState {
 
 impl RiscvCore {
     pub fn requested_o3_writeback_wake_tick(&self, now: Tick) -> Option<Tick> {
+        let translated_result_pair = match self.translated_result_pair_progress(now) {
+            crate::riscv_data_issue::O3ResultPairProgress::WaitUntil(tick) => Some(tick),
+            crate::riscv_data_issue::O3ResultPairProgress::Ordinary
+            | crate::riscv_data_issue::O3ResultPairProgress::Ready { .. }
+            | crate::riscv_data_issue::O3ResultPairProgress::Blocked => None,
+        };
         let mut state = self.state.lock().expect("riscv core lock");
         state.o3_runtime.prune_writeback_calendar_before(now);
         let memory_result = state
@@ -166,11 +172,14 @@ impl RiscvCore {
                     .contains_key(&forwarded.fetch_request().sequence())
             })
             .map(|forwarded| forwarded.ready_tick().max(now));
+        let translated_result_retry = state.translated_result_pair_retry_wake_tick(now);
         let desired = [
             memory_result,
             pending_address,
             restored_live_gate,
             forwarded_control,
+            translated_result_pair,
+            translated_result_retry,
         ]
         .into_iter()
         .flatten()
@@ -270,11 +279,13 @@ impl RiscvCoreState {
                     .contains_key(&forwarded.fetch_request().sequence())
             })
             .map(|forwarded| forwarded.ready_tick().max(now));
+        let translated_result_retry = self.translated_result_pair_retry_wake_tick(now);
         let desired = [
             memory_result,
             pending_address,
             restored_live_gate,
             forwarded_control,
+            translated_result_retry,
         ]
         .into_iter()
         .flatten()

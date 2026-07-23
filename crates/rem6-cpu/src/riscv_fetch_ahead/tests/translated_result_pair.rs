@@ -350,6 +350,24 @@ fn translated_result_pair_overlap_requires_exact_authorized_virtual_span() {
 }
 
 #[test]
+fn translated_result_pair_rejects_overlapping_virtual_ranges() {
+    let core =
+        translated_result_pair_core(ld(11, 2), [(1, 0x8004, ld(12, 3).to_le_bytes().to_vec())]);
+    core.write_register(Register::new(3).unwrap(), 0x4000);
+
+    assert_eq!(
+        core.next_cached_translated_memory_fetch_ahead_before_retire(),
+        None
+    );
+    assert!(core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .memory_result_window_authorizations
+        .is_empty());
+}
+
+#[test]
 fn translated_result_pair_at_depth_two_retains_two_authorizations_without_next_fetch() {
     let head = ld(11, 2);
     let younger = ld(12, 3);

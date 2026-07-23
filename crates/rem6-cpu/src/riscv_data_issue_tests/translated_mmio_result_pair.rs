@@ -8,6 +8,8 @@ use crate::{
 
 #[path = "translated_mmio_result_pair/fixture.rs"]
 mod fixture;
+#[path = "translated_mmio_result_pair/review_boundaries.rs"]
+mod review_boundaries;
 
 use fixture::*;
 

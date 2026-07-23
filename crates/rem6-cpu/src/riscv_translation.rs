@@ -819,11 +819,13 @@ impl RiscvCore {
     }
 
     pub(crate) fn take_pending_trap_event(&self) -> Option<RiscvCpuExecutionEvent> {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .pending_trap_event
-            .take()
+        let mut state = self.state.lock().expect("riscv core lock");
+        if state.pending_trap_event.is_some()
+            && state.o3_runtime.has_pending_live_data_access_retirement()
+        {
+            return None;
+        }
+        state.pending_trap_event.take()
     }
 
     pub fn with_data_translation(
@@ -1079,6 +1081,14 @@ impl RiscvCore {
                 return Ok(None);
             }
             self.advance_next_data_translation(scheduler.now(), page_map)?;
+            if translated_result_pair_ready
+                && !matches!(
+                    self.translated_result_pair_progress(scheduler.now()),
+                    O3ResultPairProgress::Ready { .. }
+                )
+            {
+                return Ok(None);
+            }
             if !translated_result_pair_ready {
                 if let Some(fetch_request) = self
                     .ready_translated_scalar_load_window_fetch_request(scheduler.now(), transport)?
@@ -1585,201 +1595,6 @@ impl RiscvCore {
                 .expect("selected ready data translation exists");
         }
         Ok(Some(issue))
-    }
-
-    fn prepare_ready_translated_mmio_data_access(
-        &self,
-        scheduler: &PartitionedScheduler,
-        bus: &MmioBus,
-    ) -> Result<Option<OutstandingDataAccess>, RiscvCpuError> {
-        let tick = scheduler.now();
-        let translated = {
-            let state = self.state.lock().expect("riscv core lock");
-            let Some(fetch_request) = ready_translated_fetch_request(&state) else {
-                return Ok(None);
-            };
-            state
-                .ready_translated_data
-                .get(&fetch_request)
-                .expect("selected ready data translation exists")
-                .clone()
-        };
-
-        self.check_pmp_data_access(
-            translated.fetch_request,
-            &translated.access,
-            translated.size,
-            translated.physical_address,
-        )?;
-        self.check_pma_data_access(
-            translated.fetch_request,
-            &translated.access,
-            translated.size,
-            translated.physical_address,
-            translated.request_byte_offset,
-        )?;
-        let route_probe = MmioRequest::read(
-            MmioRequestId::new(translated.request_id.sequence()),
-            translated.physical_address,
-            translated.size,
-        )
-        .map_err(RiscvCpuError::Mmio)?;
-        let route = match bus.route_for(self.core.partition(), &route_probe) {
-            Ok(route) => route,
-            Err(MmioError::UnmappedAddress { .. }) => return Ok(None),
-            Err(error) => return Err(RiscvCpuError::Mmio(error)),
-        };
-        if route.source_partition() != self.core.partition() {
-            return Err(RiscvCpuError::MmioRoutePartitionMismatch {
-                expected: self.core.partition(),
-                actual: route.source_partition(),
-            });
-        }
-        riscv_data_access::validate_parallel_mmio_route(
-            route,
-            tick,
-            scheduler.min_remote_delay(),
-            scheduler.partition_count(),
-        )
-        .map_err(|error| RiscvCpuError::Mmio(MmioError::Scheduler(error)))?;
-
-        {
-            let mut state = self.state.lock().expect("riscv core lock");
-            if !state.bind_translated_result_target(
-                translated.fetch_request,
-                crate::riscv_fetch_ahead::O3MemoryResultWindowRoute::Mmio,
-            ) {
-                state.abort_prepared_data_issue(translated.fetch_request, tick);
-                state.discard_translated_result_pair_from(translated.fetch_request);
-                return Err(RiscvCpuError::TranslatedResultAuthorizationMismatch {
-                    fetch: translated.fetch_request,
-                });
-            }
-            state
-                .ready_translated_data
-                .remove(&translated.fetch_request)
-                .expect("selected ready data translation exists");
-        }
-
-        Ok(Some(OutstandingDataAccess {
-            tick,
-            partition: self.core.partition(),
-            target: RiscvDataAccessTarget::Mmio { route },
-            request_id: translated.request_id,
-            fetch_request: translated.fetch_request,
-            access: translated.access,
-            size: translated.size,
-            physical_address: translated.physical_address,
-            request_byte_offset: translated.request_byte_offset,
-            line_layout: None,
-            forwarded_load_data: None,
-            store_load_forwarding_plan: None,
-        }))
-    }
-
-    fn prepare_translated_data_access(
-        &self,
-        tick: Tick,
-        transport: &MemoryTransport,
-        translated: TranslatedDataAccess,
-    ) -> Result<OutstandingDataAccess, RiscvCpuError> {
-        let data = self
-            .state
-            .lock()
-            .expect("riscv core lock")
-            .data
-            .clone()
-            .ok_or(RiscvCpuError::MissingDataConfig {
-                fetch: translated.fetch_request,
-            })?;
-        let route = transport
-            .route(data.route())
-            .ok_or(RiscvCpuError::Transport(TransportError::UnknownRoute {
-                route: data.route(),
-            }))?;
-        if route.source_partition() != self.core.partition() {
-            return Err(RiscvCpuError::DataRoutePartitionMismatch {
-                route: data.route(),
-                expected: self.core.partition(),
-                actual: route.source_partition(),
-            });
-        }
-        if route.source() != data.endpoint() {
-            return Err(RiscvCpuError::DataRouteEndpointMismatch {
-                route: data.route(),
-                expected: data.endpoint().clone(),
-                actual: route.source().clone(),
-            });
-        }
-
-        self.check_pmp_data_access(
-            translated.fetch_request,
-            &translated.access,
-            translated.size,
-            translated.physical_address,
-        )?;
-        self.check_pma_data_access(
-            translated.fetch_request,
-            &translated.access,
-            translated.size,
-            translated.physical_address,
-            translated.request_byte_offset,
-        )?;
-        let line_layout = data
-            .line_layout_for_access(translated.physical_address, translated.size)
-            .map_err(RiscvCpuError::Memory)?;
-        let line_offset = line_layout.line_offset(translated.physical_address);
-        if line_offset + translated.size.bytes() > line_layout.bytes()
-            && !supports_translated_cross_line_data_access(
-                &translated.access,
-                translated.virtual_address,
-                translated.physical_address,
-                translated.size,
-                line_layout,
-            )
-        {
-            return Err(RiscvCpuError::DataAccessCrossesLine {
-                address: translated.physical_address,
-                size: translated.size,
-                line_size: line_layout.bytes(),
-            });
-        }
-
-        let bound_target = {
-            let mut state = self.state.lock().expect("riscv core lock");
-            let bound = state.bind_translated_result_target(
-                translated.fetch_request,
-                crate::riscv_fetch_ahead::O3MemoryResultWindowRoute::Memory,
-            );
-            if !bound {
-                state.abort_prepared_data_issue(translated.fetch_request, tick);
-                state.discard_translated_result_pair_from(translated.fetch_request);
-            }
-            bound
-        };
-        if !bound_target {
-            return Err(RiscvCpuError::TranslatedResultAuthorizationMismatch {
-                fetch: translated.fetch_request,
-            });
-        }
-
-        Ok(OutstandingDataAccess {
-            tick,
-            partition: self.core.partition(),
-            target: RiscvDataAccessTarget::Memory {
-                route: data.route(),
-                endpoint: data.endpoint().clone(),
-            },
-            request_id: translated.request_id,
-            fetch_request: translated.fetch_request,
-            access: translated.access,
-            size: translated.size,
-            physical_address: translated.physical_address,
-            request_byte_offset: translated.request_byte_offset,
-            line_layout: Some(line_layout),
-            forwarded_load_data: None,
-            store_load_forwarding_plan: None,
-        })
     }
 }
 

@@ -18,7 +18,13 @@ impl RiscvCore {
         {
             let state = self.state.lock().expect("riscv core lock");
             if state.outstanding_data.is_empty() {
-                return O3ResultPairProgress::Ordinary;
+                return if state.has_unbound_translated_result_state()
+                    && state.o3_runtime.has_live_data_access()
+                {
+                    O3ResultPairProgress::Blocked
+                } else {
+                    O3ResultPairProgress::Ordinary
+                };
             }
         }
         let fetch_events = self.core.fetch_events();
@@ -82,6 +88,33 @@ impl RiscvCore {
                 head_fetch,
                 head_o3_sequence,
             )
+        {
+            return O3ResultPairProgress::Blocked;
+        }
+        let Some(head_range) =
+            AddressRange::new(outstanding.physical_address, outstanding.size).ok()
+        else {
+            return O3ResultPairProgress::Blocked;
+        };
+        let authorized_younger_range = state
+            .memory_result_window_authorizations
+            .values()
+            .next()
+            .and_then(|authorization| authorization.resolved_range());
+        let ready_younger_range =
+            state
+                .ready_translated_data
+                .values()
+                .next()
+                .and_then(|translated| {
+                    AddressRange::new(translated.physical_address, translated.size).ok()
+                });
+        if ready_younger_range
+            .zip(authorized_younger_range)
+            .is_some_and(|(ready, authorized)| ready != authorized)
+            || ready_younger_range
+                .or(authorized_younger_range)
+                .is_some_and(|younger_range| head_range.overlaps(younger_range))
         {
             return O3ResultPairProgress::Blocked;
         }
