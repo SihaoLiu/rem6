@@ -1,10 +1,14 @@
 use rem6_isa_riscv::{Immediate, MemoryWidth, Register};
 use rem6_memory::{AccessSize, Address, AddressRange};
 
+#[path = "memory_result_authorization/translated.rs"]
+mod translated;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum O3MemoryResultWindowRoute {
     Memory,
     Mmio,
+    Translated,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -31,6 +35,11 @@ impl O3MemoryResultWindowRole {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum O3MemoryResultWindowAddressAuthority {
     ResolvedRange(AddressRange),
+    TranslatedRange {
+        virtual_range: AddressRange,
+        physical_range: Option<AddressRange>,
+        target: Option<O3MemoryResultWindowRoute>,
+    },
     DependentSource {
         register: Register,
         width: MemoryWidth,
@@ -94,13 +103,17 @@ impl O3MemoryResultWindowAuthorization {
     pub(crate) const fn resolved_range(self) -> Option<AddressRange> {
         match self.address_authority {
             O3MemoryResultWindowAddressAuthority::ResolvedRange(range) => Some(range),
+            O3MemoryResultWindowAddressAuthority::TranslatedRange { physical_range, .. } => {
+                physical_range
+            }
             O3MemoryResultWindowAddressAuthority::DependentSource { .. } => None,
         }
     }
 
     pub(crate) const fn dependent_source(self) -> Option<(Register, MemoryWidth, Immediate)> {
         match self.address_authority {
-            O3MemoryResultWindowAddressAuthority::ResolvedRange(_) => None,
+            O3MemoryResultWindowAddressAuthority::ResolvedRange(_)
+            | O3MemoryResultWindowAddressAuthority::TranslatedRange { .. } => None,
             O3MemoryResultWindowAddressAuthority::DependentSource {
                 register,
                 width,
@@ -115,9 +128,12 @@ impl O3MemoryResultWindowAuthorization {
         physical_address: Address,
         size: AccessSize,
     ) -> bool {
+        let O3MemoryResultWindowAddressAuthority::ResolvedRange(physical_range) =
+            self.address_authority
+        else {
+            return false;
+        };
         self.route == route
-            && self.resolved_range().is_some_and(|physical_range| {
-                AddressRange::new(physical_address, size).is_ok_and(|range| range == physical_range)
-            })
+            && AddressRange::new(physical_address, size).is_ok_and(|range| range == physical_range)
     }
 }

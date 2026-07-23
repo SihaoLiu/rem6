@@ -1,0 +1,220 @@
+use super::*;
+use rem6_memory::AddressRange;
+
+fn translated_result_pair_core(
+    head: u32,
+    younger: impl IntoIterator<Item = (u64, u64, Vec<u8>)>,
+) -> RiscvCore {
+    let core = core_with_completed_fetches(
+        [(0, 0x8000, head.to_le_bytes().to_vec())]
+            .into_iter()
+            .chain(younger),
+    );
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+    for (register, value) in [(2, 0x4000), (3, 0x5000), (4, 0x6000), (11, 0x5000)] {
+        core.write_register(Register::new(register).unwrap(), value);
+    }
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.data_translation = Some(CpuTranslationFrontend::with_tlb(
+            TranslationQueueConfig::new(4, 0).unwrap(),
+            TranslationTlbConfig::new(4).unwrap(),
+        ));
+    }
+    install_cached_data_translation(
+        &core,
+        0x4000,
+        0x9000,
+        TranslationPagePermissions::read_write(),
+        TranslationAccessKind::Load,
+    );
+    core
+}
+
+fn ld(rd: u8, rs1: u8) -> u32 {
+    i_type(0, rs1, 0b011, rd, 0x03)
+}
+
+fn load_reserved(rd: u8, rs1: u8) -> u32 {
+    (0x02_u32 << 27) | (u32::from(rs1) << 15) | (0b011 << 12) | (u32::from(rd) << 7) | 0x2f
+}
+
+#[test]
+fn translated_result_pair_authorizes_two_virtual_rows_without_physical_targets() {
+    let head = i_type(0, 2, 0b011, 1, 0x07);
+    let younger = ld(12, 3);
+    let core = translated_result_pair_core(head, [(1, 0x8004, younger.to_le_bytes().to_vec())]);
+
+    assert_eq!(
+        core.next_cached_translated_memory_fetch_ahead_before_retire()
+            .map(|decision| decision.pc()),
+        Some(Address::new(0x8008))
+    );
+    let state = core.state.lock().expect("riscv core lock");
+    assert_eq!(state.memory_result_window_authorizations.len(), 2);
+    let head_authorization = state
+        .memory_result_window_authorizations
+        .get(&request(0))
+        .copied()
+        .expect("translated head authorization");
+    let younger_authorization = state
+        .memory_result_window_authorizations
+        .get(&request(1))
+        .copied()
+        .expect("translated younger authorization");
+
+    assert_eq!(head_authorization.role(), O3MemoryResultWindowRole::Head);
+    assert_eq!(
+        younger_authorization.role(),
+        O3MemoryResultWindowRole::YoungerRead
+    );
+    assert!(head_authorization.is_translated());
+    assert!(younger_authorization.is_translated());
+    assert_eq!(
+        head_authorization.virtual_range(),
+        AddressRange::new(Address::new(0x4000), AccessSize::new(8).unwrap()).ok()
+    );
+    assert_eq!(
+        younger_authorization.virtual_range(),
+        AddressRange::new(Address::new(0x5000), AccessSize::new(8).unwrap()).ok()
+    );
+    assert!(!head_authorization.matches_bound_target(
+        O3MemoryResultWindowRoute::Memory,
+        Address::new(0x9000),
+        AccessSize::new(8).unwrap(),
+    ));
+    assert!(!younger_authorization.matches_bound_target(
+        O3MemoryResultWindowRoute::Memory,
+        Address::new(0xa000),
+        AccessSize::new(8).unwrap(),
+    ));
+}
+
+#[test]
+fn translated_result_pair_binds_each_physical_range_and_target_once() {
+    let virtual_range =
+        AddressRange::new(Address::new(0x5000), AccessSize::new(8).unwrap()).unwrap();
+    let mut authorization = O3MemoryResultWindowAuthorization::translated_unbound(
+        Some(Register::new(12).unwrap()),
+        virtual_range,
+        O3MemoryResultWindowRole::YoungerRead,
+    );
+
+    assert!(authorization.bind_translated(
+        virtual_range.start(),
+        Address::new(0x8000_2000),
+        virtual_range.size(),
+    ));
+    assert!(authorization.bind_translated(
+        virtual_range.start(),
+        Address::new(0x8000_2000),
+        virtual_range.size(),
+    ));
+    assert!(authorization.bind_target(O3MemoryResultWindowRoute::Memory));
+    assert!(authorization.bind_target(O3MemoryResultWindowRoute::Memory));
+    assert!(authorization.matches_bound_target(
+        O3MemoryResultWindowRoute::Memory,
+        Address::new(0x8000_2000),
+        virtual_range.size(),
+    ));
+    assert!(!authorization.bind_target(O3MemoryResultWindowRoute::Mmio));
+}
+
+#[test]
+fn translated_result_pair_rejects_wrong_virtual_span_rebind_and_target_change() {
+    let virtual_range =
+        AddressRange::new(Address::new(0x5000), AccessSize::new(8).unwrap()).unwrap();
+    let mut authorization = O3MemoryResultWindowAuthorization::translated_unbound(
+        Some(Register::new(12).unwrap()),
+        virtual_range,
+        O3MemoryResultWindowRole::YoungerRead,
+    );
+
+    assert!(!authorization.bind_translated(
+        Address::new(0x5008),
+        Address::new(0x8000_2000),
+        virtual_range.size(),
+    ));
+    assert!(!authorization.bind_translated(
+        virtual_range.start(),
+        Address::new(0x8000_2000),
+        AccessSize::new(4).unwrap(),
+    ));
+    assert!(authorization.bind_translated(
+        virtual_range.start(),
+        Address::new(0x8000_2000),
+        virtual_range.size(),
+    ));
+    assert!(!authorization.bind_translated(
+        virtual_range.start(),
+        Address::new(0x8000_3000),
+        virtual_range.size(),
+    ));
+    assert!(authorization.bind_target(O3MemoryResultWindowRoute::Memory));
+    assert!(!authorization.bind_target(O3MemoryResultWindowRoute::Mmio));
+    assert!(authorization.matches_bound_target(
+        O3MemoryResultWindowRoute::Memory,
+        Address::new(0x8000_2000),
+        virtual_range.size(),
+    ));
+    assert!(!authorization.matches_bound_target(
+        O3MemoryResultWindowRoute::Memory,
+        Address::new(0x8000_3000),
+        virtual_range.size(),
+    ));
+}
+
+#[test]
+fn translated_result_pair_rejects_dependent_second_address_and_third_result() {
+    let dependent = translated_result_pair_core(
+        load_reserved(11, 2),
+        [(1, 0x8004, ld(12, 11).to_le_bytes().to_vec())],
+    );
+    assert_eq!(
+        dependent.next_cached_translated_memory_fetch_ahead_before_retire(),
+        None
+    );
+    assert!(dependent
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .memory_result_window_authorizations
+        .is_empty());
+
+    let head = i_type(0, 2, 0b011, 1, 0x07);
+    let second = ld(12, 3);
+    let third = ld(13, 4);
+    let three_results = translated_result_pair_core(
+        head,
+        [
+            (1, 0x8004, second.to_le_bytes().to_vec()),
+            (2, 0x8008, third.to_le_bytes().to_vec()),
+        ],
+    );
+    assert_eq!(
+        three_results.next_cached_translated_memory_fetch_ahead_before_retire(),
+        None
+    );
+    let state = three_results.state.lock().expect("riscv core lock");
+    assert_eq!(state.memory_result_window_authorizations.len(), 2);
+    assert_eq!(
+        state
+            .memory_result_window_authorizations
+            .get(&request(0))
+            .copied()
+            .map(O3MemoryResultWindowAuthorization::role),
+        Some(O3MemoryResultWindowRole::Head)
+    );
+    assert_eq!(
+        state
+            .memory_result_window_authorizations
+            .get(&request(1))
+            .copied()
+            .map(O3MemoryResultWindowAuthorization::role),
+        Some(O3MemoryResultWindowRole::YoungerRead)
+    );
+    assert!(!state
+        .memory_result_window_authorizations
+        .contains_key(&request(2)));
+}

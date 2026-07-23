@@ -41,6 +41,7 @@ mod producer_forwarded_scalar_return_link_shapes;
 mod ras_required_validation;
 mod selected;
 mod speculative_history;
+mod translated_result_pair;
 
 fn endpoint(name: &str) -> TransportEndpointId {
     TransportEndpointId::new(name).unwrap()

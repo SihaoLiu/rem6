@@ -8,14 +8,21 @@ use crate::{
     riscv_live_retire_window::RiscvCompletedFetchInstruction,
 };
 
-use super::{data_access_result::data_access_result_authorization, TranslatedMemoryFetchAhead};
+use super::{
+    data_access_result::data_access_result_authorization,
+    data_access_result_translation::translated_younger_result_authorization,
+    TranslatedMemoryFetchAhead,
+};
 
 pub(in crate::riscv_fetch_ahead) fn data_access_result_younger_authorization(
     state: &crate::RiscvCoreState,
     instruction: &RiscvCompletedFetchInstruction,
     translated: TranslatedMemoryFetchAhead,
 ) -> Option<O3MemoryResultWindowAuthorization> {
-    if translated != TranslatedMemoryFetchAhead::Disabled || state.data_translation.is_some() {
+    if state.data_translation.is_some() {
+        return translated_younger_result_authorization(state, instruction);
+    }
+    if translated != TranslatedMemoryFetchAhead::Disabled {
         return None;
     }
     let role = match instruction.decoded().instruction() {

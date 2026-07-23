@@ -55,9 +55,6 @@ impl RiscvCoreState {
         fetch_request: MemoryRequestId,
         access: &MemoryAccessKind,
     ) -> bool {
-        if self.data_translation.is_some() {
-            return false;
-        }
         let Some(authorization) = self
             .memory_result_window_authorizations
             .get(&fetch_request)
@@ -92,16 +89,25 @@ impl RiscvCoreState {
         let Ok(span) = masked_vector_memory_request_span(access, base_address, base_size) else {
             return false;
         };
-        authorization.matches_resolved_range(
-            O3MemoryResultWindowRoute::Memory,
-            span.address,
-            span.size,
-        ) && matches!(
-            self.pma
-                .is_uncacheable(span.address.get(), span.size.bytes()),
-            Ok(false)
-        ) && self
-            .o3_runtime
-            .can_stage_memory_result_window_access(access)
+        let authorized_range = if authorization.is_translated() {
+            self.data_translation.is_some()
+                && authorization.matches_virtual_range(span.address, span.size)
+        } else {
+            self.data_translation.is_none()
+                && authorization.matches_resolved_range(
+                    O3MemoryResultWindowRoute::Memory,
+                    span.address,
+                    span.size,
+                )
+                && matches!(
+                    self.pma
+                        .is_uncacheable(span.address.get(), span.size.bytes()),
+                    Ok(false)
+                )
+        };
+        authorized_range
+            && self
+                .o3_runtime
+                .can_stage_memory_result_window_access(access)
     }
 }

@@ -114,13 +114,8 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_authorization(
     {
         return None;
     }
-    let physical_range = if state.data_translation.is_none() {
-        probe.virtual_range
-    } else {
-        if !matches!(
-            translated,
-            TranslatedMemoryFetchAhead::CachedMemory | TranslatedMemoryFetchAhead::Mmio
-        ) {
+    if state.data_translation.is_some() {
+        if translated != TranslatedMemoryFetchAhead::CachedMemory {
             return None;
         }
         let DataAccessResultTranslationProbe::Ready(physical_address) =
@@ -128,8 +123,22 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_authorization(
         else {
             return None;
         };
-        AddressRange::new(physical_address, probe.virtual_range.size()).ok()?
-    };
+        let physical_range =
+            AddressRange::new(physical_address, probe.virtual_range.size()).ok()?;
+        if state
+            .pma
+            .is_uncacheable(physical_range.start().get(), physical_range.size().bytes())
+            .ok()?
+        {
+            return None;
+        }
+        return Some(O3MemoryResultWindowAuthorization::translated_unbound(
+            integer_destination,
+            probe.virtual_range,
+            role,
+        ));
+    }
+    let physical_range = probe.virtual_range;
     if translated != TranslatedMemoryFetchAhead::Mmio
         && state
             .pma

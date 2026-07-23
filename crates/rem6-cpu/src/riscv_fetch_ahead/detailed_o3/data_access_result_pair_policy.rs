@@ -5,7 +5,7 @@ use crate::{
     riscv_live_retire_window::RiscvCompletedFetchInstruction,
 };
 
-use crate::riscv_fetch_ahead::O3MemoryResultWindowAuthorization;
+use crate::riscv_fetch_ahead::{O3MemoryResultWindowAuthorization, O3MemoryResultWindowRole};
 
 pub(in crate::riscv_fetch_ahead) fn result_head_allows_younger_read(
     head: &RiscvCompletedFetchInstruction,
@@ -13,20 +13,21 @@ pub(in crate::riscv_fetch_ahead) fn result_head_allows_younger_read(
     head_authorization: O3MemoryResultWindowAuthorization,
     younger_authorization: O3MemoryResultWindowAuthorization,
 ) -> bool {
-    if head_authorization
-        .integer_destination()
-        .is_some_and(|destination| {
-            let instruction = younger.decoded().instruction();
-            let mut sources = o3_scalar_integer_source_registers(&instruction);
-            if let RiscvInstruction::VectorMemory(RiscvVectorMemoryInstruction::LoadUnitStride {
-                rs1,
-                ..
-            }) = instruction
-            {
-                sources.push(rs1);
-            }
-            sources.contains(&destination)
-        })
+    if head_authorization.role() != O3MemoryResultWindowRole::Head
+        || younger_authorization.role() != O3MemoryResultWindowRole::YoungerRead
+        || head_authorization
+            .integer_destination()
+            .is_some_and(|destination| {
+                let instruction = younger.decoded().instruction();
+                let mut sources = o3_scalar_integer_source_registers(&instruction);
+                if let RiscvInstruction::VectorMemory(
+                    RiscvVectorMemoryInstruction::LoadUnitStride { rs1, .. },
+                ) = instruction
+                {
+                    sources.push(rs1);
+                }
+                sources.contains(&destination)
+            })
     {
         return false;
     }

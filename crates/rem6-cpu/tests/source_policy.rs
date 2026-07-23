@@ -48,6 +48,7 @@ const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_MULTIPLE_ISSUE_TEST_LINES: usize = 500;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_THREE_PENDING_ISSUE_TEST_LINES: usize = 450;
 const MAX_RISCV_RETAINED_DATA_ACCESS_RESULT_LINES: usize = 100;
 const MAX_RISCV_MEMORY_RESULT_AUTHORIZATION_LINES: usize = 150;
+const MAX_RISCV_MEMORY_RESULT_TRANSLATED_AUTHORIZATION_LINES: usize = 220;
 const MAX_RISCV_BUFFERED_EFFECT_LINES: usize = 220;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_LINES: usize = 650;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_SET_LINES: usize = 350;
@@ -2848,6 +2849,7 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
         "data_access_result_head_physical_probe",
         "data_access_result_head_probe",
         "data_access_result_translation_probe",
+        "translated_younger_result_authorization",
     ] {
         let owners = production
             .iter()
@@ -3149,6 +3151,8 @@ fn riscv_memory_result_authorization_has_focused_ownership() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root_path = crate_dir.join("src/riscv_fetch_ahead.rs");
     let owner_path = crate_dir.join("src/riscv_fetch_ahead/memory_result_authorization.rs");
+    let translated_path =
+        crate_dir.join("src/riscv_fetch_ahead/memory_result_authorization/translated.rs");
     let root = fs::read_to_string(&root_path).unwrap();
 
     assert!(
@@ -3162,17 +3166,32 @@ fn riscv_memory_result_authorization_has_focused_ownership() {
         "memory-result authorization belongs in {}",
         owner_path.display()
     );
+    assert!(
+        translated_path.is_file(),
+        "translated memory-result authorization belongs in {}",
+        translated_path.display()
+    );
     let owner = fs::read_to_string(&owner_path).unwrap();
+    let translated = fs::read_to_string(&translated_path).unwrap();
     assert!(
         owner.lines().count() <= MAX_RISCV_MEMORY_RESULT_AUTHORIZATION_LINES,
         "memory_result_authorization.rs exceeds {MAX_RISCV_MEMORY_RESULT_AUTHORIZATION_LINES} lines"
     );
+    assert!(
+        translated.lines().count() <= MAX_RISCV_MEMORY_RESULT_TRANSLATED_AUTHORIZATION_LINES,
+        "memory_result_authorization/translated.rs exceeds {MAX_RISCV_MEMORY_RESULT_TRANSLATED_AUTHORIZATION_LINES} lines"
+    );
     for anchor in [
+        "#[path = \"memory_result_authorization/translated.rs\"]\nmod translated;",
         "enum O3MemoryResultWindowRoute",
+        "Translated,",
         "enum O3MemoryResultWindowRole",
         "YoungerDependentRead",
         "enum O3MemoryResultWindowAddressAuthority",
         "ResolvedRange(AddressRange)",
+        "TranslatedRange {",
+        "physical_range: Option<AddressRange>",
+        "target: Option<O3MemoryResultWindowRoute>",
         "DependentSource",
         "struct O3MemoryResultWindowAuthorization",
         "address_authority: O3MemoryResultWindowAddressAuthority",
@@ -3195,6 +3214,29 @@ fn riscv_memory_result_authorization_has_focused_ownership() {
             "riscv_fetch_ahead.rs still owns `{anchor}`"
         );
     }
+    for anchor in [
+        "const fn translated_unbound(",
+        "fn bind_translated(",
+        "fn bind_target(",
+        "const fn is_translated(",
+        "const fn virtual_range(",
+        "fn matches_virtual_range(",
+        "fn matches_bound_target(",
+    ] {
+        assert!(
+            translated.contains(anchor),
+            "translated memory-result authorization is missing `{anchor}`"
+        );
+        assert!(
+            !owner.contains(anchor) && !root.contains(anchor),
+            "translated authorization method escaped its focused child `{anchor}`"
+        );
+    }
+    assert!(
+        external_module_declaration_lines(&translated).is_empty()
+            && path_attribute_lines(&translated).is_empty(),
+        "translated memory-result authorization must remain a leaf child"
+    );
     assert!(
         !owner.contains("fn physical_range(") && !owner.contains("fn matches(\n"),
         "memory-result authorization must expose resolved-only matching"

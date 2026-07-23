@@ -1,12 +1,55 @@
+use rem6_isa_riscv::MemoryWidth;
 use rem6_memory::{
     AddressRange, TranslationAccessKind, TranslationAddressSpaceId, TranslationRequest,
     TranslationRequestId,
 };
 
 use crate::riscv_data_issue::{access_address, access_size, masked_vector_memory_request_span};
+use crate::riscv_fetch_ahead::{O3MemoryResultWindowAuthorization, O3MemoryResultWindowRole};
 
 use super::data_access_result::data_access_result_fetch_ahead_shape;
 use super::*;
+
+pub(super) fn translated_younger_result_authorization(
+    state: &RiscvCoreState,
+    instruction: &RiscvCompletedFetchInstruction,
+) -> Option<O3MemoryResultWindowAuthorization> {
+    if state.data_translation.is_none()
+        || !state.live_retire_gate.detailed_policy_enabled()
+        || instruction.decoded().bytes() != 4
+        || state.o3_runtime.scalar_memory_window_limit() <= 1
+        || state.memory_result_window_authorizations.len() >= 2
+    {
+        return None;
+    }
+    let decoded = instruction.decoded().instruction();
+    let RiscvInstruction::Load {
+        width: MemoryWidth::Doubleword,
+        ..
+    } = decoded
+    else {
+        return None;
+    };
+    let rd = independent_scalar_load_destination(
+        decoded,
+        state
+            .memory_result_window_authorizations
+            .values()
+            .filter_map(|authorization| authorization.integer_destination()),
+    )?;
+    let mut hart = state.hart.clone();
+    let execution = hart.execute(decoded).ok()?;
+    let access = execution.memory_access()?.clone();
+    let base_size = access_size(&access).ok()?;
+    let base_address = Address::new(access_address(&access));
+    let request_span = masked_vector_memory_request_span(&access, base_address, base_size).ok()?;
+    let virtual_range = AddressRange::new(request_span.address, request_span.size).ok()?;
+    Some(O3MemoryResultWindowAuthorization::translated_unbound(
+        Some(rd),
+        virtual_range,
+        O3MemoryResultWindowRole::YoungerRead,
+    ))
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::riscv_fetch_ahead) enum DataAccessResultHeadPhysicalProbe {
