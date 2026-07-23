@@ -78,6 +78,7 @@ const MAX_RISCV_DATA_ISSUE_TEST_ROOT_LINES: usize = 1500;
 const MAX_RISCV_DATA_ISSUE_LIFECYCLE_TEST_LINES: usize = 450;
 const MAX_RISCV_O3_RESULT_PAIR_ADMISSION_LINES: usize = 300;
 const MAX_RISCV_TRANSLATED_RESULT_PAIR_ISSUE_TEST_LINES: usize = 450;
+const MAX_RISCV_TRANSLATED_RESULT_PAIR_ISSUE_FIXTURE_LINES: usize = 400;
 const MAX_RISCV_FAILURE_DIAGNOSTIC_LINES: usize = 300;
 const MAX_RISCV_PRODUCER_FORWARDED_DESCENDANT_LINES: usize = 120;
 const MAX_SOURCE_LINES: usize = 1800;
@@ -235,6 +236,8 @@ fn o3_translated_result_pair_issue_admission_has_focused_ownership() {
     let progress_owner_path = src_dir.join("riscv_data_issue/o3_result_pair_admission.rs");
     let issue_test_root_path = src_dir.join("riscv_data_issue_tests.rs");
     let issue_test_path = src_dir.join("riscv_data_issue_tests/translated_mmio_result_pair.rs");
+    let issue_test_fixture_path =
+        src_dir.join("riscv_data_issue_tests/translated_mmio_result_pair/fixture.rs");
     let window_path = src_dir.join("riscv_memory_result_window.rs");
 
     let o3_root = fs::read_to_string(&o3_root_path).unwrap();
@@ -261,6 +264,7 @@ fn o3_translated_result_pair_issue_admission_has_focused_ownership() {
         &runtime_test_path,
         &progress_owner_path,
         &issue_test_path,
+        &issue_test_fixture_path,
         &window_path,
     ] {
         assert!(path.is_file(), "missing focused owner {}", path.display());
@@ -269,28 +273,53 @@ fn o3_translated_result_pair_issue_admission_has_focused_ownership() {
     assert!(line_count(&runtime_test_path) <= MAX_O3_RUNTIME_TRANSLATED_RESULT_PAIR_TEST_LINES);
     assert!(line_count(&progress_owner_path) <= MAX_RISCV_O3_RESULT_PAIR_ADMISSION_LINES);
     assert!(line_count(&issue_test_path) <= MAX_RISCV_TRANSLATED_RESULT_PAIR_ISSUE_TEST_LINES);
-
-    for path in [&runtime_test_path, &issue_test_path] {
-        let source = fs::read_to_string(path).unwrap();
-        assert!(include_macro_lines(&source).is_empty());
-        assert!(external_module_declaration_lines(&source).is_empty());
-    }
+    assert!(
+        line_count(&issue_test_fixture_path)
+            <= MAX_RISCV_TRANSLATED_RESULT_PAIR_ISSUE_FIXTURE_LINES
+    );
 
     let runtime_tests = fs::read_to_string(&runtime_test_path).unwrap();
+    assert!(include_macro_lines(&runtime_tests).is_empty());
+    assert!(external_module_declaration_lines(&runtime_tests).is_empty());
+
+    let issue_tests = fs::read_to_string(&issue_test_path).unwrap();
+    assert!(include_macro_lines(&issue_tests).is_empty());
+    assert_eq!(path_attribute_lines(&issue_tests).len(), 1);
+    assert_eq!(external_module_declaration_lines(&issue_tests).len(), 1);
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &issue_tests,
+            "translated_mmio_result_pair/fixture.rs",
+            "fixture",
+        ),
+        1
+    );
+
+    let issue_test_fixture = fs::read_to_string(&issue_test_fixture_path).unwrap();
+    assert!(include_macro_lines(&issue_test_fixture).is_empty());
+    assert!(path_attribute_lines(&issue_test_fixture).is_empty());
+    assert!(external_module_declaration_lines(&issue_test_fixture).is_empty());
+
     for test in [
         "translated_result_pair_memory_width_one_selects_the_next_tick",
         "translated_result_pair_memory_width_two_reuses_the_head_tick",
         "translated_result_pair_total_width_one_still_selects_the_next_tick",
+        "scalar_memory_prefix_is_not_an_exact_memory_result_head",
+        "memory_result_window_head_matches_its_exact_identity",
     ] {
         assert_eq!(rust_test_function_definition_count(&runtime_tests, test), 1);
     }
-    let issue_tests = fs::read_to_string(&issue_test_path).unwrap();
     for test in [
         "translated_result_pair_without_outstanding_data_is_ordinary",
         "translated_result_pair_exact_resident_pair_is_ready",
         "translated_result_pair_memory_width_waits_for_selected_tick",
         "translated_result_pair_rejects_unrelated_outstanding_request",
         "translated_result_pair_blocks_multiple_or_unrelated_auxiliary_state",
+        "translated_split_gapped_result_pair_is_ready_with_two_memory_slots",
+        "translated_split_gapped_result_pair_waits_with_one_memory_slot",
+        "translated_result_pair_exact_pending_and_ready_keys_preserve_progress",
+        "translated_result_pair_rejects_mismatched_pending_and_ready_map_keys",
+        "translated_result_pair_requires_exact_outstanding_access_identity",
     ] {
         assert_eq!(rust_test_function_definition_count(&issue_tests, test), 1);
     }
@@ -298,6 +327,7 @@ fn o3_translated_result_pair_issue_admission_has_focused_ownership() {
     for (function, owner_path) in [
         ("next_memory_slot_at_or_after", &calendar_path),
         ("next_memory_result_issue_tick", &o3_owner_path),
+        ("matches_exact_memory_result_head", &o3_owner_path),
         ("translated_result_pair_progress", &progress_owner_path),
         ("has_exact_translated_result_pair_window", &window_path),
     ] {

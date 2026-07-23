@@ -1,14 +1,12 @@
-use rem6_memory::{
-    TranslationAccessKind, TranslationAddressSpaceId, TranslationRequest, TranslationRequestId,
-};
+use rem6_memory::TranslationRequestId;
 
 use super::*;
 use crate::riscv_translation::{PendingDataTranslation, TranslatedDataAccess};
 
-const HEAD_PC: u64 = 0x8000;
-const YOUNGER_PC: u64 = 0x8004;
-const HEAD_VIRTUAL_ADDRESS: u64 = 0x4000;
-const YOUNGER_VIRTUAL_ADDRESS: u64 = 0x5000;
+#[path = "translated_mmio_result_pair/fixture.rs"]
+mod fixture;
+
+use fixture::*;
 
 #[test]
 fn translated_result_pair_without_outstanding_data_is_ordinary() {
@@ -167,190 +165,95 @@ fn translated_result_pair_blocks_multiple_or_unrelated_auxiliary_state() {
     );
 }
 
-fn translated_result_pair_with_outstanding_head(memory_issue_width: usize) -> RiscvCore {
-    let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
-    let core = RiscvCore::with_data_translation(
-        cpu_core(fetch_route, HEAD_PC),
-        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
-        CpuTranslationFrontend::with_tlb(
-            TranslationQueueConfig::new(4, 0).unwrap(),
-            TranslationTlbConfig::new(4).unwrap(),
-        ),
-    );
-    core.set_detailed_live_retire_gate_enabled(true);
-    core.set_o3_scalar_memory_depth(4);
-    core.set_o3_issue_width(4);
-    core.set_o3_memory_issue_width(memory_issue_width);
-    core.write_register(reg(2), HEAD_VIRTUAL_ADDRESS);
-    core.write_register(reg(3), YOUNGER_VIRTUAL_ADDRESS);
-    core.core
-        .state
-        .lock()
-        .expect("cpu core lock")
-        .events
-        .extend([
-            completed_fetch_with_raw(0, HEAD_PC, ld(11, 2)),
-            completed_fetch_with_raw(1, YOUNGER_PC, ld(12, 3)),
-        ]);
+#[test]
+fn translated_split_gapped_result_pair_is_ready_with_two_memory_slots() {
+    let core = translated_split_gapped_result_pair_with_outstanding_head(2);
+    let issue_tick = outstanding_issue_tick(&core);
 
-    let page_map = translated_page_map();
-    install_cached_head_translation(&core, &page_map);
     assert_eq!(
-        core.next_cached_translated_memory_fetch_ahead_before_retire()
-            .map(|decision| decision.pc()),
-        Some(Address::new(0x8008))
+        core.translated_result_pair_progress(issue_tick),
+        O3ResultPairProgress::Ready { issue_tick }
     );
-    let head_execution = core
-        .execute_next_completed_fetch()
-        .unwrap()
-        .expect("translated pair head executes");
-    assert_eq!(head_execution.fetch_pc(), Address::new(HEAD_PC));
-    core.issue_next_translated_data_access(
-        &mut scheduler,
-        &transport,
-        MemoryTrace::new(),
-        &page_map,
-        |_delivery, _context| TargetOutcome::NoResponse,
-    )
-    .unwrap()
-    .expect("translated pair head issues");
+}
 
-    {
-        let mut state = core.state.lock().expect("riscv core lock");
-        let (_, issued) = sole_outstanding(&state);
-        let mut runtime = crate::o3_runtime::O3RuntimeState::default();
-        assert!(runtime.set_window_depths(4, 4));
-        assert!(runtime.set_issue_width(4));
-        assert!(runtime.set_memory_issue_width(memory_issue_width));
-        assert!(runtime.stage_live_data_access_issue(
-            &head_execution,
-            issued.request,
-            issued.tick,
-            O3DataAccessWindowPolicy::MemoryResultWindow,
-        ));
-        state.o3_runtime = runtime;
-    }
+#[test]
+fn translated_split_gapped_result_pair_waits_with_one_memory_slot() {
+    let core = translated_split_gapped_result_pair_with_outstanding_head(1);
+    let issue_tick = outstanding_issue_tick(&core);
 
-    let state = core.state.lock().expect("riscv core lock");
-    assert_eq!(state.outstanding_data.len(), 1);
-    assert_eq!(state.memory_result_window_authorizations.len(), 1);
-    let authorization = state
-        .memory_result_window_authorizations
-        .get(&fetch_request(1))
-        .copied()
-        .expect("translated younger authorization remains");
     assert_eq!(
-        authorization.role(),
-        crate::riscv_fetch_ahead::O3MemoryResultWindowRole::YoungerRead
+        core.translated_result_pair_progress(issue_tick),
+        O3ResultPairProgress::WaitUntil(issue_tick + 1)
     );
-    assert!(authorization.is_translated());
-    let (resident, forwarded, completed_partial, younger_rows) = state
-        .o3_runtime
-        .live_scalar_memory_handoff()
-        .expect("resident translated head has handoff identity");
-    assert_eq!(resident.len(), 1);
-    assert!(forwarded.is_empty());
-    assert!(completed_partial.is_empty());
-    assert_eq!(younger_rows, 0);
-    let (data_request, issued) = state.outstanding_data.iter().next().unwrap();
-    assert_eq!(resident[0].fetch_request, fetch_request(0));
-    assert_eq!(resident[0].data_request, *data_request);
-    assert_eq!(resident[0].data_request, issued.request);
-    assert_eq!(resident[0].o3_sequence, 0);
-    assert_eq!(resident[0].issue_tick, issued.tick);
+}
+
+#[test]
+fn translated_result_pair_exact_pending_and_ready_keys_preserve_progress() {
+    let pending = translated_result_pair_with_outstanding_head(2);
+    let issue_tick = outstanding_issue_tick(&pending);
+    install_pending_younger_translation(&pending, false);
     assert_eq!(
-        resident[0].operation,
-        crate::riscv_execution_mode_handoff::RiscvO3LiveDataHandoffOperation::Load
+        pending.translated_result_pair_progress(issue_tick),
+        O3ResultPairProgress::Ready { issue_tick }
     );
-    assert!(matches!(
-        issued.access,
-        rem6_isa_riscv::MemoryAccessKind::Load { rd, .. } if !rd.is_zero()
-    ));
-    assert!(state.has_exact_translated_result_pair_window(
-        resident[0].fetch_request,
-        resident[0].o3_sequence,
-    ));
+
+    let ready = translated_result_pair_with_outstanding_head(1);
+    let issue_tick = outstanding_issue_tick(&ready);
+    install_ready_younger_translation(&ready, false);
     assert_eq!(
-        state.o3_runtime.next_memory_result_issue_tick(issued.tick),
-        Some(if memory_issue_width == 1 {
-            issued.tick + 1
-        } else {
-            issued.tick
-        })
+        ready.translated_result_pair_progress(issue_tick),
+        O3ResultPairProgress::WaitUntil(issue_tick + 1)
     );
-    drop(state);
-
-    core
 }
 
-fn sole_outstanding(state: &RiscvCoreState) -> (MemoryRequestId, IssuedDataAccess) {
-    let (request, issued) = state.outstanding_data.iter().next().unwrap();
-    (*request, issued.clone())
+#[test]
+fn translated_result_pair_rejects_mismatched_pending_and_ready_map_keys() {
+    let pending = translated_result_pair_with_outstanding_head(2);
+    let issue_tick = outstanding_issue_tick(&pending);
+    install_pending_younger_translation(&pending, true);
+    assert_eq!(
+        pending.translated_result_pair_progress(issue_tick),
+        O3ResultPairProgress::Blocked
+    );
+
+    let ready = translated_result_pair_with_outstanding_head(2);
+    let issue_tick = outstanding_issue_tick(&ready);
+    install_ready_younger_translation(&ready, true);
+    assert_eq!(
+        ready.translated_result_pair_progress(issue_tick),
+        O3ResultPairProgress::Blocked
+    );
 }
 
-fn outstanding_issue_tick(core: &RiscvCore) -> Tick {
-    core.state
-        .lock()
-        .expect("riscv core lock")
-        .outstanding_data
-        .values()
-        .next()
-        .unwrap()
-        .tick
+#[test]
+fn translated_result_pair_requires_exact_outstanding_access_identity() {
+    assert_outstanding_mutation_blocks("destination", |issued| {
+        issued.access = translated_head_access(13, HEAD_VIRTUAL_ADDRESS);
+    });
+    assert_outstanding_mutation_blocks("virtual address", |issued| {
+        issued.access = translated_head_access(11, HEAD_VIRTUAL_ADDRESS + 8);
+    });
+    assert_outstanding_mutation_blocks("size", |issued| {
+        issued.size = AccessSize::new(4).unwrap();
+    });
+    assert_outstanding_mutation_blocks("request byte offset", |issued| {
+        issued.request_byte_offset = 1;
+    });
+    assert_outstanding_mutation_blocks("target", |issued| {
+        issued.target = RiscvDataAccessTarget::Mmio {
+            route: MmioRoute::new(PartitionId::new(0), PartitionId::new(1), 2, 2).unwrap(),
+        };
+    });
 }
 
-fn translated_page_map() -> TranslationPageMap {
-    let mut page_map = TranslationPageMap::new(TranslationPageSize::new(4096).unwrap());
-    page_map
-        .map(
-            Address::new(HEAD_VIRTUAL_ADDRESS),
-            Address::new(0x9000),
-            1,
-            TranslationPagePermissions::read_write_execute(),
-        )
-        .unwrap();
-    page_map
-}
+fn assert_outstanding_mutation_blocks(label: &str, mutate: impl FnOnce(&mut IssuedDataAccess)) {
+    let core = translated_result_pair_with_outstanding_head(2);
+    let issue_tick = outstanding_issue_tick(&core);
+    mutate_sole_outstanding(&core, mutate);
 
-fn install_cached_head_translation(core: &RiscvCore, page_map: &TranslationPageMap) {
-    let request = TranslationRequest::new(
-        TranslationRequestId::new(AgentId::new(7), 99),
-        Address::new(HEAD_VIRTUAL_ADDRESS),
-        AccessSize::new(8).unwrap(),
-        TranslationAccessKind::Load,
-    )
-    .unwrap();
-    let mut state = core.state.lock().expect("riscv core lock");
-    let address_space = TranslationAddressSpaceId::new(state.hart.translation_address_space());
-    state
-        .data_translation
-        .as_mut()
-        .expect("translated pair has data translation")
-        .tlb_mut()
-        .expect("translated pair has a TLB")
-        .translate_in_address_space(address_space, &request, page_map)
-        .unwrap();
-}
-
-fn completed_fetch_with_raw(sequence: u64, pc: u64, raw: u32) -> CpuFetchEvent {
-    CpuFetchEvent::completed(
-        CpuFetchRecord::new(
-            10 + sequence,
-            PartitionId::new(0),
-            MemoryRouteId::new(0),
-            endpoint("cpu0.ifetch"),
-            fetch_request(sequence),
-            Address::new(pc),
-            AccessSize::new(4).unwrap(),
-        ),
-        raw.to_le_bytes().to_vec(),
-    )
-}
-
-fn fetch_request(sequence: u64) -> MemoryRequestId {
-    MemoryRequestId::new(AgentId::new(7), sequence)
-}
-
-fn ld(rd: u8, rs1: u8) -> u32 {
-    i_type(0, rs1, 0b011, rd, 0x03)
+    assert_eq!(
+        core.translated_result_pair_progress(issue_tick),
+        O3ResultPairProgress::Blocked,
+        "{label}"
+    );
 }

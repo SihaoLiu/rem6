@@ -12,6 +12,7 @@ pub(crate) enum O3ResultPairProgress {
 
 impl RiscvCore {
     pub(crate) fn translated_result_pair_progress(&self, now: Tick) -> O3ResultPairProgress {
+        let fetch_events = self.core.fetch_events();
         let state = self.state.lock().expect("riscv core lock");
         if state.outstanding_data.is_empty() {
             return O3ResultPairProgress::Ordinary;
@@ -33,10 +34,31 @@ impl RiscvCore {
         let Some(outstanding) = state.outstanding_data.get(&head.data_request) else {
             return O3ResultPairProgress::Blocked;
         };
+        let exact_span = access_size(&outstanding.access)
+            .ok()
+            .and_then(|size| {
+                masked_vector_memory_request_span(
+                    &outstanding.access,
+                    Address::new(access_address(&outstanding.access)),
+                    size,
+                )
+                .ok()
+            })
+            .is_some_and(|span| {
+                outstanding.size == span.size && outstanding.request_byte_offset == span.byte_offset
+            });
         if outstanding.request != head.data_request
             || outstanding.fetch_request != head.fetch_request
             || outstanding.tick != head.issue_tick
             || head.operation != RiscvO3LiveDataHandoffOperation::Load
+            || !matches!(&outstanding.target, RiscvDataAccessTarget::Memory { .. })
+            || !matches!(
+                state
+                    .pma
+                    .is_uncacheable(outstanding.physical_address.get(), outstanding.size.bytes(),),
+                Ok(false)
+            )
+            || !exact_span
             || !matches!(
                 outstanding.access,
                 rem6_isa_riscv::MemoryAccessKind::Load {
@@ -45,7 +67,18 @@ impl RiscvCore {
                     ..
                 } if !rd.is_zero()
             )
-            || !state.has_exact_translated_result_pair_window(head.fetch_request, head.o3_sequence)
+            || !state.o3_runtime.matches_exact_memory_result_head(
+                head.fetch_request,
+                head.data_request,
+                head.issue_tick,
+                head.o3_sequence,
+                &outstanding.access,
+            )
+            || !state.has_exact_translated_result_pair_window(
+                &fetch_events,
+                head.fetch_request,
+                head.o3_sequence,
+            )
         {
             return O3ResultPairProgress::Blocked;
         }

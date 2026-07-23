@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use rem6_isa_riscv::{MemoryAccessKind, MemoryWidth, RiscvInstruction};
 use rem6_memory::{Address, MemoryRequestId};
 
@@ -8,12 +10,16 @@ use crate::{
     },
     riscv_data_issue::{access_address, access_size, masked_vector_memory_request_span},
     riscv_fetch_ahead::{O3MemoryResultWindowRole, O3MemoryResultWindowRoute},
-    RiscvCoreState, RiscvCpuExecutionEvent,
+    riscv_live_retire_window::{
+        completed_fetch_instruction_from_events, completed_fetch_instruction_starting_with,
+    },
+    CpuFetchEvent, RiscvCoreState, RiscvCpuExecutionEvent,
 };
 
 impl RiscvCoreState {
     pub(crate) fn has_exact_translated_result_pair_window(
         &self,
+        fetch_events: &[CpuFetchEvent],
         head_fetch_request: MemoryRequestId,
         head_o3_sequence: u64,
     ) -> bool {
@@ -25,21 +31,53 @@ impl RiscvCoreState {
         {
             return false;
         }
-        let Some(younger_sequence) = head_fetch_request.sequence().checked_add(1) else {
+        let Some((&younger_fetch_request, authorization)) =
+            self.memory_result_window_authorizations.iter().next()
+        else {
             return false;
         };
-        let younger_fetch_request =
-            MemoryRequestId::new(head_fetch_request.agent(), younger_sequence);
-        let Some(authorization) = self
-            .memory_result_window_authorizations
-            .get(&younger_fetch_request)
-            .copied()
+        let authorization = *authorization;
+        let executed_fetches = BTreeSet::new();
+        let Some(head_event) = fetch_events
+            .iter()
+            .find(|event| event.request_id() == head_fetch_request)
         else {
+            return false;
+        };
+        let Some(head) =
+            completed_fetch_instruction_starting_with(&executed_fetches, fetch_events, head_event)
+        else {
+            return false;
+        };
+        let Some(sequential_pc) = head
+            .pc()
+            .get()
+            .checked_add(u64::from(head.decoded().bytes()))
+            .map(Address::new)
+        else {
+            return false;
+        };
+        let Some(younger) = completed_fetch_instruction_from_events(
+            &executed_fetches,
+            fetch_events,
+            head.last_consumed_request(),
+            sequential_pc,
+        ) else {
             return false;
         };
         if authorization.role() != O3MemoryResultWindowRole::YoungerRead
             || !authorization.is_translated()
             || authorization.integer_destination().is_none()
+            || head.first_consumed_request() != head_fetch_request
+            || younger.first_consumed_request() != younger_fetch_request
+            || !matches!(
+                younger.decoded().instruction(),
+                RiscvInstruction::Load {
+                    rd,
+                    width: MemoryWidth::Doubleword,
+                    ..
+                } if Some(rd) == authorization.integer_destination()
+            )
         {
             return false;
         }
@@ -56,30 +94,31 @@ impl RiscvCoreState {
                 && authorization.matches_virtual_range(address, size)
         };
         if self.pending_data_translations.len() > 1
-            || self
-                .pending_data_translations
-                .values()
-                .next()
-                .is_some_and(|pending| {
-                    !exact_younger(
-                        pending.fetch_request,
-                        &pending.access,
-                        pending.virtual_address,
-                        pending.size,
-                    )
-                })
+            || self.pending_data_translations.iter().next().is_some_and(
+                |(translation_id, pending)| {
+                    translation_id.agent() != pending.request_id.agent()
+                        || translation_id.sequence() != pending.request_id.sequence()
+                        || !exact_younger(
+                            pending.fetch_request,
+                            &pending.access,
+                            pending.virtual_address,
+                            pending.size,
+                        )
+                },
+            )
             || self.ready_translated_data.len() > 1
             || self
                 .ready_translated_data
-                .values()
+                .iter()
                 .next()
-                .is_some_and(|ready| {
-                    !exact_younger(
-                        ready.fetch_request,
-                        &ready.access,
-                        ready.virtual_address,
-                        ready.size,
-                    )
+                .is_some_and(|(fetch_request, ready)| {
+                    *fetch_request != ready.fetch_request
+                        || !exact_younger(
+                            ready.fetch_request,
+                            &ready.access,
+                            ready.virtual_address,
+                            ready.size,
+                        )
                 })
         {
             return false;
