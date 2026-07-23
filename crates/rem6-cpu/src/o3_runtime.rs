@@ -48,6 +48,8 @@ mod o3_runtime_issue_tests;
 mod o3_runtime_live_window;
 #[path = "o3_runtime_memory.rs"]
 mod o3_runtime_memory;
+#[path = "o3_runtime_memory_result_admission.rs"]
+mod o3_runtime_memory_result_admission;
 #[cfg(test)]
 #[path = "o3_runtime_memory_result_tests.rs"]
 mod o3_runtime_memory_result_tests;

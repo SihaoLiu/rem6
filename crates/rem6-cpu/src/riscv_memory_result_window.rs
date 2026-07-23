@@ -1,4 +1,4 @@
-use rem6_isa_riscv::{MemoryAccessKind, RiscvInstruction};
+use rem6_isa_riscv::{MemoryAccessKind, MemoryWidth, RiscvInstruction};
 use rem6_memory::{Address, MemoryRequestId};
 
 use crate::{
@@ -12,6 +12,95 @@ use crate::{
 };
 
 impl RiscvCoreState {
+    pub(crate) fn has_exact_translated_result_pair_window(
+        &self,
+        head_fetch_request: MemoryRequestId,
+        head_o3_sequence: u64,
+    ) -> bool {
+        if self.data_translation.is_none()
+            || !self.buffered_o3_effects.is_empty()
+            || self.memory_result_window_authorizations.len() != 1
+            || (!self.pending_data_translations.is_empty()
+                && !self.ready_translated_data.is_empty())
+        {
+            return false;
+        }
+        let Some(younger_sequence) = head_fetch_request.sequence().checked_add(1) else {
+            return false;
+        };
+        let younger_fetch_request =
+            MemoryRequestId::new(head_fetch_request.agent(), younger_sequence);
+        let Some(authorization) = self
+            .memory_result_window_authorizations
+            .get(&younger_fetch_request)
+            .copied()
+        else {
+            return false;
+        };
+        if authorization.role() != O3MemoryResultWindowRole::YoungerRead
+            || !authorization.is_translated()
+            || authorization.integer_destination().is_none()
+        {
+            return false;
+        }
+        let exact_younger = |fetch_request, access: &MemoryAccessKind, address, size| {
+            fetch_request == younger_fetch_request
+                && matches!(
+                    access,
+                    MemoryAccessKind::Load {
+                        rd,
+                        width: MemoryWidth::Doubleword,
+                        ..
+                    } if Some(*rd) == authorization.integer_destination()
+                )
+                && authorization.matches_virtual_range(address, size)
+        };
+        if self.pending_data_translations.len() > 1
+            || self
+                .pending_data_translations
+                .values()
+                .next()
+                .is_some_and(|pending| {
+                    !exact_younger(
+                        pending.fetch_request,
+                        &pending.access,
+                        pending.virtual_address,
+                        pending.size,
+                    )
+                })
+            || self.ready_translated_data.len() > 1
+            || self
+                .ready_translated_data
+                .values()
+                .next()
+                .is_some_and(|ready| {
+                    !exact_younger(
+                        ready.fetch_request,
+                        &ready.access,
+                        ready.virtual_address,
+                        ready.size,
+                    )
+                })
+        {
+            return false;
+        }
+        let snapshot = self.o3_runtime.snapshot();
+        snapshot
+            .reorder_buffer()
+            .iter()
+            .filter(|entry| entry.sequence() == head_o3_sequence)
+            .count()
+            == 1
+            && snapshot
+                .load_store_queue()
+                .iter()
+                .filter(|entry| entry.sequence() == head_o3_sequence)
+                .count()
+                == 1
+            && snapshot.reorder_buffer().len() < self.o3_runtime.scalar_live_window_limit()
+            && snapshot.load_store_queue().len() < self.o3_runtime.scalar_memory_window_limit()
+    }
+
     pub(crate) fn can_extend_detailed_memory_result_window(&self) -> bool {
         let authorized = self
             .memory_result_window_authorizations

@@ -28,6 +28,8 @@ mod pair_window;
 mod replan;
 #[path = "o3_runtime_memory_result_tests/store_conditional.rs"]
 mod store_conditional;
+#[path = "o3_runtime_memory_result_tests/translated_mmio_result_pair.rs"]
+mod translated_mmio_result_pair;
 #[path = "o3_runtime_memory_result_tests/writeback_maxima.rs"]
 mod writeback_maxima;
 #[path = "o3_runtime_memory_result_tests/younger_effect.rs"]

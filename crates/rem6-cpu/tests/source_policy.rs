@@ -11,6 +11,8 @@ const MAX_O3_RUNTIME_ISSUE_QUEUE_LINES: usize = 600;
 const MAX_O3_RUNTIME_ISSUE_QUEUE_TEST_LINES: usize = 450;
 const MAX_O3_RUNTIME_ISSUE_LINES: usize = 800;
 const MAX_O3_RUNTIME_MEMORY_LINES: usize = 1200;
+const MAX_O3_RUNTIME_MEMORY_RESULT_ADMISSION_LINES: usize = 220;
+const MAX_O3_RUNTIME_TRANSLATED_RESULT_PAIR_TEST_LINES: usize = 120;
 const MAX_O3_RUNTIME_ROOT_LINES: usize = 1200;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_TEST_ROOT_LINES: usize = 1350;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_LIFECYCLE_TEST_LINES: usize = 500;
@@ -74,6 +76,8 @@ const MAX_O3_RUNTIME_WRITEBACK_OWNERSHIP_LINES: usize = 300;
 const MAX_RISCV_O3_WRITEBACK_WAKE_LINES: usize = 800;
 const MAX_RISCV_DATA_ISSUE_TEST_ROOT_LINES: usize = 1500;
 const MAX_RISCV_DATA_ISSUE_LIFECYCLE_TEST_LINES: usize = 450;
+const MAX_RISCV_O3_RESULT_PAIR_ADMISSION_LINES: usize = 300;
+const MAX_RISCV_TRANSLATED_RESULT_PAIR_ISSUE_TEST_LINES: usize = 450;
 const MAX_RISCV_FAILURE_DIAGNOSTIC_LINES: usize = 300;
 const MAX_RISCV_PRODUCER_FORWARDED_DESCENDANT_LINES: usize = 120;
 const MAX_SOURCE_LINES: usize = 1800;
@@ -214,6 +218,108 @@ fn riscv_data_issue_lifecycle_tests_live_in_focused_child() {
             !root.contains(anchor),
             "data-issue test root still owns `{anchor}`"
         );
+    }
+}
+
+#[test]
+fn o3_translated_result_pair_issue_admission_has_focused_ownership() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let src_dir = crate_dir.join("src");
+    let o3_root_path = src_dir.join("o3_runtime.rs");
+    let o3_owner_path = src_dir.join("o3_runtime_memory_result_admission.rs");
+    let calendar_path = src_dir.join("o3_runtime_issue/calendar.rs");
+    let runtime_test_root_path = src_dir.join("o3_runtime_memory_result_tests.rs");
+    let runtime_test_path =
+        src_dir.join("o3_runtime_memory_result_tests/translated_mmio_result_pair.rs");
+    let issue_root_path = src_dir.join("riscv_data_issue.rs");
+    let progress_owner_path = src_dir.join("riscv_data_issue/o3_result_pair_admission.rs");
+    let issue_test_root_path = src_dir.join("riscv_data_issue_tests.rs");
+    let issue_test_path = src_dir.join("riscv_data_issue_tests/translated_mmio_result_pair.rs");
+    let window_path = src_dir.join("riscv_memory_result_window.rs");
+
+    let o3_root = fs::read_to_string(&o3_root_path).unwrap();
+    let runtime_test_root = fs::read_to_string(&runtime_test_root_path).unwrap();
+    let issue_root = fs::read_to_string(&issue_root_path).unwrap();
+    let issue_test_root = fs::read_to_string(&issue_test_root_path).unwrap();
+    assert!(o3_root.contains(
+        "#[path = \"o3_runtime_memory_result_admission.rs\"]\nmod o3_runtime_memory_result_admission;"
+    ));
+    assert!(runtime_test_root.contains(
+        "#[path = \"o3_runtime_memory_result_tests/translated_mmio_result_pair.rs\"]\nmod translated_mmio_result_pair;"
+    ));
+    assert!(issue_root.contains("mod o3_result_pair_admission;"));
+    assert!(issue_root.contains(
+        "#[cfg(test)]\n#[path = \"riscv_data_issue_tests.rs\"]\nmod riscv_data_issue_tests;"
+    ));
+    assert!(issue_test_root.contains(
+        "#[path = \"riscv_data_issue_tests/translated_mmio_result_pair.rs\"]\nmod translated_mmio_result_pair;"
+    ));
+
+    for path in [
+        &o3_owner_path,
+        &calendar_path,
+        &runtime_test_path,
+        &progress_owner_path,
+        &issue_test_path,
+        &window_path,
+    ] {
+        assert!(path.is_file(), "missing focused owner {}", path.display());
+    }
+    assert!(line_count(&o3_owner_path) <= MAX_O3_RUNTIME_MEMORY_RESULT_ADMISSION_LINES);
+    assert!(line_count(&runtime_test_path) <= MAX_O3_RUNTIME_TRANSLATED_RESULT_PAIR_TEST_LINES);
+    assert!(line_count(&progress_owner_path) <= MAX_RISCV_O3_RESULT_PAIR_ADMISSION_LINES);
+    assert!(line_count(&issue_test_path) <= MAX_RISCV_TRANSLATED_RESULT_PAIR_ISSUE_TEST_LINES);
+
+    for path in [&runtime_test_path, &issue_test_path] {
+        let source = fs::read_to_string(path).unwrap();
+        assert!(include_macro_lines(&source).is_empty());
+        assert!(external_module_declaration_lines(&source).is_empty());
+    }
+
+    let runtime_tests = fs::read_to_string(&runtime_test_path).unwrap();
+    for test in [
+        "translated_result_pair_memory_width_one_selects_the_next_tick",
+        "translated_result_pair_memory_width_two_reuses_the_head_tick",
+        "translated_result_pair_total_width_one_still_selects_the_next_tick",
+    ] {
+        assert_eq!(rust_test_function_definition_count(&runtime_tests, test), 1);
+    }
+    let issue_tests = fs::read_to_string(&issue_test_path).unwrap();
+    for test in [
+        "translated_result_pair_without_outstanding_data_is_ordinary",
+        "translated_result_pair_exact_resident_pair_is_ready",
+        "translated_result_pair_memory_width_waits_for_selected_tick",
+        "translated_result_pair_rejects_unrelated_outstanding_request",
+        "translated_result_pair_blocks_multiple_or_unrelated_auxiliary_state",
+    ] {
+        assert_eq!(rust_test_function_definition_count(&issue_tests, test), 1);
+    }
+
+    for (function, owner_path) in [
+        ("next_memory_slot_at_or_after", &calendar_path),
+        ("next_memory_result_issue_tick", &o3_owner_path),
+        ("translated_result_pair_progress", &progress_owner_path),
+        ("has_exact_translated_result_pair_window", &window_path),
+    ] {
+        let owner = production_rust_source(&fs::read_to_string(owner_path).unwrap());
+        assert!(
+            production_defines_exact_function(&owner, function),
+            "{} must own `{function}`",
+            owner_path.display()
+        );
+        for path in rust_source_files(&src_dir) {
+            if path == *owner_path
+                || is_test_only_rust_source(path.strip_prefix(crate_dir).unwrap())
+            {
+                continue;
+            }
+            let source = production_rust_source(&fs::read_to_string(&path).unwrap());
+            assert!(
+                !production_defines_exact_function(&source, function),
+                "{} duplicates focused owner `{function}`",
+                path.display()
+            );
+        }
     }
 }
 

@@ -49,6 +49,8 @@ mod store_led;
 mod store_store_load;
 #[path = "riscv_data_issue_tests/translated.rs"]
 mod translated;
+#[path = "riscv_data_issue_tests/translated_mmio_result_pair.rs"]
+mod translated_mmio_result_pair;
 
 #[test]
 fn scalar_memory_classification_keeps_load_store_only_semantics() {

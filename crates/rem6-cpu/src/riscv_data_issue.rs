@@ -39,6 +39,7 @@ mod dependent_result_address;
 mod forwarding;
 mod handoff;
 mod o3_callback;
+mod o3_result_pair_admission;
 mod prepared;
 mod request_helpers;
 mod store_conditional;
@@ -50,6 +51,7 @@ use o3_callback::{
     cloned_data_access_event_with_kind, mark_data_access_event_kind, record_callback_error,
     record_o3_data_access_outcome,
 };
+pub(crate) use o3_result_pair_admission::O3ResultPairProgress;
 pub(crate) use prepared::{PreparedDataIssueCleanup, PreparedDataParallelAccess};
 pub(crate) use request_helpers::{
     access_address, access_size, fault_only_first_line_prefix, masked_vector_memory_request_span,
@@ -1498,7 +1500,7 @@ impl IssuedDataAccess {
 
 #[cfg(test)]
 #[path = "riscv_data_issue_tests.rs"]
-mod tests;
+mod riscv_data_issue_tests;
 
 pub(crate) fn store_bytes(value: u64, size: AccessSize) -> Vec<u8> {
     value.to_le_bytes()[..size.bytes() as usize].to_vec()
