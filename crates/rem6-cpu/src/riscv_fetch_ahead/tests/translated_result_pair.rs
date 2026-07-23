@@ -36,13 +36,9 @@ fn ld(rd: u8, rs1: u8) -> u32 {
     i_type(0, rs1, 0b011, rd, 0x03)
 }
 
-fn load_reserved(rd: u8, rs1: u8) -> u32 {
-    (0x02_u32 << 27) | (u32::from(rs1) << 15) | (0b011 << 12) | (u32::from(rd) << 7) | 0x2f
-}
-
 #[test]
 fn translated_result_pair_authorizes_two_virtual_rows_without_physical_targets() {
-    let head = i_type(0, 2, 0b011, 1, 0x07);
+    let head = ld(11, 2);
     let younger = ld(12, 3);
     let core = translated_result_pair_core(head, [(1, 0x8004, younger.to_le_bytes().to_vec())]);
 
@@ -167,10 +163,8 @@ fn translated_result_pair_rejects_wrong_virtual_span_rebind_and_target_change() 
 
 #[test]
 fn translated_result_pair_rejects_dependent_second_address_and_third_result() {
-    let dependent = translated_result_pair_core(
-        load_reserved(11, 2),
-        [(1, 0x8004, ld(12, 11).to_le_bytes().to_vec())],
-    );
+    let dependent =
+        translated_result_pair_core(ld(11, 2), [(1, 0x8004, ld(12, 11).to_le_bytes().to_vec())]);
     assert_eq!(
         dependent.next_cached_translated_memory_fetch_ahead_before_retire(),
         None
@@ -182,7 +176,7 @@ fn translated_result_pair_rejects_dependent_second_address_and_third_result() {
         .memory_result_window_authorizations
         .is_empty());
 
-    let head = i_type(0, 2, 0b011, 1, 0x07);
+    let head = ld(11, 2);
     let second = ld(12, 3);
     let third = ld(13, 4);
     let three_results = translated_result_pair_core(
@@ -197,24 +191,5 @@ fn translated_result_pair_rejects_dependent_second_address_and_third_result() {
         None
     );
     let state = three_results.state.lock().expect("riscv core lock");
-    assert_eq!(state.memory_result_window_authorizations.len(), 2);
-    assert_eq!(
-        state
-            .memory_result_window_authorizations
-            .get(&request(0))
-            .copied()
-            .map(O3MemoryResultWindowAuthorization::role),
-        Some(O3MemoryResultWindowRole::Head)
-    );
-    assert_eq!(
-        state
-            .memory_result_window_authorizations
-            .get(&request(1))
-            .copied()
-            .map(O3MemoryResultWindowAuthorization::role),
-        Some(O3MemoryResultWindowRole::YoungerRead)
-    );
-    assert!(!state
-        .memory_result_window_authorizations
-        .contains_key(&request(2)));
+    assert!(state.memory_result_window_authorizations.is_empty());
 }

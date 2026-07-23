@@ -367,6 +367,35 @@ pub(super) fn additional_fetch_candidate(
             return scalar_memory_window_candidate(state, fetch_events, &current);
         }
         Some(ScalarMemoryFetchAheadHead::CachedTranslatedLoad { destination }) => {
+            if let Some(authorization) = data_access_result_fetch_ahead_authorization(
+                state,
+                current.first_consumed_request(),
+                current.decoded().instruction(),
+                current.decoded().bytes(),
+                translated,
+            ) {
+                let candidate = data_access_result_window_candidate(
+                    state,
+                    fetch_events,
+                    &current,
+                    authorization,
+                    translated,
+                );
+                if matches!(
+                    &candidate,
+                    DetailedFetchAheadCandidate::DataAccessResultWindow {
+                        next_pc,
+                        authorizations,
+                    } if next_pc.is_some()
+                        && authorizations.len() == 2
+                        && authorizations.iter().any(|(_, authorization)| {
+                            authorization.role()
+                                == super::O3MemoryResultWindowRole::YoungerRead
+                        })
+                ) {
+                    return candidate;
+                }
+            }
             let candidate =
                 translated_scalar_load_window_candidate(state, fetch_events, &current, destination);
             return match candidate {
