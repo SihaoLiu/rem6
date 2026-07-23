@@ -1,7 +1,10 @@
 use rem6_memory::TranslationRequestId;
 
 use super::*;
-use crate::riscv_translation::{PendingDataTranslation, TranslatedDataAccess};
+use crate::{
+    riscv_translation::{PendingDataTranslation, TranslatedDataAccess},
+    RiscvClusterDriveEvent, RiscvCoreDriveAction,
+};
 
 #[path = "translated_mmio_result_pair/fixture.rs"]
 mod fixture;
@@ -39,6 +42,93 @@ fn translated_result_pair_memory_width_waits_for_selected_tick() {
         core.translated_result_pair_progress(issue_tick),
         O3ResultPairProgress::WaitUntil(issue_tick + 1)
     );
+}
+
+#[test]
+fn translated_result_pair_waits_for_the_calendar_selected_tick() {
+    let core = translated_result_pair_with_outstanding_head(1);
+    let issue_tick = outstanding_issue_tick(&core);
+
+    assert_eq!(
+        core.translated_result_pair_progress(issue_tick),
+        O3ResultPairProgress::WaitUntil(issue_tick + 1)
+    );
+}
+
+#[test]
+fn translated_memory_pair_issues_two_requests_before_first_response() {
+    let mut fixture = translated_result_pair_ready_to_issue(2);
+    fixture
+        .core
+        .issue_next_translated_data_access(
+            &mut fixture.scheduler,
+            &fixture.transport,
+            MemoryTrace::new(),
+            &fixture.page_map,
+            |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap()
+        .expect("translated head request issues");
+    let first_request = sole_outstanding(&fixture.core.state.lock().expect("riscv core lock")).0;
+
+    let action = drive_serial_once(&mut fixture);
+    assert!(matches!(
+        action,
+        Some(RiscvCoreDriveAction::InstructionExecuted(event))
+            if event.fetch_pc() == Address::new(0x8004)
+    ));
+    assert!(fixture.core.has_unissued_data_access());
+    fixture
+        .core
+        .advance_next_data_translation(fixture.scheduler.now(), &fixture.page_map)
+        .unwrap();
+    assert!(!fixture.core.has_unissued_data_access());
+
+    assert!(matches!(
+        drive_serial_once(&mut fixture),
+        Some(RiscvCoreDriveAction::DataAccessIssued { .. })
+    ));
+    let state = fixture.core.state.lock().expect("riscv core lock");
+    assert_eq!(state.outstanding_data.len(), 2);
+    assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 2);
+    assert_eq!(state.o3_runtime.snapshot().load_store_queue().len(), 2);
+    let second_request = state
+        .outstanding_data
+        .keys()
+        .copied()
+        .find(|request| *request != first_request)
+        .expect("distinct younger translated request");
+    assert_ne!(first_request, second_request);
+}
+
+#[test]
+fn translated_cluster_turns_emit_one_action_per_pass_and_two_requests_before_response() {
+    let mut fixture = translated_result_pair_ready_to_issue(2);
+    stage_translated_younger_execution(&fixture.core);
+    assert!(fixture.core.has_unissued_data_access());
+    let cluster = RiscvCluster::new([fixture.core.clone()]).unwrap();
+
+    let first = drive_cluster_once(&cluster, &mut fixture);
+    assert!(matches!(
+        first[0].action(),
+        RiscvCoreDriveAction::DataAccessIssued { .. }
+    ));
+    assert_eq!(outstanding_request_count(&fixture), 1);
+    fixture
+        .core
+        .advance_next_data_translation(fixture.scheduler.now(), &fixture.page_map)
+        .unwrap();
+    assert!(!fixture.core.has_unissued_data_access());
+
+    let second = drive_cluster_once(&cluster, &mut fixture);
+    assert!(matches!(
+        second[0].action(),
+        RiscvCoreDriveAction::DataAccessIssued { .. }
+    ));
+    assert_eq!(outstanding_request_count(&fixture), 2);
+    let state = fixture.core.state.lock().expect("riscv core lock");
+    assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 2);
+    assert_eq!(state.o3_runtime.snapshot().load_store_queue().len(), 2);
 }
 
 #[test]
@@ -310,4 +400,48 @@ fn ready_progress_after_mutation(
     mutate_sole_ready_translation(&core, mutate);
 
     core.translated_result_pair_progress(issue_tick)
+}
+
+fn drive_serial_once(fixture: &mut TranslatedPairDriveFixture) -> Option<RiscvCoreDriveAction> {
+    fixture
+        .core
+        .drive_next_action_with_data_translation(
+            &mut fixture.scheduler,
+            &fixture.transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            &fixture.page_map,
+            |_delivery, _context| TargetOutcome::NoResponse,
+            |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap()
+}
+
+fn drive_cluster_once(
+    cluster: &RiscvCluster,
+    fixture: &mut TranslatedPairDriveFixture,
+) -> Vec<RiscvClusterDriveEvent> {
+    let actions = cluster
+        .drive_ready_cores_parallel_with_data_translation(
+            &mut fixture.scheduler,
+            &fixture.transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            &fixture.page_map,
+            |_cpu| |_delivery, _context| TargetOutcome::NoResponse,
+            |_cpu| |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap();
+    assert_eq!(actions.len(), 1);
+    actions
+}
+
+fn outstanding_request_count(fixture: &TranslatedPairDriveFixture) -> usize {
+    fixture
+        .core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .outstanding_data
+        .len()
 }

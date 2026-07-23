@@ -1,5 +1,3 @@
-use crate::riscv_execution_mode_handoff::RiscvO3LiveDataHandoffOperation;
-
 use super::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -11,6 +9,11 @@ pub(crate) enum O3ResultPairProgress {
 }
 
 impl RiscvCore {
+    pub(crate) fn translated_result_pair_has_translation_work(&self) -> bool {
+        let state = self.state.lock().expect("riscv core lock");
+        !state.pending_data_translations.is_empty() || !state.ready_translated_data.is_empty()
+    }
+
     pub(crate) fn translated_result_pair_progress(&self, now: Tick) -> O3ResultPairProgress {
         {
             let state = self.state.lock().expect("riscv core lock");
@@ -23,21 +26,15 @@ impl RiscvCore {
         if state.outstanding_data.is_empty() {
             return O3ResultPairProgress::Ordinary;
         }
-        let Some((resident, forwarded, completed_partial, younger_rows)) =
-            state.o3_runtime.live_scalar_memory_handoff()
+        if state.outstanding_data.len() != 1 {
+            return O3ResultPairProgress::Blocked;
+        }
+        let Some((head_fetch, head_data, head_issue_tick, head_o3_sequence, head_access)) =
+            state.o3_runtime.memory_result_head_identity()
         else {
             return O3ResultPairProgress::Blocked;
         };
-        if resident.len() != 1
-            || !forwarded.is_empty()
-            || !completed_partial.is_empty()
-            || younger_rows != 0
-            || state.outstanding_data.len() != 1
-        {
-            return O3ResultPairProgress::Blocked;
-        }
-        let head = resident[0];
-        let Some(outstanding) = state.outstanding_data.get(&head.data_request) else {
+        let Some(outstanding) = state.outstanding_data.get(&head_data) else {
             return O3ResultPairProgress::Blocked;
         };
         let exact_span = access_size(&outstanding.access)
@@ -53,10 +50,10 @@ impl RiscvCore {
             .is_some_and(|span| {
                 outstanding.size == span.size && outstanding.request_byte_offset == span.byte_offset
             });
-        if outstanding.request != head.data_request
-            || outstanding.fetch_request != head.fetch_request
-            || outstanding.tick != head.issue_tick
-            || head.operation != RiscvO3LiveDataHandoffOperation::Load
+        if outstanding.request != head_data
+            || outstanding.fetch_request != head_fetch
+            || outstanding.tick != head_issue_tick
+            || outstanding.access != *head_access
             || !matches!(&outstanding.target, RiscvDataAccessTarget::Memory { .. })
             || !matches!(
                 state
@@ -74,16 +71,16 @@ impl RiscvCore {
                 } if !rd.is_zero()
             )
             || !state.o3_runtime.matches_exact_memory_result_head(
-                head.fetch_request,
-                head.data_request,
-                head.issue_tick,
-                head.o3_sequence,
+                head_fetch,
+                head_data,
+                head_issue_tick,
+                head_o3_sequence,
                 &outstanding.access,
             )
             || !state.has_exact_translated_result_pair_window(
                 &fetch_events,
-                head.fetch_request,
-                head.o3_sequence,
+                head_fetch,
+                head_o3_sequence,
             )
         {
             return O3ResultPairProgress::Blocked;

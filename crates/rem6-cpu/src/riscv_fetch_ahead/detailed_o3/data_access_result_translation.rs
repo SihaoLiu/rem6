@@ -18,7 +18,6 @@ pub(super) fn translated_younger_result_authorization(
         || !state.live_retire_gate.detailed_policy_enabled()
         || instruction.decoded().bytes() != 4
         || state.o3_runtime.scalar_memory_window_limit() <= 1
-        || state.memory_result_window_authorizations.len() >= 2
     {
         return None;
     }
@@ -30,12 +29,14 @@ pub(super) fn translated_younger_result_authorization(
     else {
         return None;
     };
+    let fetch_request = instruction.first_consumed_request();
     let rd = independent_scalar_load_destination(
         decoded,
         state
             .memory_result_window_authorizations
-            .values()
-            .filter_map(|authorization| authorization.integer_destination()),
+            .iter()
+            .filter(|(request, _)| **request != fetch_request)
+            .filter_map(|(_, authorization)| authorization.integer_destination()),
     )?;
     let mut hart = state.hart.clone();
     let execution = hart.execute(decoded).ok()?;
@@ -44,11 +45,19 @@ pub(super) fn translated_younger_result_authorization(
     let base_address = Address::new(access_address(&access));
     let request_span = masked_vector_memory_request_span(&access, base_address, base_size).ok()?;
     let virtual_range = AddressRange::new(request_span.address, request_span.size).ok()?;
-    Some(O3MemoryResultWindowAuthorization::translated_unbound(
+    let authorization = O3MemoryResultWindowAuthorization::translated_unbound(
         Some(rd),
         virtual_range,
         O3MemoryResultWindowRole::YoungerRead,
-    ))
+    );
+    if let Some(existing) = state
+        .memory_result_window_authorizations
+        .get(&fetch_request)
+        .copied()
+    {
+        return (existing == authorization).then_some(existing);
+    }
+    (state.memory_result_window_authorizations.len() < 2).then_some(authorization)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

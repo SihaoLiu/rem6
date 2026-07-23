@@ -1,5 +1,6 @@
 use super::*;
 use crate::o3_runtime::O3DataAccessWindowPolicy;
+use crate::riscv_translation::TranslatedDataAccess;
 use rem6_memory::AddressRange;
 
 fn translated_result_pair_core(
@@ -166,6 +167,86 @@ fn translated_result_pair_authorizes_two_virtual_rows_without_physical_targets()
         Address::new(0xa000),
         AccessSize::new(8).unwrap(),
     ));
+}
+
+#[test]
+fn ready_translated_result_pair_fetches_missing_fourth_row_before_head_issue() {
+    let head = ld(11, 2);
+    let younger = ld(12, 3);
+    let div = r_type(0x01, 2, 1, 0b100, 3, 0x33);
+    let core = translated_result_pair_core(
+        head,
+        [
+            (1, 0x8004, younger.to_le_bytes().to_vec()),
+            (2, 0x8008, div.to_le_bytes().to_vec()),
+        ],
+    );
+    assert_eq!(
+        core.next_cached_translated_memory_fetch_ahead_before_retire()
+            .map(|decision| decision.pc()),
+        Some(Address::new(0x800c))
+    );
+
+    let execution = core
+        .execute_next_completed_fetch()
+        .unwrap()
+        .expect("translated head executes");
+    let fetch_request = execution.fetch().request_id();
+    core.state
+        .lock()
+        .expect("riscv core lock")
+        .ready_translated_data
+        .insert(
+            fetch_request,
+            TranslatedDataAccess {
+                request_id: request(99),
+                fetch_request,
+                access: MemoryAccessKind::Load {
+                    rd: Register::new(11).unwrap(),
+                    address: 0x4000,
+                    width: MemoryWidth::Doubleword,
+                    signed: false,
+                },
+                virtual_address: Address::new(0x4000),
+                size: AccessSize::new(8).unwrap(),
+                physical_address: Address::new(0x9000),
+                request_byte_offset: 0,
+            },
+        );
+    assert_eq!(
+        core.next_ready_translated_memory_fetch_ahead_before_issue(fetch_request)
+            .map(|decision| decision.pc()),
+        Some(Address::new(0x800c))
+    );
+}
+
+#[test]
+fn retained_translated_result_pair_defers_mmio_until_mixed_pair_support() {
+    let core =
+        translated_result_pair_core(ld(11, 2), [(1, 0x8004, ld(12, 3).to_le_bytes().to_vec())]);
+    assert_eq!(
+        core.next_cached_translated_memory_fetch_ahead_before_retire()
+            .map(|decision| decision.pc()),
+        Some(Address::new(0x8008))
+    );
+    core.execute_next_completed_fetch()
+        .unwrap()
+        .expect("translated head executes");
+
+    let fetch_events = core.core.fetch_events();
+    let state = core.state.lock().expect("riscv core lock");
+    assert!(detailed_o3::retained_data_access_result_window_candidate(
+        &state,
+        &fetch_events,
+        detailed_o3::TranslatedMemoryFetchAhead::CachedMemory,
+    )
+    .is_some());
+    assert!(detailed_o3::retained_data_access_result_window_candidate(
+        &state,
+        &fetch_events,
+        detailed_o3::TranslatedMemoryFetchAhead::Mmio,
+    )
+    .is_none());
 }
 
 #[test]

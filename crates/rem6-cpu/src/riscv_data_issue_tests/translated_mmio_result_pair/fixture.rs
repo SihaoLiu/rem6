@@ -10,6 +10,31 @@ const YOUNGER_PC: u64 = 0x8004;
 pub(super) const HEAD_VIRTUAL_ADDRESS: u64 = 0x4000;
 const YOUNGER_VIRTUAL_ADDRESS: u64 = 0x5000;
 
+pub(super) struct TranslatedPairDriveFixture {
+    pub(super) scheduler: PartitionedScheduler,
+    pub(super) transport: MemoryTransport,
+    pub(super) core: RiscvCore,
+    pub(super) page_map: TranslationPageMap,
+}
+
+pub(super) fn translated_result_pair_ready_to_issue(
+    memory_issue_width: usize,
+) -> TranslatedPairDriveFixture {
+    let fixture = translated_result_pair_ready_with_fetches(
+        memory_issue_width,
+        [
+            issued_and_completed_fetch_with_raw(0, HEAD_PC, ld(11, 2)),
+            issued_and_completed_fetch_with_raw(1, YOUNGER_PC, ld(12, 3)),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
+    )
+    .0;
+    fixture.core.set_o3_scalar_memory_depth(2);
+    fixture
+}
+
 pub(super) fn translated_result_pair_with_outstanding_head(memory_issue_width: usize) -> RiscvCore {
     translated_result_pair_with_fetches(
         memory_issue_width,
@@ -23,6 +48,22 @@ pub(super) fn translated_result_pair_with_outstanding_head(memory_issue_width: u
         fetch_request(0),
         fetch_request(1),
     )
+}
+
+pub(super) fn stage_translated_younger_execution(core: &RiscvCore) {
+    core.state
+        .lock()
+        .expect("riscv core lock")
+        .events
+        .push(scalar_load_event_with_base_width(
+            YOUNGER_PC,
+            1,
+            12,
+            3,
+            YOUNGER_VIRTUAL_ADDRESS,
+            MemoryWidth::Doubleword,
+            false,
+        ));
 }
 
 pub(super) fn translated_split_gapped_result_pair_with_outstanding_head(
@@ -50,88 +91,23 @@ fn translated_result_pair_with_fetches(
     head_fetch_request: MemoryRequestId,
     younger_fetch_request: MemoryRequestId,
 ) -> RiscvCore {
-    let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
-    let core = RiscvCore::with_data_translation(
-        cpu_core(fetch_route, HEAD_PC),
-        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
-        CpuTranslationFrontend::with_tlb(
-            TranslationQueueConfig::new(4, 0).unwrap(),
-            TranslationTlbConfig::new(4).unwrap(),
-        ),
-    );
-    core.set_detailed_live_retire_gate_enabled(true);
-    core.set_o3_scalar_memory_depth(4);
-    core.set_o3_issue_width(4);
-    core.set_o3_memory_issue_width(memory_issue_width);
-    core.write_register(reg(2), HEAD_VIRTUAL_ADDRESS);
-    core.write_register(reg(3), YOUNGER_VIRTUAL_ADDRESS);
-    for fetch in &fetches {
-        core.core.advance_sequence_past(fetch.request_id());
-    }
-    core.core
-        .state
-        .lock()
-        .expect("cpu core lock")
-        .events
-        .extend(fetches);
-
-    let page_map = translated_page_map();
-    install_cached_head_translation(&core, &page_map);
-    assert_eq!(
-        core.next_cached_translated_memory_fetch_ahead_before_retire()
-            .map(|decision| decision.pc()),
-        Some(Address::new(0x8008))
-    );
-    let head_execution = core
-        .execute_next_completed_fetch()
+    let (mut fixture, actual_head, actual_younger) =
+        translated_result_pair_ready_with_fetches(memory_issue_width, fetches);
+    assert_eq!(actual_head, head_fetch_request);
+    assert_eq!(actual_younger, younger_fetch_request);
+    fixture
+        .core
+        .issue_next_translated_data_access(
+            &mut fixture.scheduler,
+            &fixture.transport,
+            MemoryTrace::new(),
+            &fixture.page_map,
+            |_delivery, _context| TargetOutcome::NoResponse,
+        )
         .unwrap()
-        .or_else(|| core.execute_next_completed_fetch().unwrap())
-        .expect("translated pair head executes");
-    assert_eq!(head_execution.fetch_pc(), Address::new(HEAD_PC));
-    core.issue_next_translated_data_access(
-        &mut scheduler,
-        &transport,
-        MemoryTrace::new(),
-        &page_map,
-        |_delivery, _context| TargetOutcome::NoResponse,
-    )
-    .unwrap()
-    .expect("translated pair head issues");
+        .expect("translated pair head issues");
 
-    {
-        let mut state = core.state.lock().expect("riscv core lock");
-        let (_, issued) = sole_outstanding(&state);
-        let (resident, forwarded, completed_partial, younger_rows) = state
-            .o3_runtime
-            .live_scalar_memory_handoff()
-            .expect("real translated issue has one resident row");
-        assert_eq!(resident.len(), 1);
-        assert!(forwarded.is_empty());
-        assert!(completed_partial.is_empty());
-        assert_eq!(younger_rows, 0);
-        assert!(!state.o3_runtime.matches_exact_memory_result_head(
-            head_fetch_request,
-            issued.request,
-            issued.tick,
-            resident[0].o3_sequence,
-            &issued.access,
-        ));
-
-        // Task 5 makes the real translated issue path establish this policy directly.
-        let mut runtime = crate::o3_runtime::O3RuntimeState::default();
-        assert!(runtime.set_window_depths(4, 4));
-        assert!(runtime.set_issue_width(4));
-        assert!(runtime.set_memory_issue_width(memory_issue_width));
-        assert!(runtime.stage_live_data_access_issue(
-            &head_execution,
-            issued.request,
-            issued.tick,
-            O3DataAccessWindowPolicy::MemoryResultWindow,
-        ));
-        state.o3_runtime = runtime;
-    }
-
-    let state = core.state.lock().expect("riscv core lock");
+    let state = fixture.core.state.lock().expect("riscv core lock");
     assert_eq!(state.outstanding_data.len(), 1);
     assert_eq!(state.memory_result_window_authorizations.len(), 1);
     let authorization = state
@@ -175,7 +151,71 @@ fn translated_result_pair_with_fetches(
     ));
     drop(state);
 
-    core
+    fixture.core
+}
+
+fn translated_result_pair_ready_with_fetches(
+    memory_issue_width: usize,
+    fetches: Vec<CpuFetchEvent>,
+) -> (TranslatedPairDriveFixture, MemoryRequestId, MemoryRequestId) {
+    let (scheduler, transport, fetch_route, data_route) = memory_routes();
+    let core = RiscvCore::with_data_translation(
+        cpu_core(fetch_route, HEAD_PC),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+        CpuTranslationFrontend::with_tlb(
+            TranslationQueueConfig::new(4, 0).unwrap(),
+            TranslationTlbConfig::new(4).unwrap(),
+        ),
+    );
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(4);
+    core.set_o3_issue_width(4);
+    core.set_o3_memory_issue_width(memory_issue_width);
+    core.write_register(reg(2), HEAD_VIRTUAL_ADDRESS);
+    core.write_register(reg(3), YOUNGER_VIRTUAL_ADDRESS);
+    for fetch in &fetches {
+        core.core.advance_sequence_past(fetch.request_id());
+    }
+    core.core
+        .state
+        .lock()
+        .expect("cpu core lock")
+        .events
+        .extend(fetches);
+
+    let page_map = translated_page_map();
+    install_cached_head_translation(&core, &page_map);
+    assert_eq!(
+        core.next_cached_translated_memory_fetch_ahead_before_retire()
+            .map(|decision| decision.pc()),
+        Some(Address::new(0x8008))
+    );
+    let head_execution = core
+        .execute_next_completed_fetch()
+        .unwrap()
+        .or_else(|| core.execute_next_completed_fetch().unwrap())
+        .expect("translated pair head executes");
+    assert_eq!(head_execution.fetch_pc(), Address::new(HEAD_PC));
+    let head_fetch_request = head_execution.fetch().request_id();
+    let younger_fetch_request = core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .memory_result_window_authorizations
+        .iter()
+        .find_map(|(request, authorization)| authorization.role().is_younger().then_some(*request))
+        .expect("translated younger authorization");
+
+    (
+        TranslatedPairDriveFixture {
+            scheduler,
+            transport,
+            core,
+            page_map,
+        },
+        head_fetch_request,
+        younger_fetch_request,
+    )
 }
 
 pub(super) fn install_pending_younger_translation(core: &RiscvCore, wrong_key: bool) {
@@ -286,6 +326,14 @@ fn translated_page_map() -> TranslationPageMap {
         .map(
             Address::new(HEAD_VIRTUAL_ADDRESS),
             Address::new(0x9000),
+            1,
+            TranslationPagePermissions::read_write_execute(),
+        )
+        .unwrap();
+    page_map
+        .map(
+            Address::new(YOUNGER_VIRTUAL_ADDRESS),
+            Address::new(0xa000),
             1,
             TranslationPagePermissions::read_write_execute(),
         )

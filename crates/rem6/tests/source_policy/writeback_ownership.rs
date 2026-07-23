@@ -104,7 +104,7 @@ const RESULT_BOUNDARY_SUPPORT_MODULES: [ExpectedModuleDeclaration; 1] =
         name: "support",
         path: "result_boundaries/support.rs",
     }];
-const RESULT_CLASS_CHILD_MODULES: [ExpectedModuleDeclaration; 2] = [
+const RESULT_CLASS_CHILD_MODULES: [ExpectedModuleDeclaration; 3] = [
     ExpectedModuleDeclaration {
         name: "pairs",
         path: "result_classes/pairs.rs",
@@ -112,6 +112,10 @@ const RESULT_CLASS_CHILD_MODULES: [ExpectedModuleDeclaration; 2] = [
     ExpectedModuleDeclaration {
         name: "scalar_suffix",
         path: "result_classes/scalar_suffix.rs",
+    },
+    ExpectedModuleDeclaration {
+        name: "translated_mmio_pairs",
+        path: "result_classes/translated_mmio_pairs.rs",
     },
 ];
 const RESULT_CLASS_TEST_PREFIX: &str = "rem6_run_o3_memory_result_writeback_";

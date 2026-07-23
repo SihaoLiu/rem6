@@ -28,8 +28,8 @@ pub(crate) use crate::riscv_translation_state::{PendingDataTranslation, Translat
 
 use crate::o3_runtime::o3_memory_result_destination;
 use crate::riscv_data_issue::{
-    access_address, access_size, masked_vector_memory_request_span, OutstandingDataAccess,
-    PreparedDataParallelAccess,
+    access_address, access_size, masked_vector_memory_request_span, O3ResultPairProgress,
+    OutstandingDataAccess, PreparedDataParallelAccess,
 };
 use crate::{
     riscv_checker, riscv_data_access, CpuDataConfig, CpuTranslationFrontend,
@@ -40,6 +40,7 @@ use crate::{
 
 mod csr;
 mod helpers;
+mod o3_result_pair;
 mod unissued_data;
 
 use csr::{
@@ -50,8 +51,9 @@ use csr::{
 use helpers::{
     cpu_translation_outcome_from_resolution, cpu_translation_request,
     ready_translated_fetch_request, record_data_translation_fault_state,
-    supports_translated_cross_line_data_access, sv39_access_kind, sv39_translation_fault_kind,
-    translated_data_from_outcome, wake_suspended_hart_on_pending_interrupt,
+    record_ready_translated_data, supports_translated_cross_line_data_access, sv39_access_kind,
+    sv39_translation_fault_kind, translated_data_from_outcome,
+    wake_suspended_hart_on_pending_interrupt,
 };
 
 const RISCV_SV39_PTE_ACCESS_BYTES: u64 = 8;
@@ -1054,34 +1056,47 @@ impl RiscvCore {
                 event,
             ))));
         }
-        if self.has_outstanding_data_request() {
-            return Ok(None);
-        }
         if self.has_pending_trap() {
             return Ok(None);
         }
-        let has_data_work = self.has_unissued_data_access() || self.has_pending_data_access();
+        let translated_result_pair_ready = match self
+            .translated_result_pair_progress(scheduler.now())
+        {
+            O3ResultPairProgress::Ordinary => false,
+            O3ResultPairProgress::Ready { .. } => true,
+            O3ResultPairProgress::WaitUntil(_) | O3ResultPairProgress::Blocked => return Ok(None),
+        };
+        let has_data_work = self.has_unissued_data_access()
+            || if translated_result_pair_ready {
+                self.translated_result_pair_has_translation_work()
+            } else {
+                self.has_pending_data_access()
+            };
         if has_data_work {
-            if self.ready_translated_memory_fetch_ahead_is_pending() {
+            if !translated_result_pair_ready
+                && self.ready_translated_memory_fetch_ahead_is_pending()
+            {
                 return Ok(None);
             }
             self.advance_next_data_translation(scheduler.now(), page_map)?;
-            if let Some(fetch_request) =
-                self.ready_translated_scalar_load_window_fetch_request(scheduler.now(), transport)?
-            {
-                if let Some(decision) =
-                    self.next_ready_translated_memory_fetch_ahead_before_issue(fetch_request)
+            if !translated_result_pair_ready {
+                if let Some(fetch_request) = self
+                    .ready_translated_scalar_load_window_fetch_request(scheduler.now(), transport)?
                 {
-                    let fetch_ahead = self.prepare_fetch_ahead_speculation(&decision)?;
-                    self.set_fetch_ahead_pc(decision.pc());
-                    let event = self.issue_next_fetch_with_prepared_fetch_ahead(
-                        scheduler,
-                        transport,
-                        fetch_trace,
-                        fetch_responder,
-                        fetch_ahead,
-                    )?;
-                    return Ok(Some(RiscvCoreDriveAction::FetchIssued { event }));
+                    if let Some(decision) =
+                        self.next_ready_translated_memory_fetch_ahead_before_issue(fetch_request)
+                    {
+                        let fetch_ahead = self.prepare_fetch_ahead_speculation(&decision)?;
+                        self.set_fetch_ahead_pc(decision.pc());
+                        let event = self.issue_next_fetch_with_prepared_fetch_ahead(
+                            scheduler,
+                            transport,
+                            fetch_trace,
+                            fetch_responder,
+                            fetch_ahead,
+                        )?;
+                        return Ok(Some(RiscvCoreDriveAction::FetchIssued { event }));
+                    }
                 }
             }
             if let Some(event) = self.issue_next_translated_data_access(
@@ -1099,6 +1114,9 @@ impl RiscvCore {
                 ))));
             }
             return Ok(None);
+        }
+        if translated_result_pair_ready {
+            return self.drive_admitted_completed_fetch_serial_action(scheduler);
         }
         if self.core.has_pending_fetch() {
             if self.has_pending_data_access() {
@@ -1467,9 +1485,7 @@ impl RiscvCore {
         {
             Some(outcome) => match translated_data_from_outcome(pending, outcome) {
                 DataTranslationCompletion::Access(translated) => {
-                    state
-                        .ready_translated_data
-                        .insert(translated.fetch_request, translated);
+                    record_ready_translated_data(&mut state, translated, tick);
                 }
                 DataTranslationCompletion::Fault {
                     fetch_request,
@@ -1481,12 +1497,20 @@ impl RiscvCore {
                 }
             },
             None => {
+                let preserve_result_authorization = state
+                    .translated_result_authorization_is_pending(
+                        fetch_request,
+                        request_span.address,
+                        request_span.size,
+                    );
                 state
                     .translated_scalar_load_window_fetches
                     .remove(&fetch_request);
-                state
-                    .memory_result_window_authorizations
-                    .remove(&fetch_request);
+                if !preserve_result_authorization {
+                    state
+                        .memory_result_window_authorizations
+                        .remove(&fetch_request);
+                }
                 state
                     .pending_data_translations
                     .insert(translation_id, pending);
@@ -1520,9 +1544,7 @@ impl RiscvCore {
                 .expect("ready data translation has matching RISC-V metadata");
             match translated_data_from_outcome(pending, outcome) {
                 DataTranslationCompletion::Access(translated) => {
-                    state
-                        .ready_translated_data
-                        .insert(translated.fetch_request, translated);
+                    record_ready_translated_data(&mut state, translated, tick);
                 }
                 DataTranslationCompletion::Fault {
                     fetch_request,
@@ -1711,6 +1733,23 @@ impl RiscvCore {
                 address: translated.physical_address,
                 size: translated.size,
                 line_size: line_layout.bytes(),
+            });
+        }
+
+        let bound_target = {
+            let mut state = self.state.lock().expect("riscv core lock");
+            let bound = state.bind_translated_result_target(
+                translated.fetch_request,
+                crate::riscv_fetch_ahead::O3MemoryResultWindowRoute::Memory,
+            );
+            if !bound {
+                state.abort_prepared_data_issue(translated.fetch_request, tick);
+            }
+            bound
+        };
+        if !bound_target {
+            return Err(RiscvCpuError::TranslatedResultAuthorizationMismatch {
+                fetch: translated.fetch_request,
             });
         }
 

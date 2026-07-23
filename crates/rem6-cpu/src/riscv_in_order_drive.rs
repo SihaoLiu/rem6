@@ -111,6 +111,20 @@ impl RiscvCore {
         self.drive_next_completed_fetch_action(scheduler, RiscvInOrderWakeKind::Parallel)
     }
 
+    pub(crate) fn drive_admitted_completed_fetch_serial_action(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+    ) -> Result<Option<RiscvCoreDriveAction>, RiscvCpuError> {
+        self.drive_admitted_completed_fetch_action(scheduler, RiscvInOrderWakeKind::Serial)
+    }
+
+    pub(crate) fn drive_admitted_completed_fetch_parallel_action(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+    ) -> Result<Option<RiscvCoreDriveAction>, RiscvCpuError> {
+        self.drive_admitted_completed_fetch_action(scheduler, RiscvInOrderWakeKind::Parallel)
+    }
+
     fn drive_next_completed_fetch_action(
         &self,
         scheduler: &mut PartitionedScheduler,
@@ -119,31 +133,12 @@ impl RiscvCore {
         if self.detailed_o3_window_prefers_fetch_ahead()
             || self.o3_retirement_suppresses_normal_pipeline()
         {
-            let execution = match wake_kind {
-                RiscvInOrderWakeKind::Serial => {
-                    self.execute_next_completed_fetch_serial(scheduler)?
-                }
-                RiscvInOrderWakeKind::Parallel => {
-                    self.execute_next_completed_fetch_parallel(scheduler)?
-                }
-            };
-            return Ok(
-                execution.map(|event| RiscvCoreDriveAction::InstructionExecuted(Box::new(event)))
-            );
+            return self.drive_admitted_completed_fetch_action(scheduler, wake_kind);
         }
         match self.schedule_next_completed_fetch_pipeline_cycle(scheduler, wake_kind)? {
             RiscvInOrderDriveStatus::Unavailable | RiscvInOrderDriveStatus::Pending => Ok(None),
             RiscvInOrderDriveStatus::Ready => {
-                let execution = match wake_kind {
-                    RiscvInOrderWakeKind::Serial => {
-                        self.execute_next_completed_fetch_serial(scheduler)?
-                    }
-                    RiscvInOrderWakeKind::Parallel => {
-                        self.execute_next_completed_fetch_parallel(scheduler)?
-                    }
-                };
-                Ok(execution
-                    .map(|event| RiscvCoreDriveAction::InstructionExecuted(Box::new(event))))
+                self.drive_admitted_completed_fetch_action(scheduler, wake_kind)
             }
             RiscvInOrderDriveStatus::Scheduled(event) => {
                 Ok(Some(RiscvCoreDriveAction::PipelineCycleScheduled { event }))
@@ -152,6 +147,20 @@ impl RiscvCore {
                 unreachable!("pipeline reservation is scheduled before returning")
             }
         }
+    }
+
+    fn drive_admitted_completed_fetch_action(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        wake_kind: RiscvInOrderWakeKind,
+    ) -> Result<Option<RiscvCoreDriveAction>, RiscvCpuError> {
+        let execution = match wake_kind {
+            RiscvInOrderWakeKind::Serial => self.execute_next_completed_fetch_serial(scheduler)?,
+            RiscvInOrderWakeKind::Parallel => {
+                self.execute_next_completed_fetch_parallel(scheduler)?
+            }
+        };
+        Ok(execution.map(|event| RiscvCoreDriveAction::InstructionExecuted(Box::new(event))))
     }
 
     pub(crate) fn schedule_next_completed_fetch_pipeline_cycle_serial(

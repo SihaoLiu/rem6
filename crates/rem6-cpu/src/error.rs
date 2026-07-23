@@ -161,6 +161,9 @@ pub enum RiscvCpuError {
     DataTranslationPageMapRequired {
         fetch: MemoryRequestId,
     },
+    TranslatedResultAuthorizationMismatch {
+        fetch: MemoryRequestId,
+    },
     MissingFetchData {
         request: MemoryRequestId,
     },
@@ -257,6 +260,12 @@ impl fmt::Display for RiscvCpuError {
             Self::DataTranslationPageMapRequired { fetch } => write!(
                 formatter,
                 "fetch response {} from agent {} needs a data translation page map",
+                fetch.sequence(),
+                fetch.agent().get()
+            ),
+            Self::TranslatedResultAuthorizationMismatch { fetch } => write!(
+                formatter,
+                "translated result authorization for fetch response {} from agent {} does not match the bound range or target",
                 fetch.sequence(),
                 fetch.agent().get()
             ),

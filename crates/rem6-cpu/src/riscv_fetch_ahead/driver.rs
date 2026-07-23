@@ -105,7 +105,15 @@ impl RiscvCore {
             detailed_o3::DetailedFetchAheadCandidate::ReadyCachedTranslatedLoad { pc, .. } => {
                 Some(RiscvFetchAheadDecision::straight_line(pc))
             }
-            detailed_o3::DetailedFetchAheadCandidate::DataAccessResultWindow { .. } => None,
+            detailed_o3::DetailedFetchAheadCandidate::DataAccessResultWindow {
+                next_pc,
+                authorizations,
+            } => {
+                state
+                    .memory_result_window_authorizations
+                    .extend(authorizations);
+                next_pc.map(RiscvFetchAheadDecision::straight_line)
+            }
             detailed_o3::DetailedFetchAheadCandidate::NotApplicable
             | detailed_o3::DetailedFetchAheadCandidate::Blocked => None,
         }

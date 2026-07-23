@@ -1,6 +1,7 @@
 use rem6_isa_riscv::{
     AtomicMemoryOp, MemoryAccessKind, RiscvSv39AccessKind, RiscvSv39PageFault, RiscvTrapKind,
 };
+use rem6_kernel::Tick;
 use rem6_memory::{
     AccessSize, Address, ByteMask, CacheLineLayout, MemoryAtomicOp, MemoryRequestId,
     TranslationFaultKind, TranslationRequestId, TranslationResolution,
@@ -226,6 +227,23 @@ pub(super) fn ready_translated_fetch_request(state: &RiscvCoreState) -> Option<M
             .contains_key(&fetch_request)
             .then_some(fetch_request)
     })
+}
+
+pub(super) fn record_ready_translated_data(
+    state: &mut RiscvCoreState,
+    translated: TranslatedDataAccess,
+    tick: Tick,
+) -> bool {
+    let fetch_request = translated.fetch_request;
+    if !state.bind_translated_result_range(&translated) {
+        state.abort_prepared_data_issue(fetch_request, tick);
+        state.ready_translated_data.remove(&fetch_request);
+        return false;
+    }
+    state
+        .ready_translated_data
+        .insert(fetch_request, translated);
+    true
 }
 
 pub(super) fn translated_data_from_outcome(

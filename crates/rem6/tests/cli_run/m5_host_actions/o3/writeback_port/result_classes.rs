@@ -9,6 +9,8 @@ use super::*;
 mod pairs;
 #[path = "result_classes/scalar_suffix.rs"]
 mod scalar_suffix;
+#[path = "result_classes/translated_mmio_pairs.rs"]
+mod translated_mmio_pairs;
 
 pub(super) const RESULT_MAX_TICK: u64 = 2_000;
 const ROUTE_DELAY_CANDIDATES: [u64; 13] = [1, 2, 3, 4, 6, 8, 9, 10, 12, 14, 16, 20, 24];

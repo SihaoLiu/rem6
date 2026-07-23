@@ -3,6 +3,9 @@ use rem6_memory::{AccessSize, Address, CacheLineLayout};
 
 use super::supports_translated_cross_line_data_access;
 
+#[path = "riscv_translation_tests/translated_mmio_result_pair.rs"]
+mod translated_mmio_result_pair;
+
 #[test]
 fn translated_cross_line_vector_access_accepts_same_base_page() {
     let layout = CacheLineLayout::new(16).unwrap();

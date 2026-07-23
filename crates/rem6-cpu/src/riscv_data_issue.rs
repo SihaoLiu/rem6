@@ -725,12 +725,21 @@ impl RiscvCore {
                 .get(&issue.fetch_request)
                 .copied()
                 .is_some_and(|authorization| {
-                    authorization.role() == expected_memory_result_role
-                        && authorization.matches_resolved_range(
+                    let range_matches = if authorization.is_translated() {
+                        authorization.matches_bound_target(
                             memory_result_route,
                             issue.physical_address,
                             issue.size,
                         )
+                    } else {
+                        authorization.matches_resolved_range(
+                            memory_result_route,
+                            issue.physical_address,
+                            issue.size,
+                        )
+                    };
+                    authorization.role() == expected_memory_result_role
+                        && range_matches
                         && memory_result_shape == Some(authorization.integer_destination())
                         && (memory_result_route == O3MemoryResultWindowRoute::Mmio
                             || matches!(

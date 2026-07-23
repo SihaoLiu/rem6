@@ -16,7 +16,12 @@ pub(in crate::riscv_fetch_ahead) fn retained_data_access_result_window_candidate
     fetch_events: &[CpuFetchEvent],
     translated: TranslatedMemoryFetchAhead,
 ) -> Option<DetailedFetchAheadCandidate> {
-    if translated != TranslatedMemoryFetchAhead::Disabled || state.data_translation.is_some() {
+    let matching_mode = matches!(
+        (translated, state.data_translation.is_some()),
+        (TranslatedMemoryFetchAhead::Disabled, false)
+            | (TranslatedMemoryFetchAhead::CachedMemory, true)
+    );
+    if !matching_mode {
         return None;
     }
     let (&head_request, &head_authorization) = state

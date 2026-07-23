@@ -5,10 +5,13 @@ use rem6_transport::{
     MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery, TargetOutcome,
 };
 
-use crate::riscv_cluster_drive::{push_prepared_parallel_fetch_action, PreparedParallelActions};
+use crate::riscv_cluster_drive::{
+    push_prepared_parallel_fetch_action, PreparedParallelAction, PreparedParallelActions,
+};
 use crate::riscv_cluster_scheduler::{
     drive_parallel_scheduler_turn, drive_parallel_scheduler_turn_until_tick,
 };
+use crate::riscv_data_issue::O3ResultPairProgress;
 use crate::{
     CpuId, RiscvCluster, RiscvClusterDriveEvent, RiscvClusterError, RiscvClusterTurn, RiscvCore,
     RiscvCpuError,
@@ -58,6 +61,31 @@ pub(crate) fn advance_parallel_data_translation(
     core.advance_next_data_translation(scheduler.now(), page_map)
         .map_err(|error| RiscvClusterError::Core { cpu, error })?;
     Ok(false)
+}
+
+pub(crate) fn translated_result_pair_drive_ready(core: &RiscvCore, now: Tick) -> Option<bool> {
+    match core.translated_result_pair_progress(now) {
+        O3ResultPairProgress::Ordinary => Some(false),
+        O3ResultPairProgress::Ready { .. } => Some(true),
+        O3ResultPairProgress::WaitUntil(_) | O3ResultPairProgress::Blocked => None,
+    }
+}
+
+pub(crate) fn push_ready_translated_result_pair_execution(
+    cpu: CpuId,
+    core: &RiscvCore,
+    scheduler: &mut PartitionedScheduler,
+    prepared_actions: &mut PreparedParallelActions,
+) -> Result<(), RiscvClusterError> {
+    let action = core
+        .drive_admitted_completed_fetch_parallel_action(scheduler)
+        .map_err(|error| RiscvClusterError::Core { cpu, error })?;
+    if let Some(action) = action {
+        prepared_actions.push(PreparedParallelAction::Ready(RiscvClusterDriveEvent::new(
+            cpu, action,
+        )));
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

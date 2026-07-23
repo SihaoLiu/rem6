@@ -21,6 +21,8 @@ use crate::{
     ReturnAddressStackOperation, ReturnAddressStackOperationKind, RiscvCoreState,
 };
 
+use super::O3MemoryResultWindowRole;
+
 #[path = "detailed_o3/data_access_result.rs"]
 mod data_access_result;
 #[path = "detailed_o3/data_access_result_effect_policy.rs"]
@@ -751,6 +753,19 @@ pub(super) fn ready_translated_scalar_load_window_candidate(
     let Some(translated) = state.ready_translated_data.get(&fetch_request) else {
         return DetailedFetchAheadCandidate::Blocked;
     };
+    if state
+        .memory_result_window_authorizations
+        .get(&fetch_request)
+        .is_some_and(|authorization| authorization.role() == O3MemoryResultWindowRole::Head)
+    {
+        if let Some(candidate) = retained_data_access_result_window_candidate(
+            state,
+            fetch_events,
+            TranslatedMemoryFetchAhead::CachedMemory,
+        ) {
+            return candidate;
+        }
+    }
     let MemoryAccessKind::Load { rd, .. } = &translated.access else {
         return DetailedFetchAheadCandidate::Blocked;
     };

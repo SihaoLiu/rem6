@@ -2,6 +2,25 @@ use super::o3_runtime_issue::calendar::O3LiveIssueCalendar;
 use super::*;
 
 impl O3RuntimeState {
+    pub(crate) fn memory_result_head_identity(
+        &self,
+    ) -> Option<(
+        MemoryRequestId,
+        MemoryRequestId,
+        u64,
+        u64,
+        &MemoryAccessKind,
+    )> {
+        let head = self.sole_memory_result_head()?;
+        Some((
+            head.fetch_request,
+            head.data_request,
+            head.issue_tick,
+            head.sequence,
+            head.execution.execution().memory_access()?,
+        ))
+    }
+
     pub(crate) fn matches_exact_memory_result_head(
         &self,
         fetch_request: MemoryRequestId,

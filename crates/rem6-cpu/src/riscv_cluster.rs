@@ -23,7 +23,8 @@ use crate::riscv_cluster_scheduler::{
 };
 use crate::riscv_cluster_translation::{
     advance_parallel_data_translation, can_retire_mmio_fetch_pending,
-    push_ready_translated_memory_fetch_ahead, schedule_pending_data_translation_wake,
+    push_ready_translated_memory_fetch_ahead, push_ready_translated_result_pair_execution,
+    schedule_pending_data_translation_wake, translated_result_pair_drive_ready,
 };
 use crate::riscv_reservation::RiscvReservationTracker;
 use crate::{
@@ -699,25 +700,37 @@ impl RiscvCluster {
                 )));
                 continue;
             }
-            if core.has_outstanding_data_request() || core.has_pending_trap() {
+            if core.has_pending_trap() {
                 continue;
             }
-            let has_data_work = core.has_unissued_data_access() || core.has_pending_data_access();
+            let Some(translated_result_pair_ready) =
+                translated_result_pair_drive_ready(core, scheduler.now())
+            else {
+                continue;
+            };
+            let has_data_work = core.has_unissued_data_access()
+                || if translated_result_pair_ready {
+                    core.translated_result_pair_has_translation_work()
+                } else {
+                    core.has_pending_data_access()
+                };
             if has_data_work {
                 if advance_parallel_data_translation(*cpu, core, scheduler, page_map)? {
                     continue;
                 }
-                if push_ready_translated_memory_fetch_ahead(
-                    *cpu,
-                    core,
-                    scheduler,
-                    transport,
-                    fetch_trace.clone(),
-                    &mut fetch_responder,
-                    &mut prepared_actions,
-                    &mut transaction_cpus,
-                    &mut transactions,
-                )? {
+                if !translated_result_pair_ready
+                    && push_ready_translated_memory_fetch_ahead(
+                        *cpu,
+                        core,
+                        scheduler,
+                        transport,
+                        fetch_trace.clone(),
+                        &mut fetch_responder,
+                        &mut prepared_actions,
+                        &mut transaction_cpus,
+                        &mut transactions,
+                    )?
+                {
                     continue;
                 }
                 let prepared = core
@@ -748,6 +761,15 @@ impl RiscvCluster {
                         ));
                     }
                 }
+                continue;
+            }
+            if translated_result_pair_ready {
+                push_ready_translated_result_pair_execution(
+                    *cpu,
+                    core,
+                    scheduler,
+                    &mut prepared_actions,
+                )?;
                 continue;
             }
             if core.has_pending_fetch() {
@@ -876,10 +898,20 @@ impl RiscvCluster {
                 )));
                 continue;
             }
-            if core.has_outstanding_data_request() || core.has_pending_trap() {
+            if core.has_pending_trap() {
                 continue;
             }
-            let has_data_work = core.has_unissued_data_access() || core.has_pending_data_access();
+            let Some(translated_result_pair_ready) =
+                translated_result_pair_drive_ready(core, scheduler.now())
+            else {
+                continue;
+            };
+            let has_data_work = core.has_unissued_data_access()
+                || if translated_result_pair_ready {
+                    core.translated_result_pair_has_translation_work()
+                } else {
+                    core.has_pending_data_access()
+                };
             if has_data_work {
                 if advance_parallel_data_translation(*cpu, core, scheduler, page_map)? {
                     continue;
@@ -906,17 +938,19 @@ impl RiscvCluster {
                     continue;
                 }
 
-                if push_ready_translated_memory_fetch_ahead(
-                    *cpu,
-                    core,
-                    scheduler,
-                    transport,
-                    fetch_trace.clone(),
-                    &mut fetch_responder,
-                    &mut prepared_actions,
-                    &mut transaction_cpus,
-                    &mut transactions,
-                )? {
+                if !translated_result_pair_ready
+                    && push_ready_translated_memory_fetch_ahead(
+                        *cpu,
+                        core,
+                        scheduler,
+                        transport,
+                        fetch_trace.clone(),
+                        &mut fetch_responder,
+                        &mut prepared_actions,
+                        &mut transaction_cpus,
+                        &mut transactions,
+                    )?
+                {
                     continue;
                 }
 
@@ -948,6 +982,15 @@ impl RiscvCluster {
                         ));
                     }
                 }
+                continue;
+            }
+            if translated_result_pair_ready {
+                push_ready_translated_result_pair_execution(
+                    *cpu,
+                    core,
+                    scheduler,
+                    &mut prepared_actions,
+                )?;
                 continue;
             }
             if core.has_pending_fetch() {
