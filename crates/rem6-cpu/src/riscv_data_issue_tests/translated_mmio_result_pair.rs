@@ -246,6 +246,38 @@ fn translated_result_pair_requires_exact_outstanding_access_identity() {
     });
 }
 
+#[test]
+fn translated_result_pair_requires_coherent_pending_and_ready_spans() {
+    let progress = [
+        pending_progress_after_mutation(|pending| {
+            pending.access = translated_head_access(12, HEAD_VIRTUAL_ADDRESS);
+        }),
+        pending_progress_after_mutation(|pending| {
+            pending.virtual_address = Address::new(HEAD_VIRTUAL_ADDRESS);
+        }),
+        pending_progress_after_mutation(|pending| {
+            pending.size = AccessSize::new(4).unwrap();
+        }),
+        pending_progress_after_mutation(|pending| {
+            pending.request_byte_offset = 1;
+        }),
+        ready_progress_after_mutation(|ready| {
+            ready.access = translated_head_access(12, HEAD_VIRTUAL_ADDRESS);
+        }),
+        ready_progress_after_mutation(|ready| {
+            ready.virtual_address = Address::new(HEAD_VIRTUAL_ADDRESS);
+        }),
+        ready_progress_after_mutation(|ready| {
+            ready.size = AccessSize::new(4).unwrap();
+        }),
+        ready_progress_after_mutation(|ready| {
+            ready.request_byte_offset = 1;
+        }),
+    ];
+
+    assert_eq!(progress, [O3ResultPairProgress::Blocked; 8]);
+}
+
 fn assert_outstanding_mutation_blocks(label: &str, mutate: impl FnOnce(&mut IssuedDataAccess)) {
     let core = translated_result_pair_with_outstanding_head(2);
     let issue_tick = outstanding_issue_tick(&core);
@@ -256,4 +288,26 @@ fn assert_outstanding_mutation_blocks(label: &str, mutate: impl FnOnce(&mut Issu
         O3ResultPairProgress::Blocked,
         "{label}"
     );
+}
+
+fn pending_progress_after_mutation(
+    mutate: impl FnOnce(&mut PendingDataTranslation),
+) -> O3ResultPairProgress {
+    let core = translated_result_pair_with_outstanding_head(2);
+    let issue_tick = outstanding_issue_tick(&core);
+    install_pending_younger_translation(&core, false);
+    mutate_sole_pending_translation(&core, mutate);
+
+    core.translated_result_pair_progress(issue_tick)
+}
+
+fn ready_progress_after_mutation(
+    mutate: impl FnOnce(&mut TranslatedDataAccess),
+) -> O3ResultPairProgress {
+    let core = translated_result_pair_with_outstanding_head(2);
+    let issue_tick = outstanding_issue_tick(&core);
+    install_ready_younger_translation(&core, false);
+    mutate_sole_ready_translation(&core, mutate);
+
+    core.translated_result_pair_progress(issue_tick)
 }

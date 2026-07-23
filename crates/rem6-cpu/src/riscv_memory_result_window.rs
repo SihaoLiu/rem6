@@ -80,18 +80,35 @@ impl RiscvCoreState {
         {
             return false;
         }
-        let exact_younger = |fetch_request, access: &MemoryAccessKind, address, size| {
-            fetch_request == younger_fetch_request
-                && matches!(
+        let exact_younger =
+            |fetch_request, access: &MemoryAccessKind, address, size, request_byte_offset| {
+                if fetch_request != younger_fetch_request
+                    || !matches!(
+                        access,
+                        MemoryAccessKind::Load {
+                            rd,
+                            width: MemoryWidth::Doubleword,
+                            ..
+                        } if Some(*rd) == authorization.integer_destination()
+                    )
+                {
+                    return false;
+                }
+                let Ok(base_size) = access_size(access) else {
+                    return false;
+                };
+                let Ok(span) = masked_vector_memory_request_span(
                     access,
-                    MemoryAccessKind::Load {
-                        rd,
-                        width: MemoryWidth::Doubleword,
-                        ..
-                    } if Some(*rd) == authorization.integer_destination()
-                )
-                && authorization.matches_virtual_range(address, size)
-        };
+                    Address::new(access_address(access)),
+                    base_size,
+                ) else {
+                    return false;
+                };
+                span.address == address
+                    && span.size == size
+                    && span.byte_offset == request_byte_offset
+                    && authorization.matches_virtual_range(span.address, span.size)
+            };
         if self.pending_data_translations.len() > 1
             || self.pending_data_translations.iter().next().is_some_and(
                 |(translation_id, pending)| {
@@ -102,6 +119,7 @@ impl RiscvCoreState {
                             &pending.access,
                             pending.virtual_address,
                             pending.size,
+                            pending.request_byte_offset,
                         )
                 },
             )
@@ -117,6 +135,7 @@ impl RiscvCoreState {
                             &ready.access,
                             ready.virtual_address,
                             ready.size,
+                            ready.request_byte_offset,
                         )
                 })
         {

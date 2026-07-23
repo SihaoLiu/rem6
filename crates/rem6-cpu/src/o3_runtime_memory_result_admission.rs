@@ -25,10 +25,7 @@ impl O3RuntimeState {
             return None;
         }
         let reservation = O3LiveIssueHeadReservation::memory(head.sequence, head.issue_tick);
-        Some(
-            O3LiveIssueCalendar::capture(self, reservation)
-                .next_memory_slot_at_or_after(earliest_tick),
-        )
+        O3LiveIssueCalendar::capture(self, reservation).next_memory_slot_at_or_after(earliest_tick)
     }
 
     fn sole_memory_result_head(&self) -> Option<&O3LiveDataAccess> {

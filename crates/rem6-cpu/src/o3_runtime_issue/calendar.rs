@@ -117,20 +117,19 @@ impl O3LiveIssueCalendar {
             .map_err(|error| O3RuntimeError::InvalidLiveIssuePlan { error })
     }
 
-    pub(in crate::o3_runtime) fn next_memory_slot_at_or_after(&self, earliest_tick: u64) -> u64 {
+    pub(in crate::o3_runtime) fn next_memory_slot_at_or_after(
+        &self,
+        earliest_tick: u64,
+    ) -> Option<u64> {
         let mut tick = earliest_tick;
         loop {
             let reservations = self.by_tick.get(&tick).copied().unwrap_or_default();
             if reservations.width < self.issue_width
                 && reservations.memory < self.memory_issue_width
             {
-                return tick;
+                return Some(tick);
             }
-            let next_tick = tick.saturating_add(1);
-            if next_tick == tick {
-                return tick;
-            }
-            tick = next_tick;
+            tick = tick.checked_add(1)?;
         }
     }
 

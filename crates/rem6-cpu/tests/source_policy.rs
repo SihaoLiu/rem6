@@ -304,6 +304,8 @@ fn o3_translated_result_pair_issue_admission_has_focused_ownership() {
         "translated_result_pair_memory_width_one_selects_the_next_tick",
         "translated_result_pair_memory_width_two_reuses_the_head_tick",
         "translated_result_pair_total_width_one_still_selects_the_next_tick",
+        "translated_result_pair_max_tick_free_selects_max_tick",
+        "translated_result_pair_max_tick_occupied_returns_none",
         "scalar_memory_prefix_is_not_an_exact_memory_result_head",
         "memory_result_window_head_matches_its_exact_identity",
     ] {
@@ -320,6 +322,7 @@ fn o3_translated_result_pair_issue_admission_has_focused_ownership() {
         "translated_result_pair_exact_pending_and_ready_keys_preserve_progress",
         "translated_result_pair_rejects_mismatched_pending_and_ready_map_keys",
         "translated_result_pair_requires_exact_outstanding_access_identity",
+        "translated_result_pair_requires_coherent_pending_and_ready_spans",
     ] {
         assert_eq!(rust_test_function_definition_count(&issue_tests, test), 1);
     }

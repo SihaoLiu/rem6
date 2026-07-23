@@ -235,6 +235,22 @@ pub(super) fn mutate_sole_outstanding(
     mutate(state.outstanding_data.get_mut(&request).unwrap());
 }
 
+pub(super) fn mutate_sole_pending_translation(
+    core: &RiscvCore,
+    mutate: impl FnOnce(&mut PendingDataTranslation),
+) {
+    let mut state = core.state.lock().expect("riscv core lock");
+    mutate(state.pending_data_translations.values_mut().next().unwrap());
+}
+
+pub(super) fn mutate_sole_ready_translation(
+    core: &RiscvCore,
+    mutate: impl FnOnce(&mut TranslatedDataAccess),
+) {
+    let mut state = core.state.lock().expect("riscv core lock");
+    mutate(state.ready_translated_data.values_mut().next().unwrap());
+}
+
 pub(super) fn translated_head_access(rd: u8, address: u64) -> MemoryAccessKind {
     MemoryAccessKind::Load {
         rd: reg(rd),

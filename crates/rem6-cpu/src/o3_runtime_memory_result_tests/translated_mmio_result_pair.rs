@@ -28,6 +28,27 @@ fn translated_result_pair_total_width_one_still_selects_the_next_tick() {
 }
 
 #[test]
+fn translated_result_pair_max_tick_free_selects_max_tick() {
+    let mut runtime = memory_result_head_at_tick_40();
+    assert!(runtime.set_issue_width(1));
+    assert!(runtime.set_memory_issue_width(1));
+
+    assert_eq!(
+        runtime.next_memory_result_issue_tick(u64::MAX),
+        Some(u64::MAX)
+    );
+}
+
+#[test]
+fn translated_result_pair_max_tick_occupied_returns_none() {
+    let mut runtime = memory_result_head_at_tick(u64::MAX);
+    assert!(runtime.set_issue_width(1));
+    assert!(runtime.set_memory_issue_width(1));
+
+    assert_eq!(runtime.next_memory_result_issue_tick(u64::MAX), None);
+}
+
+#[test]
 fn scalar_memory_prefix_is_not_an_exact_memory_result_head() {
     let mut runtime = O3RuntimeState::default();
     let event = load_event(0x8000, 1, 5);
@@ -66,11 +87,15 @@ fn memory_result_window_head_matches_its_exact_identity() {
 }
 
 fn memory_result_head_at_tick_40() -> O3RuntimeState {
+    memory_result_head_at_tick(40)
+}
+
+fn memory_result_head_at_tick(issue_tick: u64) -> O3RuntimeState {
     let mut runtime = O3RuntimeState::default();
     assert!(runtime.stage_live_data_access_issue(
         &load_event(0x8000, 1, 5),
         request(20),
-        40,
+        issue_tick,
         O3DataAccessWindowPolicy::MemoryResultWindow,
     ));
     runtime

@@ -12,6 +12,12 @@ pub(crate) enum O3ResultPairProgress {
 
 impl RiscvCore {
     pub(crate) fn translated_result_pair_progress(&self, now: Tick) -> O3ResultPairProgress {
+        {
+            let state = self.state.lock().expect("riscv core lock");
+            if state.outstanding_data.is_empty() {
+                return O3ResultPairProgress::Ordinary;
+            }
+        }
         let fetch_events = self.core.fetch_events();
         let state = self.state.lock().expect("riscv core lock");
         if state.outstanding_data.is_empty() {
