@@ -2608,10 +2608,14 @@ fn o3_data_access_younger_window_has_focused_owners() {
 #[test]
 fn riscv_data_access_result_fetch_authority_is_focused() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let root_path = crate_dir.join("src/riscv_fetch_ahead/detailed_o3.rs");
-    let child_path = crate_dir.join("src/riscv_fetch_ahead/detailed_o3/data_access_result.rs");
-    let translation_path =
-        crate_dir.join("src/riscv_fetch_ahead/detailed_o3/data_access_result_translation.rs");
+    let source_root = crate_dir.join("src");
+    let root_owner_path = Path::new("src/riscv_fetch_ahead/detailed_o3.rs");
+    let child_owner_path = Path::new("src/riscv_fetch_ahead/detailed_o3/data_access_result.rs");
+    let translation_owner_path =
+        Path::new("src/riscv_fetch_ahead/detailed_o3/data_access_result_translation.rs");
+    let root_path = crate_dir.join(root_owner_path);
+    let child_path = crate_dir.join(child_owner_path);
+    let translation_path = crate_dir.join(translation_owner_path);
     let pair_policy_path =
         crate_dir.join("src/riscv_fetch_ahead/detailed_o3/data_access_result_pair_policy.rs");
     let effect_policy_path =
@@ -2629,6 +2633,25 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
         crate_dir.join("src/riscv_fetch_ahead/tests/dependent_result_address_three_pending.rs");
     let root = fs::read_to_string(&root_path).unwrap();
     let fetch_tests_root = fs::read_to_string(&fetch_tests_root_path).unwrap();
+    let production = rust_source_files(&source_root)
+        .into_iter()
+        .filter_map(|path| {
+            let relative = path.strip_prefix(crate_dir).unwrap().to_path_buf();
+            (!is_test_only_rust_source(&relative)).then(|| {
+                let source = fs::read_to_string(path).unwrap();
+                (relative, production_rust_source(&source))
+            })
+        })
+        .collect::<Vec<_>>();
+    let production_source = |path: &Path| {
+        production
+            .iter()
+            .find_map(|(candidate, source)| (candidate == path).then_some(source.as_str()))
+            .unwrap_or_else(|| panic!("missing production source {}", path.display()))
+    };
+    let root_production = production_source(root_owner_path);
+    let child_production = production_source(child_owner_path);
+    let translation_production = production_source(translation_owner_path);
 
     assert!(
         root.contains("#[path = \"detailed_o3/data_access_result.rs\"]\nmod data_access_result;"),
@@ -2820,40 +2843,153 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
             "detailed_o3.rs still owns `{anchor}`"
         );
     }
-    for anchor in [
-        "pub(in crate::riscv_fetch_ahead) enum DataAccessResultHeadPhysicalProbe",
-        "pub(in crate::riscv_fetch_ahead) fn data_access_result_head_physical_probe(",
-        "pub(super) struct DataAccessResultHeadProbe",
-        "pub(super) fn data_access_result_head_probe(",
-        "pub(super) enum DataAccessResultTranslationProbe",
-        "pub(super) fn data_access_result_translation_probe(",
+    let expected_translation_owner = [translation_owner_path.display().to_string()];
+    for function in [
+        "data_access_result_head_physical_probe",
+        "data_access_result_head_probe",
+        "data_access_result_translation_probe",
     ] {
-        assert!(
-            translation.contains(anchor),
-            "focused data-access result translation owner is missing `{anchor}`"
+        let owners = production
+            .iter()
+            .filter_map(|(path, source)| {
+                (rust_function_definition_count(source, function) > 0)
+                    .then(|| path.display().to_string())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            owners, expected_translation_owner,
+            "translated result probe function `{function}` must have exactly one focused production owner"
         );
-        assert!(
-            !child.contains(anchor) && !root.contains(anchor),
-            "data-access result translation probe escaped its focused owner: `{anchor}`"
+        assert_eq!(
+            rust_function_definition_count(translation_production, function),
+            1,
+            "translated result probe function `{function}` must have exactly one definition"
         );
     }
+    for (keyword, item) in [
+        ("enum", "DataAccessResultHeadPhysicalProbe"),
+        ("struct", "DataAccessResultHeadProbe"),
+        ("enum", "DataAccessResultTranslationProbe"),
+    ] {
+        let owners = production
+            .iter()
+            .filter_map(|(path, source)| {
+                production_defines_exact_named_item(source, keyword, item)
+                    .then(|| path.display().to_string())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            owners, expected_translation_owner,
+            "translated result probe {keyword} `{item}` must have exactly one focused production owner"
+        );
+        let definitions = match keyword {
+            "struct" => production_struct_definitions(translation_production),
+            "enum" => production_enum_definitions(translation_production),
+            _ => unreachable!("translated probe items are structs or enums"),
+        };
+        assert_eq!(
+            definitions
+                .iter()
+                .filter(|definition| {
+                    production_defines_exact_named_item(definition, keyword, item)
+                })
+                .count(),
+            1,
+            "translated result probe {keyword} `{item}` must have exactly one definition"
+        );
+    }
+    let translation_reexport_statements = root_production
+        .split(';')
+        .filter(|statement| {
+            let chars = statement.chars().collect::<Vec<_>>();
+            rust_identifier_count(&chars, "use") == 1
+                && rust_identifier_count(&chars, "data_access_result_translation") == 1
+        })
+        .collect::<Vec<_>>();
     assert!(
-        root.contains(
-            "pub(super) use data_access_result_translation::{\n    data_access_result_head_physical_probe, DataAccessResultHeadPhysicalProbe,\n};"
-        ),
-        "detailed_o3.rs must re-export only the existing public physical probe"
+        !translation_reexport_statements.is_empty(),
+        "detailed_o3.rs must re-export the public physical probe from the translation child"
     );
+    let mut translation_reexports = Vec::new();
+    for statement in translation_reexport_statements {
+        let compact = statement
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+        assert!(
+            compact.starts_with("pub(super)use"),
+            "translation-child compatibility names must remain parent-visible re-exports"
+        );
+        let chars = statement.chars().collect::<Vec<_>>();
+        let mut index = 0;
+        while index < chars.len() {
+            let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+                index += 1;
+                continue;
+            };
+            if identifier != "data_access_result_translation" {
+                index = end;
+                continue;
+            }
+            let separator = skip_rust_whitespace(&chars, end);
+            assert_eq!(chars.get(separator), Some(&':'));
+            assert_eq!(chars.get(separator + 1), Some(&':'));
+            let import_start = skip_rust_whitespace(&chars, separator + 2);
+            if chars.get(import_start) == Some(&'{') {
+                let import_end = matching_delimiter(&chars, import_start, '{', '}')
+                    .expect("translation-child use group must close");
+                let mut import_index = import_start + 1;
+                while import_index < import_end {
+                    let Some((imported, imported_end)) = rust_identifier_at(&chars, import_index)
+                    else {
+                        import_index += 1;
+                        continue;
+                    };
+                    translation_reexports.push(imported);
+                    import_index = imported_end;
+                }
+            } else {
+                let (imported, imported_end) = rust_identifier_at(&chars, import_start)
+                    .expect("translation-child use must name an imported item");
+                translation_reexports.push(imported);
+                let alias_start = skip_rust_whitespace(&chars, imported_end);
+                if let Some((alias_keyword, _)) = rust_identifier_at(&chars, alias_start) {
+                    translation_reexports.push(alias_keyword);
+                }
+            }
+            break;
+        }
+    }
+    translation_reexports.sort();
+    assert_eq!(
+        translation_reexports,
+        [
+            "DataAccessResultHeadPhysicalProbe".to_string(),
+            "data_access_result_head_physical_probe".to_string(),
+        ],
+        "detailed_o3.rs must re-export exactly the two existing public physical probe names"
+    );
+    let root_production_chars = root_production.chars().collect::<Vec<_>>();
+    for private_helper in [
+        "DataAccessResultHeadProbe",
+        "data_access_result_head_probe",
+        "data_access_result_translation_probe",
+        "DataAccessResultTranslationProbe",
+    ] {
+        assert_eq!(
+            rust_identifier_count(&root_production_chars, private_helper),
+            0,
+            "detailed_o3.rs must not re-export private translation helper `{private_helper}`"
+        );
+    }
+    let child_production_chars = child_production.chars().collect::<Vec<_>>();
     for private_helper in [
         "data_access_result_head_probe",
         "data_access_result_translation_probe",
         "DataAccessResultTranslationProbe",
     ] {
         assert!(
-            !root.contains(private_helper),
-            "detailed_o3.rs must not re-export private translation helper `{private_helper}`"
-        );
-        assert!(
-            child.contains(private_helper),
+            rust_identifier_count(&child_production_chars, private_helper) > 0,
             "data_access_result.rs must import private translation helper `{private_helper}`"
         );
     }
