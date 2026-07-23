@@ -802,7 +802,7 @@ Run:
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib live_issue_state_ -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib live_issue_queue_packet_ -- --nocapture
-TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib pending_data_address -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib pending_address_ -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --test source_policy o3_persistent_live_issue -- --nocapture
 ```
 
