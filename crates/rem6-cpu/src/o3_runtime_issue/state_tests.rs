@@ -129,6 +129,18 @@ fn live_issue_state_service_accepts_due_generation_once() {
 }
 
 #[test]
+fn live_issue_state_compatibility_cycles_remember_noncontiguous_ticks() {
+    let mut state = O3LiveIssueState::default();
+    assert!(state.begin_compatibility_cycle_at(20));
+    assert!(state.begin_compatibility_cycle_at(22));
+    assert!(!state.begin_compatibility_cycle_at(20));
+    assert!(state.begin_compatibility_cycle_at(21));
+
+    state.reset_stats_baseline();
+    assert!(state.begin_compatibility_cycle_at(20));
+}
+
+#[test]
 fn live_issue_head_binding_enqueues_then_durable_record_removes_exact_row() {
     let mut runtime = O3RuntimeState::default();
     let instruction = addi(3, 0, 1);
@@ -163,6 +175,73 @@ fn live_issue_head_binding_enqueues_then_durable_record_removes_exact_row() {
         20,
     ));
     assert!(runtime.live_issue.resident_sequences().is_empty());
+}
+
+#[test]
+fn live_issue_head_selected_trace_records_writeback_ticks() {
+    let mut runtime = O3RuntimeState::default();
+    let instruction = addi(3, 0, 1);
+    let sequence = runtime
+        .stage_live_instruction(Address::new(BRANCH_PC), instruction, 0)
+        .unwrap();
+    let decoded = decoded(instruction);
+    assert!(runtime.bind_live_staged_issue_packet(
+        Address::new(BRANCH_PC),
+        decoded,
+        &[request(11)],
+        20,
+    ));
+    let execution = RiscvHartState::new(BRANCH_PC)
+        .execute_decoded(decoded)
+        .unwrap();
+    let head = O3LiveIssueHeadReservation::for_instruction(sequence, 20, instruction);
+    assert!(runtime
+        .record_live_issue_head_execution(head, &[request(11)], execution)
+        .unwrap());
+
+    let issued = runtime
+        .live_speculative_executions
+        .iter()
+        .find(|issued| issued.sequence == sequence)
+        .unwrap();
+    let selected = runtime
+        .live_issue_trace_records()
+        .iter()
+        .find(|record| {
+            record.sequence() == sequence && record.action() == O3LiveIssueTraceAction::Selected
+        })
+        .unwrap();
+    assert_eq!(selected.raw_writeback_tick(), Some(issued.raw_ready_tick));
+    assert_eq!(
+        selected.admitted_writeback_tick(),
+        Some(issued.admitted_writeback_tick),
+    );
+}
+
+#[test]
+fn live_issue_fixed_fu_selected_trace_records_writeback_ticks() {
+    let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::CrossResource);
+    fixture.schedule(20);
+    let sequence = fixture.sequence(SECOND_PC);
+    let issued = fixture
+        .runtime
+        .live_speculative_executions
+        .iter()
+        .find(|issued| issued.sequence == sequence)
+        .unwrap();
+    let selected = fixture
+        .runtime
+        .live_issue_trace_records()
+        .iter()
+        .find(|record| {
+            record.sequence() == sequence && record.action() == O3LiveIssueTraceAction::Selected
+        })
+        .unwrap();
+    assert_eq!(selected.raw_writeback_tick(), Some(issued.raw_ready_tick));
+    assert_eq!(
+        selected.admitted_writeback_tick(),
+        Some(issued.admitted_writeback_tick),
+    );
 }
 
 #[test]

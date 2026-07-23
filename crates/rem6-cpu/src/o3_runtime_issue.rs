@@ -166,12 +166,13 @@ impl O3RuntimeState {
         self.live_speculative_executions
             .sort_by_key(|recorded| recorded.sequence);
         if let Some(issue_class) = issue_class {
-            self.live_issue.remove_exact_at(
+            self.live_issue.remove_selected_at(
                 head.sequence(),
-                O3LiveIssueTraceAction::Selected,
                 entry.pc(),
                 issue_class,
                 head.issue_tick,
+                raw_ready_tick,
+                admitted_writeback_tick,
             );
         }
         Ok(true)

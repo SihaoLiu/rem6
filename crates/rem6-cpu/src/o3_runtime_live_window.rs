@@ -442,6 +442,7 @@ impl O3RuntimeState {
     }
 
     fn discard_live_staged_window_rows_from_at(&mut self, sequence: u64, now: Option<u64>) {
+        self.live_issue.discard_suffix(sequence);
         self.snapshot
             .reorder_buffer
             .retain(|entry| !entry.is_live_staged() || entry.sequence() < sequence);

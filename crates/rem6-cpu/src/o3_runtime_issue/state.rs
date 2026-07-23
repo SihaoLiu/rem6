@@ -6,9 +6,7 @@ use super::*;
 
 macro_rules! copy_getters {
     ($($name:ident -> $value:ty),+ $(,)?) => {
-        $(pub const fn $name(self) -> $value {
-            self.$name
-        })+
+        $(pub const fn $name(self) -> $value { self.$name })+
     };
 }
 
@@ -26,17 +24,10 @@ pub struct O3LiveIssueTelemetry {
 }
 
 impl O3LiveIssueTelemetry {
-    copy_getters!(
-        enqueued_rows -> u64,
-        service_turns -> u64,
-        wake_requests -> u64,
-        current_occupancy -> u64,
-        peak_occupancy -> u64,
-        scalar_integer_issued_rows -> u64,
-        integer_mul_div_issued_rows -> u64,
-        memory_agu_issued_rows -> u64,
-        control_issued_rows -> u64,
-    );
+    copy_getters!(enqueued_rows -> u64, service_turns -> u64, wake_requests -> u64);
+    copy_getters!(current_occupancy -> u64, peak_occupancy -> u64);
+    copy_getters!(scalar_integer_issued_rows -> u64, integer_mul_div_issued_rows -> u64);
+    copy_getters!(memory_agu_issued_rows -> u64, control_issued_rows -> u64);
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -97,17 +88,11 @@ pub struct O3LiveIssueTraceRecord {
 }
 
 impl O3LiveIssueTraceRecord {
-    copy_getters!(
-        sequence -> u64,
-        pc -> Address,
-        action -> O3LiveIssueTraceAction,
-        issue_class -> O3LiveIssueTraceClass,
-        service_tick -> u64,
-        next_wake_tick -> Option<u64>,
-        raw_writeback_tick -> Option<u64>,
-        admitted_writeback_tick -> Option<u64>,
-        cleanup_boundary -> Option<u64>,
-    );
+    copy_getters!(sequence -> u64, pc -> Address);
+    copy_getters!(action -> O3LiveIssueTraceAction, issue_class -> O3LiveIssueTraceClass);
+    copy_getters!(service_tick -> u64, next_wake_tick -> Option<u64>);
+    copy_getters!(raw_writeback_tick -> Option<u64>);
+    copy_getters!(admitted_writeback_tick -> Option<u64>, cleanup_boundary -> Option<u64>);
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -131,6 +116,7 @@ struct O3LiveIssueActiveTick {
 pub(in crate::o3_runtime) struct O3LiveIssueState {
     resident_sequences: Vec<u64>,
     requested_service_tick: Option<u64>,
+    compatibility_cycle_ticks: BTreeSet<u64>,
     active_tick: Option<O3LiveIssueActiveTick>,
     transaction_active: bool,
     mutation_generation: u64,
@@ -207,6 +193,25 @@ impl O3LiveIssueState {
         true
     }
 
+    pub(in crate::o3_runtime) fn remove_selected_at(
+        &mut self,
+        sequence: u64,
+        pc: Address,
+        issue_class: O3LiveIssueTraceClass,
+        tick: u64,
+        raw_writeback_tick: u64,
+        admitted_writeback_tick: u64,
+    ) -> bool {
+        let action = O3LiveIssueTraceAction::Selected;
+        let removed = self.remove_exact_at(sequence, action, pc, issue_class, tick);
+        if removed {
+            let record = self.trace_records.last_mut().expect("selected trace");
+            record.raw_writeback_tick = Some(raw_writeback_tick);
+            record.admitted_writeback_tick = Some(admitted_writeback_tick);
+        }
+        removed
+    }
+
     pub(in crate::o3_runtime) fn remove_suffix_at(
         &mut self,
         boundary: u64,
@@ -214,26 +219,12 @@ impl O3LiveIssueState {
         rows: &[(u64, Address, O3LiveIssueTraceClass)],
         tick: u64,
     ) -> usize {
-        let first = self
-            .resident_sequences
-            .partition_point(|sequence| *sequence < boundary);
-        if first == self.resident_sequences.len() {
-            return 0;
-        }
-        let removed = self.resident_sequences.split_off(first);
+        let removed = self.take_suffix(boundary);
         let metadata = rows
             .iter()
             .copied()
             .map(|(sequence, pc, issue_class)| (sequence, (pc, issue_class)))
             .collect::<BTreeMap<_, _>>();
-        for sequence in removed.iter().copied() {
-            self.remove_blocked_sequence(sequence);
-        }
-        self.mark_mutated();
-        self.update_occupancy();
-        if self.resident_sequences.is_empty() {
-            self.clear_requested_service_tick();
-        }
         let next_wake_tick = self.requested_service_tick;
         for sequence in removed.iter().copied() {
             if let Some((pc, issue_class)) = metadata.get(&sequence).copied() {
@@ -252,6 +243,10 @@ impl O3LiveIssueState {
             }
         }
         removed.len()
+    }
+
+    pub(in crate::o3_runtime) fn discard_suffix(&mut self, boundary: u64) -> usize {
+        self.take_suffix(boundary).len()
     }
 
     pub(in crate::o3_runtime) fn request_service_at(&mut self, tick: u64) {
@@ -304,11 +299,9 @@ impl O3LiveIssueState {
     }
 
     pub(in crate::o3_runtime) fn begin_transaction(&mut self) -> bool {
-        if self.transaction_active {
-            return false;
-        }
+        let started = !self.transaction_active;
         self.transaction_active = true;
-        true
+        started
     }
 
     pub(in crate::o3_runtime) fn end_transaction(&mut self) {
@@ -341,6 +334,7 @@ impl O3LiveIssueState {
             ..O3LiveIssueTelemetry::default()
         };
         self.trace_records.clear();
+        self.compatibility_cycle_ticks.clear();
         if let Some(active) = self.active_tick.as_mut() {
             active.baseline_issued_sequences = active.issued_sequences.clone();
             active.baseline_blocked_sequences = active.blocked_sequences.clone();
@@ -350,21 +344,7 @@ impl O3LiveIssueState {
     }
 
     pub(in crate::o3_runtime) fn begin_compatibility_cycle_at(&mut self, tick: u64) -> bool {
-        if let Some(active) = self
-            .active_tick
-            .as_mut()
-            .filter(|active| active.tick == tick)
-        {
-            let new_cycle = !active.observed_after_reset;
-            active.observed_after_reset = true;
-            return new_cycle;
-        }
-        self.active_tick = Some(O3LiveIssueActiveTick {
-            tick,
-            observed_after_reset: true,
-            ..O3LiveIssueActiveTick::default()
-        });
-        true
+        self.compatibility_cycle_ticks.insert(tick)
     }
 
     fn remove_blocked_sequence(&mut self, sequence: u64) {
@@ -372,6 +352,30 @@ impl O3LiveIssueState {
             active.blocked_sequences.remove(&sequence);
             active.baseline_blocked_sequences.remove(&sequence);
         }
+    }
+
+    fn take_suffix(&mut self, boundary: u64) -> Vec<u64> {
+        let first = self
+            .resident_sequences
+            .partition_point(|sequence| *sequence < boundary);
+        if first == self.resident_sequences.len() {
+            return Vec::new();
+        }
+        let removed = self.resident_sequences.split_off(first);
+        if let Some(active) = self.active_tick.as_mut() {
+            active
+                .blocked_sequences
+                .retain(|sequence, _| *sequence < boundary);
+            active
+                .baseline_blocked_sequences
+                .retain(|sequence, _| *sequence < boundary);
+        }
+        self.mark_mutated();
+        self.update_occupancy();
+        if self.resident_sequences.is_empty() {
+            self.clear_requested_service_tick();
+        }
+        removed
     }
 
     fn update_occupancy(&mut self) {
@@ -404,13 +408,12 @@ impl O3RuntimeState {
         sequence: u64,
         tick: u64,
     ) -> bool {
-        let Some((index, rob)) = self
+        let Some(rob) = self
             .snapshot
             .reorder_buffer
             .iter()
             .copied()
-            .enumerate()
-            .find(|(_, entry)| entry.is_live_staged() && entry.sequence() == sequence)
+            .find(|entry| entry.is_live_staged() && entry.sequence() == sequence)
         else {
             return false;
         };
@@ -436,9 +439,8 @@ impl O3RuntimeState {
         let Some(issue_class) = issue_class else {
             return true;
         };
-        let pc = rob.pc();
-        let _ = index;
-        self.live_issue.enqueue_at(sequence, pc, issue_class, tick);
+        self.live_issue
+            .enqueue_at(sequence, rob.pc(), issue_class, tick);
         true
     }
 }

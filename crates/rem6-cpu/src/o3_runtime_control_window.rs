@@ -132,12 +132,13 @@ impl O3RuntimeState {
             });
         self.record_producer_forwarded_return_descendant();
         if let Some(issue_class) = issue_class {
-            self.live_issue.remove_exact_at(
+            self.live_issue.remove_selected_at(
                 sequence,
-                O3LiveIssueTraceAction::Selected,
                 pc,
                 issue_class,
                 issue_tick,
+                raw_ready_tick,
+                admitted_writeback_tick,
             );
         }
         Ok(true)

@@ -391,6 +391,31 @@ fn pending_address_materialization_stale_identity_replays_and_discards_suffix() 
 }
 
 #[test]
+fn pending_address_replay_cleanup_clears_live_issue_membership_and_wake() {
+    let mut fixture = PendingAddressSchedulingFixture::new(2);
+    fixture.complete_head(PRODUCER_VALUE);
+    fixture.publish_head();
+    let pending_sequence = fixture
+        .runtime
+        .pending_data_address_sequence_for_test()
+        .expect("pending sequence");
+    fixture
+        .runtime
+        .live_staged_fetch_identities
+        .remove(&pending_sequence);
+
+    fixture.schedule(HEAD_WRITEBACK_TICK).unwrap();
+
+    assert!(fixture.runtime.live_issue.resident_sequences().is_empty());
+    assert_eq!(
+        fixture.runtime.live_issue_telemetry().current_occupancy(),
+        0
+    );
+    assert_eq!(fixture.runtime.live_issue_service_tick(), None);
+    assert!(fixture.runtime.live_issue_is_quiescent());
+}
+
+#[test]
 fn pending_address_materialization_failure_replays_without_callback_error() {
     let mut fixture = PendingAddressSchedulingFixture::new(2);
     fixture.complete_head(PRODUCER_VALUE);

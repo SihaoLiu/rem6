@@ -1852,6 +1852,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "pending_address_materialization_stale_identity_replays_and_discards_suffix",
         "pending_address_materialization_failure_replays_without_callback_error",
         "pending_address_materialization_does_not_allocate_a_request",
+        "pending_address_replay_cleanup_clears_live_issue_membership_and_wake",
     ];
     let scheduling_test_code = rust_code_without_comments_and_literals(&scheduling_test);
     assert_eq!(
@@ -3887,16 +3888,12 @@ fn o3_persistent_live_issue_state_owns_membership() {
     );
     assert!(!root.contains("live_issue_cycle_ticks"));
 
-    let resident_inventory_owners = production_sources
-        .iter()
-        .filter_map(|(relative, source)| {
-            let count = production_struct_definitions(source)
-                .iter()
-                .filter(|definition| definition.contains("resident_sequences: Vec<u64>"))
-                .count();
-            (count > 0).then(|| (relative.clone(), count))
-        })
-        .collect::<Vec<_>>();
+    let resident_inventory_owners = production_struct_named_generic_field_storage(
+        &production_sources,
+        "resident_sequences",
+        "Vec",
+        "u64",
+    );
     assert_eq!(
         resident_inventory_owners,
         vec![(PathBuf::from("src/o3_runtime_issue/state.rs"), 1)],
@@ -7145,6 +7142,107 @@ fn production_struct_named_type_storage(
         .collect()
 }
 
+fn production_struct_named_generic_field_storage(
+    production: &[(PathBuf, String)],
+    field: &str,
+    outer: &str,
+    inner: &str,
+) -> Vec<(PathBuf, usize)> {
+    production
+        .iter()
+        .filter_map(|(path, source)| {
+            let count = production_struct_named_field_types(source, field)
+                .iter()
+                .filter(|field_type| rust_type_is_single_generic(field_type, outer, inner))
+                .count();
+            (count > 0).then(|| (path.clone(), count))
+        })
+        .collect()
+}
+
+fn production_struct_named_field_types(source: &str, field: &str) -> Vec<String> {
+    let mut field_types = Vec::new();
+    for definition in production_struct_definitions(source) {
+        let code = production_rust_source(&definition);
+        let chars = code.chars().collect::<Vec<_>>();
+        let Some(open) = chars.iter().position(|character| *character == '{') else {
+            continue;
+        };
+        let Some(close) = matching_delimiter(&chars, open, '{', '}') else {
+            continue;
+        };
+        let mut index = open + 1;
+        while index < close {
+            let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+                index += 1;
+                continue;
+            };
+            if identifier != field {
+                index = end;
+                continue;
+            }
+            let colon = skip_rust_whitespace(&chars, end);
+            if chars.get(colon) != Some(&':') {
+                index = end;
+                continue;
+            }
+            let type_start = skip_rust_whitespace(&chars, colon + 1);
+            let type_end = rust_field_type_end(&chars, type_start, close);
+            field_types.push(chars[type_start..type_end].iter().collect());
+            index = type_end.saturating_add(1);
+        }
+    }
+    field_types
+}
+
+fn rust_field_type_end(chars: &[char], start: usize, struct_close: usize) -> usize {
+    let (mut angle, mut paren, mut bracket, mut brace) = (0_u32, 0_u32, 0_u32, 0_u32);
+    for (index, character) in chars
+        .iter()
+        .copied()
+        .enumerate()
+        .take(struct_close)
+        .skip(start)
+    {
+        match character {
+            '<' => angle += 1,
+            '>' => angle = angle.saturating_sub(1),
+            '(' => paren += 1,
+            ')' => paren = paren.saturating_sub(1),
+            '[' => bracket += 1,
+            ']' => bracket = bracket.saturating_sub(1),
+            '{' => brace += 1,
+            '}' => brace = brace.saturating_sub(1),
+            ',' if angle == 0 && paren == 0 && bracket == 0 && brace == 0 => return index,
+            _ => {}
+        }
+    }
+    struct_close
+}
+
+fn rust_type_is_single_generic(source: &str, outer: &str, inner: &str) -> bool {
+    let code = production_rust_source(source);
+    let chars = code.chars().collect::<Vec<_>>();
+    let start = skip_rust_whitespace(&chars, 0);
+    let Some((identifier, end)) = rust_identifier_at(&chars, start) else {
+        return false;
+    };
+    let open = skip_rust_whitespace(&chars, end);
+    if identifier != outer || chars.get(open) != Some(&'<') {
+        return false;
+    }
+    let Some(close) = matching_delimiter(&chars, open, '<', '>') else {
+        return false;
+    };
+    let argument_start = skip_rust_whitespace(&chars, open + 1);
+    let Some((argument, argument_end)) = rust_identifier_at(&chars, argument_start) else {
+        return false;
+    };
+    argument == inner
+        && skip_rust_whitespace(&chars, argument_end) == close
+        && skip_rust_whitespace(&chars, close + 1) == chars.len()
+}
+
 fn production_renamed_use_aliases(source: &str, protected_names: &[&str]) -> Vec<String> {
     let code = production_rust_source(source);
     let chars = code.chars().collect::<Vec<_>>();
@@ -7915,6 +8013,57 @@ fn query() -> Option<O3ProducerForwardedScalarDescendant> { None }\n";
         "fn query() -> Option<O3ProducerForwardedScalarDescendant> { None }"
     )
     .is_empty());
+}
+
+#[test]
+fn source_policy_helper_structurally_detects_named_generic_fields() {
+    let state_path = PathBuf::from("src/o3_runtime_issue/state.rs");
+    let whitespace = vec![(
+        state_path.clone(),
+        production_rust_source("struct O3LiveIssueState { resident_sequences : Vec < u64 >, }"),
+    )];
+    assert_eq!(
+        production_struct_named_generic_field_storage(
+            &whitespace,
+            "resident_sequences",
+            "Vec",
+            "u64",
+        ),
+        [(state_path.clone(), 1)],
+    );
+
+    let renamed = vec![(
+        state_path.clone(),
+        production_rust_source("struct O3LiveIssueState { queued_sequences: Vec<u64>, }"),
+    )];
+    assert!(production_struct_named_generic_field_storage(
+        &renamed,
+        "resident_sequences",
+        "Vec",
+        "u64",
+    )
+    .is_empty());
+
+    let shadow_path = PathBuf::from("src/mutation.rs");
+    let second_inventory = vec![
+        (
+            state_path.clone(),
+            production_rust_source("struct O3LiveIssueState { resident_sequences: Vec<u64>, }"),
+        ),
+        (
+            shadow_path.clone(),
+            production_rust_source("struct Shadow { resident_sequences: Vec<u64>, }"),
+        ),
+    ];
+    assert_eq!(
+        production_struct_named_generic_field_storage(
+            &second_inventory,
+            "resident_sequences",
+            "Vec",
+            "u64",
+        ),
+        [(state_path, 1), (shadow_path, 1)],
+    );
 }
 
 #[test]
