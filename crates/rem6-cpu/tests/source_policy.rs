@@ -1023,6 +1023,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let issue_calendar_path = crate_dir.join("src/o3_runtime_issue/calendar.rs");
     let issue_pending_path = crate_dir.join("src/o3_runtime_issue/pending_address.rs");
     let writeback_wake_path = crate_dir.join("src/riscv_o3_writeback_wake.rs");
+    let writeback_desired_path = crate_dir.join("src/riscv_o3_writeback_wake/desired.rs");
     let test_root_path = crate_dir.join("src/o3_runtime_pending_address_tests.rs");
     let staging_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/staging.rs");
     let scheduling_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/scheduling.rs");
@@ -1041,6 +1042,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         &issue_calendar_path,
         &issue_pending_path,
         &writeback_wake_path,
+        &writeback_desired_path,
         &test_root_path,
         &staging_test_path,
         &scheduling_test_path,
@@ -1066,6 +1068,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let issue_calendar = fs::read_to_string(&issue_calendar_path).unwrap();
     let issue_pending = fs::read_to_string(&issue_pending_path).unwrap();
     let writeback_wake = fs::read_to_string(&writeback_wake_path).unwrap();
+    let writeback_desired = fs::read_to_string(&writeback_desired_path).unwrap();
     let test_root = fs::read_to_string(&test_root_path).unwrap();
     let staging_test = fs::read_to_string(&staging_test_path).unwrap();
     let scheduling_test = fs::read_to_string(&scheduling_test_path).unwrap();
@@ -1109,6 +1112,15 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         ),
         1,
         "src/o3_runtime_issue.rs must attach the pending-address scheduler owner exactly once"
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &writeback_wake,
+            "riscv_o3_writeback_wake/desired.rs",
+            "desired"
+        ),
+        1,
+        "writeback wake root must attach the shared desired-wake owner exactly once"
     );
     assert_eq!(
         path_owned_module_declaration_count(
@@ -1176,6 +1188,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     assert!(include_macro_lines(&pending_set).is_empty());
     assert!(include_macro_lines(&pending_staging).is_empty());
     assert!(include_macro_lines(&issue_pending).is_empty());
+    assert!(include_macro_lines(&writeback_desired).is_empty());
     assert!(include_macro_lines(&test_root).is_empty());
     assert!(include_macro_lines(&staging_test).is_empty());
     assert!(include_macro_lines(&scheduling_test).is_empty());
@@ -1192,6 +1205,8 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
             && path_attribute_lines(&pending_staging).is_empty()
             && external_module_declaration_lines(&issue_pending).is_empty()
             && path_attribute_lines(&issue_pending).is_empty()
+            && external_module_declaration_lines(&writeback_desired).is_empty()
+            && path_attribute_lines(&writeback_desired).is_empty()
             && external_module_declaration_lines(&staging_test).is_empty()
             && path_attribute_lines(&staging_test).is_empty()
             && external_module_declaration_lines(&scheduling_test).is_empty()
@@ -1270,6 +1285,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let issue_calendar_code = production_rust_source(&issue_calendar);
     let issue_pending_code = production_rust_source(&issue_pending);
     let writeback_wake_code = production_rust_source(&writeback_wake);
+    let writeback_desired_code = production_rust_source(&writeback_desired);
     let runtime_code = production_rust_source(&runtime);
     let memory_code = production_rust_source(&memory);
     let retire_code = production_rust_source(&retire);
@@ -1689,9 +1705,63 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "refresh_o3_writeback_wake",
     ] {
         let definition = rust_function_definition(&writeback_wake_code, helper).unwrap();
+        assert_eq!(
+            definition.matches("desired_o3_writeback_wake(").count(),
+            1,
+            "writeback wake helper `{helper}` must delegate once to the shared desired-wake owner"
+        );
         assert!(
-            definition.contains("pending_data_address_wake_tick()"),
-            "writeback wake helper `{helper}` must include the minimum pending-row wake"
+            !definition.contains("pending_data_address_wake_tick()"),
+            "writeback wake helper `{helper}` must not duplicate the shared pending-row wake calculation"
+        );
+    }
+    assert!(
+        !production_defines_exact_function(&writeback_wake_code, "desired_o3_writeback_wake"),
+        "writeback wake root must not retain the shared desired-wake definition"
+    );
+    let desired_wake =
+        rust_function_definition(&writeback_desired_code, "desired_o3_writeback_wake")
+            .expect("desired.rs must define desired_o3_writeback_wake");
+    for anchor in [
+        "earliest_unpublished_memory_result_writeback_tick()",
+        "pending_data_address_wake_tick()",
+        "pending_ready_tick()",
+        "owned_scheduler_wakes()",
+        "producer_forwarded_control_target()",
+        "translated_result_pair_retry_wake_tick(now)",
+    ] {
+        assert!(
+            desired_wake.contains(anchor),
+            "shared desired-wake owner is missing source `{anchor}`"
+        );
+    }
+    let desired_sources_start = desired_wake
+        .find("let desired_tick = [")
+        .expect("shared desired-wake owner must build the desired-tick source list");
+    let desired_sources_start = desired_sources_start
+        + desired_wake[desired_sources_start..]
+            .find('[')
+            .expect("desired-tick source list must open")
+        + 1;
+    let desired_sources_end = desired_sources_start
+        + desired_wake[desired_sources_start..]
+            .find(']')
+            .expect("desired-tick source list must close");
+    let desired_sources = desired_wake[desired_sources_start..desired_sources_end]
+        .chars()
+        .collect::<Vec<_>>();
+    for source in [
+        "memory_result",
+        "pending_address",
+        "restored_live_gate",
+        "forwarded_control",
+        "translated_result_pair",
+        "translated_result_retry",
+    ] {
+        assert_eq!(
+            rust_identifier_count(&desired_sources, source),
+            1,
+            "shared desired-wake minimum must contain source `{source}` exactly once"
         );
     }
     assert!(
@@ -3759,6 +3829,7 @@ fn o3_live_issue_queue_owns_candidate_inventory() {
     let issue_tests_path = crate_dir.join("src/o3_runtime_issue_tests.rs");
     let control_path = crate_dir.join("src/o3_runtime_control_window.rs");
     let live_window_path = crate_dir.join("src/o3_runtime_live_window.rs");
+    let issue_identity_path = crate_dir.join("src/o3_runtime_live_window/issue_identity.rs");
     let retire_path = crate_dir.join("src/riscv_live_retire_window.rs");
     let issue_source = fs::read_to_string(&issue_path).unwrap();
     let issue = production_rust_source(&issue_source);
@@ -3767,7 +3838,10 @@ fn o3_live_issue_queue_owns_candidate_inventory() {
     let queue_tests_source = fs::read_to_string(&queue_tests_path).unwrap();
     let issue_tests_source = fs::read_to_string(&issue_tests_path).unwrap();
     let control = production_rust_source(&fs::read_to_string(&control_path).unwrap());
-    let live_window = production_rust_source(&fs::read_to_string(&live_window_path).unwrap());
+    let live_window_source = fs::read_to_string(&live_window_path).unwrap();
+    let live_window = production_rust_source(&live_window_source);
+    let issue_identity_source = fs::read_to_string(&issue_identity_path).unwrap();
+    let issue_identity = production_rust_source(&issue_identity_source);
     let retire = production_rust_source(&fs::read_to_string(&retire_path).unwrap());
 
     assert!(line_count(&queue_path) <= MAX_O3_RUNTIME_ISSUE_QUEUE_LINES);
@@ -3787,6 +3861,26 @@ fn o3_live_issue_queue_owns_candidate_inventory() {
             "queue",
         ),
         1,
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &live_window_source,
+            "o3_runtime_live_window/issue_identity.rs",
+            "issue_identity",
+        ),
+        1,
+        "live-window parent must attach the issue-identity owner exactly once"
+    );
+    let compact_live_window = live_window
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    assert_eq!(
+        compact_live_window
+            .matches("pub(super)useissue_identity::O3LiveStagedFetchIdentity;")
+            .count(),
+        1,
+        "live-window parent must re-export O3LiveStagedFetchIdentity exactly once"
     );
 
     let queue_authority_patterns = [
@@ -4020,7 +4114,46 @@ fn o3_live_issue_queue_owns_candidate_inventory() {
         1,
         "retire-window live issue path must delegate directly without a request adapter"
     );
-    assert!(live_window.contains("issue_packet: Option<O3LiveIssuePacket>"));
+    let identity_definitions = production_struct_definitions(&issue_identity)
+        .into_iter()
+        .filter(|definition| {
+            production_defines_exact_named_item(definition, "struct", "O3LiveStagedFetchIdentity")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        identity_definitions.len(),
+        1,
+        "issue_identity.rs must define exactly one O3LiveStagedFetchIdentity"
+    );
+    assert_eq!(
+        identity_definitions[0]
+            .matches("issue_packet: Option<O3LiveIssuePacket>")
+            .count(),
+        1,
+        "O3LiveStagedFetchIdentity must own exactly one bound issue-packet slot"
+    );
+    let issue_packet_inventory_owners = production_sources
+        .iter()
+        .filter_map(|(relative, source)| {
+            let count = production_struct_definitions(source)
+                .iter()
+                .map(|definition| {
+                    definition
+                        .matches("issue_packet: Option<O3LiveIssuePacket>")
+                        .count()
+                })
+                .sum::<usize>();
+            (count > 0).then(|| (relative.to_path_buf(), count))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        issue_packet_inventory_owners,
+        [(
+            PathBuf::from("src/o3_runtime_live_window/issue_identity.rs"),
+            1
+        )],
+        "bound live issue-packet inventory must remain unique to the issue-identity owner"
+    );
 
     for anchor in [
         "live_issue_queue_packet_binding_is_idempotent_and_exact",
@@ -4785,28 +4918,45 @@ fn riscv_o3_writeback_wake_lives_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let lib = production_rust_source(&fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap());
     let module_path = crate_dir.join("src/riscv_o3_writeback_wake.rs");
-    let module = production_rust_source(&fs::read_to_string(&module_path).unwrap());
+    let desired_path = crate_dir.join("src/riscv_o3_writeback_wake/desired.rs");
+    let module_source = fs::read_to_string(&module_path).unwrap();
+    let desired_source = fs::read_to_string(&desired_path).unwrap();
+    let module = production_rust_source(&module_source);
+    let desired = production_rust_source(&desired_source);
 
     assert!(
         lib.contains("mod riscv_o3_writeback_wake;"),
         "src/lib.rs must declare the focused RISC-V O3 writeback wake module"
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &module_source,
+            "riscv_o3_writeback_wake/desired.rs",
+            "desired",
+        ),
+        1,
+        "writeback wake root must attach the desired-wake child exactly once"
     );
     let module_lines = line_count(&module_path);
     assert!(
         module_lines < MAX_RISCV_O3_WRITEBACK_WAKE_LINES,
         "src/riscv_o3_writeback_wake.rs must stay below {MAX_RISCV_O3_WRITEBACK_WAKE_LINES} lines, but it has {module_lines} lines"
     );
+    let desired_lines = line_count(&desired_path);
+    assert!(
+        desired_lines <= MAX_RISCV_O3_WRITEBACK_WAKE_DESIRED_LINES,
+        "src/riscv_o3_writeback_wake/desired.rs must stay within {MAX_RISCV_O3_WRITEBACK_WAKE_DESIRED_LINES} lines, but it has {desired_lines} lines"
+    );
 
-    let wake_authority_patterns = [
+    let wake_state_authority_patterns = [
         "struct RiscvO3WritebackWakeState",
-        "desired_tick: Option<Tick>",
         "scheduled: Option<RiscvO3WritebackWake>",
         "detached: Vec<RiscvO3WritebackWake>",
         "fn set_desired_tick(",
         "if let Some(wake) = self.scheduled.take()",
         "self.detached.push(wake);",
     ];
-    for anchor in wake_authority_patterns {
+    for anchor in wake_state_authority_patterns {
         assert!(
             module.contains(anchor),
             "src/riscv_o3_writeback_wake.rs is missing wake owner `{anchor}`"
@@ -4825,6 +4975,32 @@ fn riscv_o3_writeback_wake_lives_in_focused_module() {
                 relative.display()
             );
         }
+    }
+    let desired_tick_storage = "desired_tick: Option<Tick>";
+    assert_eq!(
+        module.matches(desired_tick_storage).count(),
+        1,
+        "writeback wake state must own exactly one desired-tick field"
+    );
+    assert_eq!(
+        desired.matches(desired_tick_storage).count(),
+        1,
+        "desired-wake child must expose exactly one calculated desired-tick field"
+    );
+    for path in rust_source_files(&crate_dir.join("src")) {
+        let relative = path.strip_prefix(crate_dir).unwrap();
+        if relative == Path::new("src/riscv_o3_writeback_wake.rs")
+            || relative == Path::new("src/riscv_o3_writeback_wake/desired.rs")
+            || is_test_only_rust_source(relative)
+        {
+            continue;
+        }
+        let source = production_rust_source(&fs::read_to_string(&path).unwrap());
+        assert!(
+            !source.contains(desired_tick_storage),
+            "{} duplicates RISC-V O3 desired-wake storage `{desired_tick_storage}`",
+            relative.display()
+        );
     }
 }
 
