@@ -62,6 +62,26 @@ fn rem6_run_o3_translated_memory_result_pair_width_one_cache_fabric_dram() {
     run_translated_memory_result_pair("cache-fabric-dram", 1);
 }
 
+#[test]
+fn rem6_run_o3_translated_memory_mmio_result_pair_width_one_direct() {
+    run_translated_memory_mmio_result_pair("direct");
+}
+
+#[test]
+fn rem6_run_o3_translated_memory_mmio_result_pair_width_one_cache_fabric_dram() {
+    run_translated_memory_mmio_result_pair("cache-fabric-dram");
+}
+
+fn run_translated_memory_mmio_result_pair(memory_system: &str) {
+    let calibration = TranslatedMemoryPairFixture::new();
+    let route_delay = calibrated_route_delay(&calibration, memory_system);
+    boundaries::assert_mixed_pair(
+        &TranslatedMemoryPairFixture::new_mmio(),
+        memory_system,
+        route_delay,
+    );
+}
+
 fn run_translated_memory_result_pair(memory_system: &str, writeback_width: usize) {
     let fixture = TranslatedMemoryPairFixture::new();
     let route_delay = calibrated_route_delay(&fixture, memory_system);

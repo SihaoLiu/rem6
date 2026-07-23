@@ -1646,6 +1646,15 @@ impl RiscvCore {
 
         {
             let mut state = self.state.lock().expect("riscv core lock");
+            if !state.bind_translated_result_target(
+                translated.fetch_request,
+                crate::riscv_fetch_ahead::O3MemoryResultWindowRoute::Mmio,
+            ) {
+                state.abort_prepared_data_issue(translated.fetch_request, tick);
+                return Err(RiscvCpuError::TranslatedResultAuthorizationMismatch {
+                    fetch: translated.fetch_request,
+                });
+            }
             state
                 .ready_translated_data
                 .remove(&translated.fetch_request)

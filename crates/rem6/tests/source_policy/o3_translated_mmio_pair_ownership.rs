@@ -10,10 +10,12 @@ const FIXTURE: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/result_cl
 const BOUNDARIES: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/result_classes/translated_mmio_pairs/boundaries.rs";
 const POLICY: &str = "tests/source_policy/o3_translated_mmio_pair_ownership.rs";
 const PARENT_OWNER: &str = "crates/rem6/tests/cli_run/m5_host_actions/o3/writeback_port/result_classes/translated_mmio_pairs.rs";
-const TESTS: [&str; 3] = [
+const TESTS: [&str; 5] = [
     "rem6_run_o3_translated_memory_result_pair_width_one_direct",
     "rem6_run_o3_translated_memory_result_pair_width_two_exact_fit_direct",
     "rem6_run_o3_translated_memory_result_pair_width_one_cache_fabric_dram",
+    "rem6_run_o3_translated_memory_mmio_result_pair_width_one_direct",
+    "rem6_run_o3_translated_memory_mmio_result_pair_width_one_cache_fabric_dram",
 ];
 
 #[test]
@@ -67,7 +69,7 @@ fn o3_translated_mmio_pair_ownership() {
     assert_eq!(
         top_level_test_names(PARENT, &parent_source),
         TESTS,
-        "{PARENT} must own exactly the three translated RED rows in order"
+        "{PARENT} must own exactly the translated result-pair rows in order"
     );
     for test in TESTS {
         assert_eq!(

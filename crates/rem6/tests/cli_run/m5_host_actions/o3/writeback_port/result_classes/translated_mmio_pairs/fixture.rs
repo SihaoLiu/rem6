@@ -2,17 +2,39 @@ use super::*;
 
 const FIRST_VALUE: u64 = 0x11;
 const SECOND_VALUE: u64 = 0x33;
+pub(super) const MMIO_PAGE: u64 = 0x1000_0000;
 const SETUP_PROBE_OFFSET: i32 = 64;
 const CALIBRATION_PAGE_BYTES: usize = SETUP_PROBE_OFFSET as usize + 8;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum TranslatedPairTarget {
+    Memory,
+    Mmio,
+}
+
 pub(super) struct TranslatedMemoryPairFixture {
+    target: TranslatedPairTarget,
     binary: std::path::PathBuf,
+    readfile: Option<std::path::PathBuf>,
 }
 
 impl TranslatedMemoryPairFixture {
     pub(super) fn new() -> Self {
         Self {
-            binary: translated_memory_pair_binary(),
+            target: TranslatedPairTarget::Memory,
+            binary: translated_memory_pair_binary(TranslatedPairTarget::Memory),
+            readfile: None,
+        }
+    }
+
+    pub(super) fn new_mmio() -> Self {
+        Self {
+            target: TranslatedPairTarget::Mmio,
+            binary: translated_memory_pair_binary(TranslatedPairTarget::Mmio),
+            readfile: Some(super::super::unique_result_temp_binary(
+                "o3-translated-memory-mmio-result-pair-data",
+                &SECOND_VALUE.to_le_bytes(),
+            )),
         }
     }
 
@@ -30,6 +52,7 @@ impl TranslatedMemoryPairFixture {
             route_delay,
             max_tick,
             true,
+            None,
         )
     }
 
@@ -46,11 +69,33 @@ impl TranslatedMemoryPairFixture {
             route_delay,
             PAIR_MAX_TICK,
             true,
+            None,
         )
     }
 
     pub(super) fn run_calibration(&self, memory_system: &str, route_delay: u64) -> Value {
-        self.run_with_translation(memory_system, 2, 2, route_delay, PAIR_MAX_TICK, false)
+        self.run_with_translation(memory_system, 2, 2, route_delay, PAIR_MAX_TICK, false, None)
+    }
+
+    pub(super) fn run_mixed(&self, memory_system: &str, route_delay: u64, max_tick: u64) -> Value {
+        self.run_with_translation(memory_system, 1, 1, route_delay, max_tick, true, None)
+    }
+
+    pub(super) fn run_mixed_with_switch(
+        &self,
+        memory_system: &str,
+        route_delay: u64,
+        switch_tick: u64,
+    ) -> Value {
+        self.run_with_translation(
+            memory_system,
+            1,
+            1,
+            route_delay,
+            PAIR_MAX_TICK,
+            true,
+            Some(switch_tick),
+        )
     }
 
     fn run_with_translation(
@@ -61,6 +106,7 @@ impl TranslatedMemoryPairFixture {
         route_delay: u64,
         max_tick: u64,
         translated: bool,
+        host_switch_tick: Option<u64>,
     ) -> Value {
         let id = super::super::RESULT_TEMP_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let workspace = temp_workspace(&format!("o3-translated-memory-pair-{id}"));
@@ -75,6 +121,8 @@ impl TranslatedMemoryPairFixture {
                 route_delay,
                 max_tick,
                 translated,
+                self.target,
+                host_switch_tick,
             ),
         )
         .unwrap();
@@ -94,11 +142,31 @@ impl TranslatedMemoryPairFixture {
             &first_head_dump,
             "--dump-memory",
             &first_tail_dump,
-            "--dump-memory",
-            &second_head_dump,
-            "--dump-memory",
-            &second_tail_dump,
         ]);
+        match self.target {
+            TranslatedPairTarget::Memory => {
+                command.args([
+                    "--dump-memory",
+                    &second_head_dump,
+                    "--dump-memory",
+                    &second_tail_dump,
+                ]);
+            }
+            TranslatedPairTarget::Mmio => {
+                command.args([
+                    "--dump-memory",
+                    &format!("0x{:x}:8", FIRST_PHYSICAL_PAGE + 24),
+                    "--dump-memory",
+                    &format!("0x{:x}:8", FIRST_PHYSICAL_PAGE + 32),
+                ]);
+            }
+        }
+        if let Some(readfile) = &self.readfile {
+            command.args([
+                "--readfile",
+                &format!("0x{MMIO_PAGE:x}:0x100:{}", readfile.display()),
+            ]);
+        }
         let child = command
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -139,9 +207,16 @@ fn translated_pair_config(
     route_delay: u64,
     max_tick: u64,
     translated: bool,
+    target: TranslatedPairTarget,
+    host_switch_tick: Option<u64>,
 ) -> String {
-    let translation = translated.then_some(
-        r#"
+    let second_physical_page = match target {
+        TranslatedPairTarget::Memory => SECOND_PHYSICAL_PAGE,
+        TranslatedPairTarget::Mmio => MMIO_PAGE,
+    };
+    let translation = translated.then(|| {
+        format!(
+            r#"
 [run.riscv_data_translation]
 queue_capacity = 4
 latency = 2
@@ -157,12 +232,16 @@ write = true
 
 [[run.riscv_data_translation.mappings]]
 virtual_base = 20480
-physical_base = 2147491840
+physical_base = {second_physical_page}
 pages = 1
 read = true
 write = true
-"#,
-    );
+"#
+        )
+    });
+    let host_switch = host_switch_tick
+        .map(|tick| format!("host_execution_mode_switches = [\"{tick}:cpu0:timing\"]\n"))
+        .unwrap_or_default();
     format!(
         r#"[run]
 isa = "riscv"
@@ -178,14 +257,14 @@ riscv_o3_issue_width = 4
 riscv_o3_memory_issue_width = {memory_issue_width}
 riscv_o3_writeback_width = {writeback_width}
 riscv_o3_scalar_memory_depth = 4
-{}
+{host_switch}{}
 "#,
         binary.display(),
         translation.unwrap_or_default()
     )
 }
 
-fn translated_memory_pair_binary() -> std::path::PathBuf {
+fn translated_memory_pair_binary(target: TranslatedPairTarget) -> std::path::PathBuf {
     let mut words = vec![
         u_type(FIRST_VIRTUAL_PAGE as i32, 5, 0x37),
         u_type(SECOND_VIRTUAL_PAGE as i32, 6, 0x37),
@@ -205,17 +284,29 @@ fn translated_memory_pair_binary() -> std::path::PathBuf {
         i_type(1, 12, 0, 13, 0x13),
         s_type(8, 11, 5, 0b011),
         s_type(16, 3, 5, 0b011),
-        s_type(8, 12, 6, 0b011),
-        s_type(16, 13, 6, 0b011),
     ]);
+    match target {
+        TranslatedPairTarget::Memory => {
+            words.extend([s_type(8, 12, 6, 0b011), s_type(16, 13, 6, 0b011)])
+        }
+        TranslatedPairTarget::Mmio => {
+            words.extend([s_type(24, 12, 5, 0b011), s_type(32, 13, 5, 0b011)])
+        }
+    }
     append_host_stop(&mut words);
 
     let first_offset = (FIRST_PHYSICAL_PAGE - 0x8000_0000) as usize;
     let second_offset = (SECOND_PHYSICAL_PAGE - 0x8000_0000) as usize;
     let mut payload = riscv64_program(&words);
-    payload.resize(second_offset + SETUP_PROBE_OFFSET as usize + 8, 0);
+    let payload_bytes = match target {
+        TranslatedPairTarget::Memory => second_offset + SETUP_PROBE_OFFSET as usize + 8,
+        TranslatedPairTarget::Mmio => first_offset + SETUP_PROBE_OFFSET as usize + 8,
+    };
+    payload.resize(payload_bytes, 0);
     write_u64(&mut payload, first_offset, FIRST_VALUE);
-    write_u64(&mut payload, second_offset, SECOND_VALUE);
+    if target == TranslatedPairTarget::Memory {
+        write_u64(&mut payload, second_offset, SECOND_VALUE);
+    }
     super::super::unique_result_temp_binary(
         "o3-translated-memory-result-pair",
         &translated_pair_elf(&payload),
@@ -390,7 +481,7 @@ fn fabric_hop<'a>(json: &'a Value, packet: u64, pc: &str) -> &'a Value {
     matches[0]
 }
 
-fn resource_delta(before: &Value, after: &Value, pointer: &str) -> u64 {
+pub(super) fn resource_delta(before: &Value, after: &Value, pointer: &str) -> u64 {
     json_u64(after, pointer)
         .checked_sub(json_u64(before, pointer))
         .unwrap_or_else(|| panic!("resource counter regressed at {pointer}"))
