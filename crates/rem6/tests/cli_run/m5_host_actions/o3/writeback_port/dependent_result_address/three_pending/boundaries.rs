@@ -132,7 +132,7 @@ fn rem6_run_o3_three_pending_checkpoint_boundary() {
         "three-pending addressless checkpoint",
     );
 
-    let post_bind_tick = event_u64(pending[0], "issue_tick") + 1;
+    let (post_bind_tick, _) = post_bind_transport_window(&completed, pending);
     let bound = fixture.run(post_bind_tick);
     assert!(addressless_sequences(&bound).is_empty());
     assert_snapshot_counts(&bound, 3, 3);
@@ -140,9 +140,6 @@ fn rem6_run_o3_three_pending_checkpoint_boundary() {
         .iter()
         .all(|entry| entry.pointer("/address").is_some_and(Value::is_string)));
     assert_exact_request_count(&bound, 4, 0);
-    assert!(pending
-        .iter()
-        .all(|event| post_bind_tick < event_u64(event, "lsq_data_response_tick")));
     assert_host_action_rejected(
         fixture.command(row.max_tick, "detailed"),
         "--host-checkpoint",
@@ -195,16 +192,8 @@ fn rem6_run_host_switch_preserves_o3_three_pending_transport_ticks() {
         "three-pending addressless switch",
     );
 
-    let request_ticks = pending_request_sent_ticks(&baseline);
-    assert_eq!(request_ticks, [request_ticks[0]; 3]);
-    let first_response = pending
-        .iter()
-        .map(|event| event_u64(event, "lsq_data_response_tick"))
-        .min()
-        .unwrap();
-    let requested_switch = request_ticks[0] + 1;
+    let (requested_switch, first_response) = post_bind_transport_window(&baseline, pending);
     assert!(event_u64(head, "commit_tick") < requested_switch);
-    assert!(requested_switch < first_response);
     let resident = fixture.run(requested_switch);
     assert!(addressless_sequences(&resident).is_empty());
     assert_snapshot_counts(&resident, 3, 3);

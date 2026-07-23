@@ -234,6 +234,21 @@ fn rob_has_pc(json: &Value, pc: &str) -> bool {
         .any(|entry| entry.pointer("/pc").and_then(Value::as_str) == Some(pc))
 }
 
+fn post_bind_transport_window(json: &Value, pending: [&Value; 3]) -> (u64, u64) {
+    let latest_request = pending_request_sent_ticks(json).into_iter().max().unwrap();
+    let first_response = pending
+        .iter()
+        .map(|event| event_u64(event, "lsq_data_response_tick"))
+        .min()
+        .unwrap();
+    let post_bind_tick = latest_request.checked_add(1).expect("post-bind tick");
+    assert!(
+        post_bind_tick < first_response,
+        "latest request {latest_request} must leave a live transport window before {first_response}"
+    );
+    (post_bind_tick, first_response)
+}
+
 fn assert_three_pending_counters(row: ThreePendingRow, completed: &Value, resident: &Value) {
     let issue = completed
         .pointer("/cores/0/o3_runtime/issue")

@@ -62,6 +62,19 @@ fn o3_runtime_memory_issue_width_defaults_to_one_and_tracks_valid_values() {
 }
 
 #[test]
+fn o3_runtime_memory_issue_width_survives_snapshot_restore() {
+    let mut runtime = O3RuntimeState::default();
+    assert!(runtime.set_issue_width(4));
+    assert!(runtime.set_memory_issue_width(3));
+    let snapshot = O3RuntimeState::default().snapshot();
+
+    runtime.restore(snapshot).unwrap();
+
+    assert_eq!(runtime.issue_width(), 4);
+    assert_eq!(runtime.memory_issue_width(), 3);
+}
+
+#[test]
 fn o3_runtime_rejects_memory_width_outside_total_issue_width() {
     let mut runtime = O3RuntimeState::default();
 
