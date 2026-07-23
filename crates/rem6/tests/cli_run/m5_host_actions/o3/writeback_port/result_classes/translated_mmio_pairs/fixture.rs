@@ -1,23 +1,25 @@
 use super::*;
-
 const FIRST_VALUE: u64 = 0x11;
 const SECOND_VALUE: u64 = 0x33;
 pub(super) const MMIO_PAGE: u64 = 0x1000_0000;
 const SETUP_PROBE_OFFSET: i32 = 64;
 const CALIBRATION_PAGE_BYTES: usize = SETUP_PROBE_OFFSET as usize + 8;
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum TranslatedPairTarget {
     Memory,
     Mmio,
 }
-
-pub(super) struct TranslatedMemoryPairFixture {
-    target: TranslatedPairTarget,
-    binary: std::path::PathBuf,
-    readfile: Option<std::path::PathBuf>,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum SecondMapping {
+    Allowed,
+    Missing,
+    Denied,
 }
-
+pub(super) struct TranslatedMemoryPairFixture {
+    pub(super) target: TranslatedPairTarget,
+    pub(super) binary: std::path::PathBuf,
+    pub(super) readfile: Option<std::path::PathBuf>,
+}
 impl TranslatedMemoryPairFixture {
     pub(super) fn new() -> Self {
         Self {
@@ -26,7 +28,6 @@ impl TranslatedMemoryPairFixture {
             readfile: None,
         }
     }
-
     pub(super) fn new_mmio() -> Self {
         Self {
             target: TranslatedPairTarget::Mmio,
@@ -37,7 +38,6 @@ impl TranslatedMemoryPairFixture {
             )),
         }
     }
-
     pub(super) fn run(
         &self,
         memory_system: &str,
@@ -55,7 +55,6 @@ impl TranslatedMemoryPairFixture {
             None,
         )
     }
-
     pub(super) fn run_identity_control(
         &self,
         memory_system: &str,
@@ -72,15 +71,12 @@ impl TranslatedMemoryPairFixture {
             None,
         )
     }
-
     pub(super) fn run_calibration(&self, memory_system: &str, route_delay: u64) -> Value {
         self.run_with_translation(memory_system, 2, 2, route_delay, PAIR_MAX_TICK, false, None)
     }
-
     pub(super) fn run_mixed(&self, memory_system: &str, route_delay: u64, max_tick: u64) -> Value {
         self.run_with_translation(memory_system, 1, 1, route_delay, max_tick, true, None)
     }
-
     pub(super) fn run_mixed_with_switch(
         &self,
         memory_system: &str,
@@ -97,7 +93,6 @@ impl TranslatedMemoryPairFixture {
             Some(switch_tick),
         )
     }
-
     fn run_with_translation(
         &self,
         memory_system: &str,
@@ -108,6 +103,75 @@ impl TranslatedMemoryPairFixture {
         translated: bool,
         host_switch_tick: Option<u64>,
     ) -> Value {
+        let output = self.output_with_translation(
+            memory_system,
+            writeback_width,
+            memory_issue_width,
+            route_delay,
+            max_tick,
+            translated,
+            host_switch_tick,
+            "detailed",
+            SecondMapping::Allowed,
+            &[],
+        );
+        assert!(
+            output.status.success(),
+            "translated pair {memory_system} memory width {memory_issue_width} writeback width {writeback_width} delay {route_delay} max tick {max_tick} stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let json: Value = serde_json::from_slice(&output.stdout)
+            .unwrap_or_else(|error| panic!("translated pair invalid stdout JSON: {error}"));
+        if max_tick == PAIR_MAX_TICK {
+            assert_eq!(
+                json.pointer("/simulation/status").and_then(Value::as_str),
+                Some("stopped_by_host"),
+                "translated pair did not reach host stop: {json}"
+            );
+        } else {
+            assert_eq!(json_u64(&json, "/simulation/final_tick"), max_tick);
+            assert_eq!(
+                json.pointer("/simulation/status").and_then(Value::as_str),
+                Some("stopped_at_tick_limit")
+            );
+        }
+        json
+    }
+    pub(super) fn boundary_output(
+        &self,
+        route_delay: u64,
+        max_tick: u64,
+        cpu_mode: &str,
+        second_mapping: SecondMapping,
+        extra_args: &[&str],
+    ) -> std::process::Output {
+        self.output_with_translation(
+            "direct",
+            1,
+            1,
+            route_delay,
+            max_tick,
+            true,
+            None,
+            cpu_mode,
+            second_mapping,
+            extra_args,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn output_with_translation(
+        &self,
+        memory_system: &str,
+        writeback_width: usize,
+        memory_issue_width: usize,
+        route_delay: u64,
+        max_tick: u64,
+        translated: bool,
+        host_switch_tick: Option<u64>,
+        cpu_mode: &str,
+        second_mapping: SecondMapping,
+        extra_args: &[&str],
+    ) -> std::process::Output {
         let id = super::super::RESULT_TEMP_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let workspace = temp_workspace(&format!("o3-translated-memory-pair-{id}"));
         let config = workspace.join("run.toml");
@@ -123,10 +187,11 @@ impl TranslatedMemoryPairFixture {
                 translated,
                 self.target,
                 host_switch_tick,
+                cpu_mode,
+                second_mapping,
             ),
         )
         .unwrap();
-
         let first_head_dump = format!("0x{FIRST_PHYSICAL_PAGE:x}:16");
         let first_tail_dump = format!("0x{:x}:8", FIRST_PHYSICAL_PAGE + 16);
         let second_head_dump = format!("0x{SECOND_PHYSICAL_PAGE:x}:16");
@@ -167,6 +232,7 @@ impl TranslatedMemoryPairFixture {
                 &format!("0x{MMIO_PAGE:x}:0x100:{}", readfile.display()),
             ]);
         }
+        command.args(extra_args);
         let child = command
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -175,30 +241,9 @@ impl TranslatedMemoryPairFixture {
         let output =
             crate::gdb_support::wait_with_output_timeout(child, std::time::Duration::from_secs(30));
         let _ = std::fs::remove_dir_all(&workspace);
-        assert!(
-            output.status.success(),
-            "translated pair {memory_system} memory width {memory_issue_width} writeback width {writeback_width} delay {route_delay} max tick {max_tick} stderr: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let json: Value = serde_json::from_slice(&output.stdout)
-            .unwrap_or_else(|error| panic!("translated pair invalid stdout JSON: {error}"));
-        if max_tick == PAIR_MAX_TICK {
-            assert_eq!(
-                json.pointer("/simulation/status").and_then(Value::as_str),
-                Some("stopped_by_host"),
-                "translated pair did not reach host stop: {json}"
-            );
-        } else {
-            assert_eq!(json_u64(&json, "/simulation/final_tick"), max_tick);
-            assert_eq!(
-                json.pointer("/simulation/status").and_then(Value::as_str),
-                Some("stopped_at_tick_limit")
-            );
-        }
-        json
+        output
     }
 }
-
 fn translated_pair_config(
     binary: &std::path::Path,
     memory_system: &str,
@@ -209,10 +254,26 @@ fn translated_pair_config(
     translated: bool,
     target: TranslatedPairTarget,
     host_switch_tick: Option<u64>,
+    cpu_mode: &str,
+    second_mapping: SecondMapping,
 ) -> String {
     let second_physical_page = match target {
         TranslatedPairTarget::Memory => SECOND_PHYSICAL_PAGE,
         TranslatedPairTarget::Mmio => MMIO_PAGE,
+    };
+    let second_translation = match second_mapping {
+        SecondMapping::Missing => String::new(),
+        SecondMapping::Allowed | SecondMapping::Denied => format!(
+            r#"
+[[run.riscv_data_translation.mappings]]
+virtual_base = 20480
+physical_base = {second_physical_page}
+pages = 1
+read = {}
+write = true
+"#,
+            second_mapping == SecondMapping::Allowed
+        ),
     };
     let translation = translated.then(|| {
         format!(
@@ -222,20 +283,13 @@ queue_capacity = 4
 latency = 2
 tlb_capacity = 4
 page_size = 4096
-
 [[run.riscv_data_translation.mappings]]
 virtual_base = 16384
 physical_base = 2147487744
 pages = 1
 read = true
 write = true
-
-[[run.riscv_data_translation.mappings]]
-virtual_base = 20480
-physical_base = {second_physical_page}
-pages = 1
-read = true
-write = true
+{second_translation}
 "#
         )
     });
@@ -252,7 +306,7 @@ stats_format = "json"
 debug_flags = ["O3", "Data", "Fetch", "Memory", "HostAction"]
 memory_system = "{memory_system}"
 memory_route_delay = {route_delay}
-m5_switch_cpu_mode = "detailed"
+m5_switch_cpu_mode = "{cpu_mode}"
 riscv_o3_issue_width = 4
 riscv_o3_memory_issue_width = {memory_issue_width}
 riscv_o3_writeback_width = {writeback_width}
@@ -263,7 +317,6 @@ riscv_o3_scalar_memory_depth = 4
         translation.unwrap_or_default()
     )
 }
-
 fn translated_memory_pair_binary(target: TranslatedPairTarget) -> std::path::PathBuf {
     let mut words = vec![
         u_type(FIRST_VIRTUAL_PAGE as i32, 5, 0x37),
@@ -294,7 +347,6 @@ fn translated_memory_pair_binary(target: TranslatedPairTarget) -> std::path::Pat
         }
     }
     append_host_stop(&mut words);
-
     let first_offset = (FIRST_PHYSICAL_PAGE - 0x8000_0000) as usize;
     let second_offset = (SECOND_PHYSICAL_PAGE - 0x8000_0000) as usize;
     let mut payload = riscv64_program(&words);
@@ -312,8 +364,7 @@ fn translated_memory_pair_binary(target: TranslatedPairTarget) -> std::path::Pat
         &translated_pair_elf(&payload),
     )
 }
-
-fn translated_pair_elf(payload: &[u8]) -> Vec<u8> {
+pub(super) fn translated_pair_elf(payload: &[u8]) -> Vec<u8> {
     const HIGH_OFFSET: usize = 0x1000;
     const FIRST_LOW_OFFSET: usize = 0x4000;
     const SECOND_LOW_OFFSET: usize = 0x5000;
@@ -359,7 +410,6 @@ fn translated_pair_elf(payload: &[u8]) -> Vec<u8> {
     write_u64(&mut bytes, SECOND_LOW_OFFSET, SECOND_VALUE);
     bytes
 }
-
 fn write_load_segment(
     bytes: &mut [u8],
     offset: usize,
@@ -377,19 +427,15 @@ fn write_load_segment(
     write_u64(bytes, offset + 40, size);
     write_u64(bytes, offset + 48, 0x1000);
 }
-
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
     bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
 }
-
 fn write_u32(bytes: &mut [u8], offset: usize, value: u32) {
     bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
 }
-
 fn write_u64(bytes: &mut [u8], offset: usize, value: u64) {
     bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
 }
-
 pub(super) fn assert_route_resources(
     before: &Value,
     through_pair: &Value,
@@ -468,7 +514,6 @@ pub(super) fn assert_route_resources(
         _ => unreachable!(),
     }
 }
-
 fn fabric_hop<'a>(json: &'a Value, packet: u64, pc: &str) -> &'a Value {
     let matches = json
         .pointer("/memory_resources/fabric/hop_activities")
@@ -480,7 +525,6 @@ fn fabric_hop<'a>(json: &'a Value, packet: u64, pc: &str) -> &'a Value {
     assert_eq!(matches.len(), 1, "exact hierarchy packet {packet} for {pc}");
     matches[0]
 }
-
 pub(super) fn resource_delta(before: &Value, after: &Value, pointer: &str) -> u64 {
     json_u64(after, pointer)
         .checked_sub(json_u64(before, pointer))

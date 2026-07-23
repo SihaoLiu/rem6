@@ -697,6 +697,10 @@ impl TranslationQueue {
         self.entries.clear();
     }
 
+    pub fn discard(&mut self, request: TranslationRequestId) -> bool {
+        self.entries.remove(&request).is_some()
+    }
+
     pub fn enqueue(
         &mut self,
         issue_tick: u64,

@@ -1538,10 +1538,9 @@ impl RiscvCore {
                 CpuTranslationOutcome::Mapped(mapped) => mapped.translation_id(),
                 CpuTranslationOutcome::Fault(fault) => fault.translation_id(),
             };
-            let pending = state
-                .pending_data_translations
-                .remove(&translation_id)
-                .expect("ready data translation has matching RISC-V metadata");
+            let Some(pending) = state.pending_data_translations.remove(&translation_id) else {
+                continue;
+            };
             match translated_data_from_outcome(pending, outcome) {
                 DataTranslationCompletion::Access(translated) => {
                     record_ready_translated_data(&mut state, translated, tick);
@@ -1651,6 +1650,7 @@ impl RiscvCore {
                 crate::riscv_fetch_ahead::O3MemoryResultWindowRoute::Mmio,
             ) {
                 state.abort_prepared_data_issue(translated.fetch_request, tick);
+                state.discard_translated_result_pair_from(translated.fetch_request);
                 return Err(RiscvCpuError::TranslatedResultAuthorizationMismatch {
                     fetch: translated.fetch_request,
                 });
@@ -1753,6 +1753,7 @@ impl RiscvCore {
             );
             if !bound {
                 state.abort_prepared_data_issue(translated.fetch_request, tick);
+                state.discard_translated_result_pair_from(translated.fetch_request);
             }
             bound
         };

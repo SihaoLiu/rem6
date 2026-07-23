@@ -165,6 +165,22 @@ impl RiscvCore {
         let mut state = self.state.lock().expect("riscv core lock");
         let pc = Address::new(state.hart.pc());
         state.pending_fetch_prefix = None;
+        let translated_result_fetches = state
+            .memory_result_window_authorizations
+            .keys()
+            .copied()
+            .chain(
+                state
+                    .pending_data_translations
+                    .values()
+                    .map(|pending| pending.fetch_request),
+            )
+            .chain(state.ready_translated_data.keys().copied())
+            .chain(state.translated_scalar_load_window_fetches.iter().copied())
+            .collect::<std::collections::BTreeSet<_>>();
+        for fetch_request in translated_result_fetches {
+            state.discard_translated_result_pair_from(fetch_request);
+        }
         state.memory_result_window_authorizations.clear();
         state.rebound_in_order_execute_waits.clear();
         state.detach_pending_in_order_pipeline_advance();

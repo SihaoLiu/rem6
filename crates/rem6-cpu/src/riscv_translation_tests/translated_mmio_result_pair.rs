@@ -21,6 +21,9 @@ use crate::{
     CpuTranslationFrontend, RiscvCore, RiscvCoreDriveAction,
 };
 
+#[path = "translated_mmio_result_pair/lifecycle.rs"]
+mod lifecycle;
+
 const HEAD_PC: u64 = 0x8000;
 const YOUNGER_PC: u64 = 0x8004;
 const HEAD_VIRTUAL_ADDRESS: u64 = 0x4000;
@@ -127,6 +130,24 @@ fn translated_result_pair_prebind_state_rejects_handoff() {
         fixture.core.capture_o3_live_data_handoff_status(),
         RiscvO3LiveDataHandoffCapture::Rejected
     );
+
+    let mut fixture = TranslatedMemoryMmioPairFixture::new();
+    fixture.authorize_and_execute_head();
+    fixture
+        .core
+        .issue_next_translated_data_access_parallel(
+            &mut fixture.scheduler,
+            &fixture.transport,
+            MemoryTrace::new(),
+            &fixture.page_map,
+            |_, _| TargetOutcome::NoResponse,
+        )
+        .unwrap()
+        .expect("translated memory head issues");
+    assert_eq!(
+        fixture.core.capture_o3_live_data_handoff_status(),
+        RiscvO3LiveDataHandoffCapture::Rejected
+    );
 }
 
 struct TranslatedMemoryMmioPairFixture {
@@ -139,6 +160,18 @@ struct TranslatedMemoryMmioPairFixture {
 
 impl TranslatedMemoryMmioPairFixture {
     fn new() -> Self {
+        Self::with_delays(0, 2)
+    }
+
+    fn with_translation_latency(latency: u64) -> Self {
+        Self::with_delays(latency, 2)
+    }
+
+    fn with_mmio_delay(delay: u64) -> Self {
+        Self::with_delays(0, delay)
+    }
+
+    fn with_delays(translation_latency: u64, mmio_delay: u64) -> Self {
         let scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
         let mut transport = MemoryTransport::new();
         let fetch_route = transport
@@ -189,7 +222,7 @@ impl TranslatedMemoryMmioPairFixture {
                 CacheLineLayout::new(16).unwrap(),
             ),
             CpuTranslationFrontend::with_tlb(
-                TranslationQueueConfig::new(4, 0).unwrap(),
+                TranslationQueueConfig::new(4, translation_latency).unwrap(),
                 TranslationTlbConfig::new(4).unwrap(),
             ),
         );
@@ -248,7 +281,13 @@ impl TranslatedMemoryMmioPairFixture {
                 AccessSize::new(0x100).unwrap(),
             )
             .unwrap(),
-            MmioRoute::new(PartitionId::new(0), PartitionId::new(1), 2, 2).unwrap(),
+            MmioRoute::new(
+                PartitionId::new(0),
+                PartitionId::new(1),
+                mmio_delay,
+                mmio_delay,
+            )
+            .unwrap(),
             Mutex::new(bank),
         )
         .unwrap();

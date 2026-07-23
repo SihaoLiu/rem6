@@ -8,6 +8,7 @@ const PARENT: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/result_classes/translated_mmio_pairs.rs";
 const FIXTURE: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/result_classes/translated_mmio_pairs/fixture.rs";
 const BOUNDARIES: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/result_classes/translated_mmio_pairs/boundaries.rs";
+const HANDOFF: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/result_classes/translated_mmio_pairs/boundaries/handoff.rs";
 const POLICY: &str = "tests/source_policy/o3_translated_mmio_pair_ownership.rs";
 const PARENT_OWNER: &str = "crates/rem6/tests/cli_run/m5_host_actions/o3/writeback_port/result_classes/translated_mmio_pairs.rs";
 const TESTS: [&str; 5] = [
@@ -27,6 +28,7 @@ fn o3_translated_mmio_pair_ownership() {
     let parent = rem6.join(PARENT);
     let fixture = rem6.join(FIXTURE);
     let boundaries = rem6.join(BOUNDARIES);
+    let handoff = rem6.join(HANDOFF);
     let policy = rem6.join(POLICY);
 
     assert_external_module_path(
@@ -41,24 +43,29 @@ fn o3_translated_mmio_pair_ownership() {
     );
     assert_external_module_path(&parent, "boundaries", "translated_mmio_pairs/boundaries.rs");
     assert_external_module_path(&parent, "fixture", "translated_mmio_pairs/fixture.rs");
+    assert_external_module_path(&boundaries, "handoff", "boundaries/handoff.rs");
 
     assert_line_cap(&parent, 500);
     assert_line_cap(&fixture, 600);
-    assert_line_cap(&boundaries, 650);
+    assert_line_cap(&boundaries, 550);
+    assert_line_cap(&handoff, 180);
     assert_line_cap(&policy, 350);
-    let aggregate = line_count(&parent) + line_count(&fixture) + line_count(&boundaries);
+    let aggregate =
+        line_count(&parent) + line_count(&fixture) + line_count(&boundaries) + line_count(&handoff);
     assert!(
-        aggregate <= 1_500,
-        "translated result-pair family has {aggregate} lines, max 1500"
+        aggregate <= 1_550,
+        "translated result-pair family has {aggregate} lines, max 1550"
     );
 
     let parent_source = read(&parent);
     let fixture_source = read(&fixture);
     let boundaries_source = read(&boundaries);
+    let handoff_source = read(&handoff);
     for (relative, source) in [
         (PARENT, parent_source.as_str()),
         (FIXTURE, fixture_source.as_str()),
         (BOUNDARIES, boundaries_source.as_str()),
+        (HANDOFF, handoff_source.as_str()),
     ] {
         assert!(
             !source.contains("include!("),
@@ -91,7 +98,7 @@ fn o3_translated_mmio_pair_ownership() {
         );
     }
 
-    for path in [&parent, &fixture, &boundaries, &policy] {
+    for path in [&parent, &fixture, &boundaries, &handoff, &policy] {
         assert_rustfmt_clean(path);
     }
 }

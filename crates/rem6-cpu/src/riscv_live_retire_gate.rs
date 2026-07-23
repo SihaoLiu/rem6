@@ -330,7 +330,7 @@ impl RiscvCore {
                 })
                 .collect::<Vec<_>>();
             for fetch_request in younger_result_fetches {
-                state.abort_deferred_o3_live_data_access_execution(fetch_request);
+                state.discard_translated_result_pair_from(fetch_request);
             }
             let buffered_memory_results = state
                 .buffered_o3_effects

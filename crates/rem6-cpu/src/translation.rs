@@ -894,6 +894,13 @@ impl CpuTranslationFrontend {
         self.pending.clear();
     }
 
+    pub(crate) fn discard_pending(&mut self, request: TranslationRequestId) -> bool {
+        let queued = self.queue.discard(request);
+        let metadata = self.pending.remove(&request).is_some();
+        assert_eq!(queued, metadata, "translation queue and CPU metadata agree");
+        queued
+    }
+
     pub const fn tlb(&self) -> Option<&TranslationTlb> {
         self.tlb.as_ref()
     }

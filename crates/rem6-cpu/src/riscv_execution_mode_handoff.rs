@@ -819,8 +819,8 @@ impl RiscvCore {
         !state.o3_runtime.live_data_access_lifecycle_is_quiescent()
             || !state.outstanding_data.is_empty()
             || !state.buffered_o3_effects.is_empty()
-            || !state.pending_data_translations.is_empty()
-            || !state.ready_translated_data.is_empty()
+            // Unissued translated rows still own live data authority.
+            || state.has_unbound_translated_result_state()
             || state
                 .data_translation
                 .as_ref()
@@ -840,8 +840,8 @@ impl RiscvCore {
             .data_translation
             .as_ref()
             .is_some_and(|frontend| !frontend.is_empty())
-            || !state.pending_data_translations.is_empty()
-            || !state.ready_translated_data.is_empty()
+            // The handoff payload carries only fully issued rows.
+            || state.has_unbound_translated_result_state()
             || state.outstanding_data.is_empty()
             || state.events.iter().any(|event| {
                 event.execution().memory_access().is_some()

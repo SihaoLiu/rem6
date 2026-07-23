@@ -97,20 +97,10 @@ pub(super) fn record_o3_data_access_outcome(
             .younger_live_scalar_memory_requests(access.fetch_request, access.request)
     })
     .unwrap_or_default();
-    let abort_unissued_younger = matches!(
+    let discard_translated_suffix = matches!(
         execution.data_access_event_kind(),
         Some(RiscvDataAccessEventKind::Retry | RiscvDataAccessEventKind::Failed)
-    )
-    .then(|| {
-        state
-            .memory_result_window_authorizations
-            .iter()
-            .filter_map(|(request, authorization)| {
-                authorization.role().is_younger().then_some(*request)
-            })
-            .collect::<Vec<_>>()
-    })
-    .unwrap_or_default();
+    );
     let completed_live_data_access = if let Some(forwarding_plan) = forwarding_plan {
         match completion {
             Some(completion) => state
@@ -147,8 +137,8 @@ pub(super) fn record_o3_data_access_outcome(
     state.refresh_o3_writeback_wake(response_tick);
     if completed_live_data_access {
         state.buffered_o3_effects.remove(&access.request);
-        for fetch_request in abort_unissued_younger {
-            state.abort_deferred_o3_live_data_access_execution(fetch_request);
+        if discard_translated_suffix {
+            state.discard_translated_result_pair_from(access.fetch_request);
         }
         for (request, fetch_request) in squash_younger_requests {
             state.outstanding_data.remove(&request);
@@ -160,10 +150,8 @@ pub(super) fn record_o3_data_access_outcome(
         }
         return Ok(true);
     }
-    if matches!(
-        execution.data_access_event_kind(),
-        Some(RiscvDataAccessEventKind::Retry | RiscvDataAccessEventKind::Failed)
-    ) {
+    if discard_translated_suffix {
+        state.discard_translated_result_pair_from(access.fetch_request);
         state
             .o3_runtime
             .discard_data_access_outcome(access.fetch_request);

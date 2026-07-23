@@ -237,7 +237,7 @@ pub(super) fn record_ready_translated_data(
     let fetch_request = translated.fetch_request;
     if !state.bind_translated_result_range(&translated) {
         state.abort_prepared_data_issue(fetch_request, tick);
-        state.ready_translated_data.remove(&fetch_request);
+        state.discard_translated_result_pair_from(fetch_request);
         return false;
     }
     state
@@ -285,7 +285,7 @@ pub(super) fn record_data_translation_fault_state(
             fault: fault.fault().clone(),
         })?;
     let original = state.events[original_index].clone();
-    state.abort_deferred_o3_live_data_access_execution(fetch_request);
+    state.discard_translated_result_pair_from(fetch_request);
     let trap_kind = data_translation_fault_trap_kind(&fault);
     let execution = state.hart.enter_synchronous_trap(
         original.instruction(),
@@ -303,10 +303,6 @@ pub(super) fn record_data_translation_fault_state(
     state.pending_trap = event.execution().trap().copied();
     state.pending_trap_event = Some(event.clone());
     state.issued_data_for_fetches.insert(fetch_request);
-    state
-        .translated_scalar_load_window_fetches
-        .remove(&fetch_request);
-    state.ready_translated_data.remove(&fetch_request);
     state.events[original_index] = event;
     riscv_checker::sync_checker_hart(state);
     Ok(Address::new(state.hart.pc()))

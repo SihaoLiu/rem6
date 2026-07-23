@@ -3,14 +3,11 @@ use super::super::result_support::{
     memory_dump_hex, memory_result_event_at_pc,
 };
 use super::super::*;
-
 #[path = "translated_mmio_pairs/boundaries.rs"]
 mod boundaries;
 #[path = "translated_mmio_pairs/fixture.rs"]
 mod fixture;
-
 use fixture::{assert_route_resources, TranslatedMemoryPairFixture};
-
 const FIRST_PC: &str = "0x80000030";
 const SECOND_PC: &str = "0x80000034";
 const DIV_PC: &str = "0x80000038";
@@ -23,15 +20,12 @@ const PAIR_MAX_TICK: u64 = 5_000;
 const HIERARCHY_ROUTE_DELAY: u64 = 4;
 const ROUTE_DELAY_CANDIDATES: [u64; 13] = [1, 2, 3, 4, 6, 8, 9, 10, 12, 14, 16, 20, 24];
 const PAIR_PCS: [&str; 4] = [FIRST_PC, SECOND_PC, DIV_PC, DEPENDENT_PC];
-
 static DIRECT_ROUTE_DELAY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RequestIdentity {
     agent: u64,
     sequence: u64,
 }
-
 struct PairRequestEvidence<'a> {
     pc: &'static str,
     physical_address: u64,
@@ -40,38 +34,31 @@ struct PairRequestEvidence<'a> {
     response: &'a Value,
     identity: RequestIdentity,
 }
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PcRequestIdentity {
     data: RequestIdentity,
     fetch: RequestIdentity,
 }
-
 #[test]
 fn rem6_run_o3_translated_memory_result_pair_width_one_direct() {
     run_translated_memory_result_pair("direct", 1);
 }
-
 #[test]
 fn rem6_run_o3_translated_memory_result_pair_width_two_exact_fit_direct() {
     run_translated_memory_result_pair("direct", 2);
 }
-
 #[test]
 fn rem6_run_o3_translated_memory_result_pair_width_one_cache_fabric_dram() {
     run_translated_memory_result_pair("cache-fabric-dram", 1);
 }
-
 #[test]
 fn rem6_run_o3_translated_memory_mmio_result_pair_width_one_direct() {
     run_translated_memory_mmio_result_pair("direct");
 }
-
 #[test]
 fn rem6_run_o3_translated_memory_mmio_result_pair_width_one_cache_fabric_dram() {
     run_translated_memory_mmio_result_pair("cache-fabric-dram");
 }
-
 fn run_translated_memory_mmio_result_pair(memory_system: &str) {
     let calibration = TranslatedMemoryPairFixture::new();
     let route_delay = calibrated_route_delay(&calibration, memory_system);
@@ -81,7 +68,6 @@ fn run_translated_memory_mmio_result_pair(memory_system: &str) {
         route_delay,
     );
 }
-
 fn run_translated_memory_result_pair(memory_system: &str, writeback_width: usize) {
     let fixture = TranslatedMemoryPairFixture::new();
     let route_delay = calibrated_route_delay(&fixture, memory_system);
@@ -89,10 +75,8 @@ fn run_translated_memory_result_pair(memory_system: &str, writeback_width: usize
     let identities = pair_request_identities(&control);
     let completed = fixture.run(memory_system, writeback_width, route_delay, PAIR_MAX_TICK);
     let pair = pair_request_evidence(&completed, &identities);
-
     assert_first_translation_path(&pair[0]);
     assert_pair_request_identities(&completed, &pair, &identities);
-
     let earliest_response = pair
         .iter()
         .map(|evidence| event_u64(evidence.event, "lsq_data_response_tick"))
@@ -105,7 +89,6 @@ fn run_translated_memory_result_pair(memory_system: &str, writeback_width: usize
         earliest_response.saturating_sub(1),
     );
     assert_two_outstanding_pair_requests(&resident, &pair, earliest_response);
-
     assert_pre_response_residency(&resident, event_u64(pair[0].event, "issue_tick"));
     assert_result_timing(&completed, memory_system, writeback_width);
     assert_oldest_first_commit(&completed);
@@ -128,7 +111,6 @@ fn run_translated_memory_result_pair(memory_system: &str, writeback_width: usize
     );
     assert_route_resources(&before_pair, &through_pair, memory_system, &pair);
 }
-
 fn calibrated_route_delay(fixture: &TranslatedMemoryPairFixture, memory_system: &str) -> u64 {
     match memory_system {
         "cache-fabric-dram" => HIERARCHY_ROUTE_DELAY,
@@ -163,7 +145,6 @@ fn calibrated_route_delay(fixture: &TranslatedMemoryPairFixture, memory_system: 
         _ => panic!("unsupported translated pair memory system {memory_system}"),
     }
 }
-
 fn assert_first_translation_path(first: &PairRequestEvidence<'_>) {
     assert_eq!(first.pc, FIRST_PC);
     assert_eq!(first.physical_address, FIRST_PHYSICAL_PAGE);
@@ -179,7 +160,6 @@ fn assert_first_translation_path(first: &PairRequestEvidence<'_>) {
         event_u64(first.event, "lsq_data_response_tick")
     );
 }
-
 fn assert_pair_request_identities(
     json: &Value,
     pair: &[PairRequestEvidence<'_>; 2],
@@ -195,7 +175,6 @@ fn assert_pair_request_identities(
     assert_ne!(identities[0].data, identities[1].data);
     assert_ne!(identities[0].fetch, identities[1].fetch);
 }
-
 fn assert_pre_response_residency(json: &Value, first_issue: u64) {
     assert_eq!(json_u64(json, "/cores/0/o3_runtime/snapshot/rob/count"), 4);
     assert_eq!(json_u64(json, "/cores/0/o3_runtime/snapshot/lsq/count"), 2);
@@ -203,7 +182,6 @@ fn assert_pre_response_residency(json: &Value, first_issue: u64) {
         .map(|pc| rob_entry_at_pc(json, pc))
         .map(|row| event_u64(row, "sequence"));
     assert!(rows.windows(2).all(|pair| pair[0] < pair[1]));
-
     let lsq = json
         .pointer("/cores/0/o3_runtime/snapshot/lsq/entries")
         .and_then(Value::as_array)
@@ -224,12 +202,10 @@ fn assert_pre_response_residency(json: &Value, first_issue: u64) {
             .all(|record| event_u64(record, "tick") < first_issue),
         "only timing-mode setup traffic may complete before the pair response"
     );
-
     for pc in [FIRST_PC, SECOND_PC] {
         fetch_record_at_pc(json, pc);
     }
 }
-
 fn assert_two_outstanding_pair_requests(
     json: &Value,
     pair: &[PairRequestEvidence<'_>; 2],
@@ -259,7 +235,6 @@ fn assert_two_outstanding_pair_requests(
     );
     assert_ne!(pair[0].identity, pair[1].identity);
 }
-
 fn assert_result_timing(json: &Value, memory_system: &str, writeback_width: usize) {
     let first = memory_result_event_at_pc(json, FIRST_PC);
     let second = memory_result_event_at_pc(json, SECOND_PC);
@@ -288,7 +263,6 @@ fn assert_result_timing(json: &Value, memory_system: &str, writeback_width: usiz
         raw_ready + if writeback_width == 1 { 2 } else { 1 }
     );
 }
-
 fn assert_oldest_first_commit(json: &Value) {
     let events = PAIR_PCS.map(|pc| event_at_pc(json, pc));
     assert_event_order([events[0], events[1], events[2]], "sequence", true);
@@ -297,7 +271,6 @@ fn assert_oldest_first_commit(json: &Value) {
         .windows(2)
         .all(|pair| event_u64(pair[0], "commit_tick") <= event_u64(pair[1], "commit_tick")));
 }
-
 fn assert_final_witness(json: &Value) {
     assert_register(json, "x3", "0x2a");
     assert_register(json, "x11", "0x11");
@@ -312,7 +285,6 @@ fn assert_final_witness(json: &Value) {
         Some("330000000000000033000000000000003400000000000000")
     );
 }
-
 fn page_witness_hex(json: &Value, page: u64) -> Option<String> {
     [page, page + 16]
         .into_iter()
@@ -320,7 +292,6 @@ fn page_witness_hex(json: &Value, page: u64) -> Option<String> {
         .collect::<Option<Vec<_>>>()
         .map(|chunks| chunks.concat())
 }
-
 fn fetch_record_at_pc<'a>(json: &'a Value, pc: &str) -> &'a Value {
     let records = json
         .pointer("/debug/fetch_trace")
@@ -332,7 +303,6 @@ fn fetch_record_at_pc<'a>(json: &'a Value, pc: &str) -> &'a Value {
     assert_eq!(records.len(), 1, "exact translated Fetch trace at {pc}");
     records[0]
 }
-
 fn fetch_request_identity(json: &Value, fetch: &Value) -> RequestIdentity {
     let sequence = event_u64(fetch, "sequence");
     let records = memory_trace(json)
@@ -346,7 +316,6 @@ fn fetch_request_identity(json: &Value, fetch: &Value) -> RequestIdentity {
     assert_eq!(records.len(), 1, "fetch request identity for {fetch}");
     request_identity(records[0])
 }
-
 fn data_request_sent_records(json: &Value) -> Vec<&Value> {
     memory_trace(json)
         .iter()
@@ -355,7 +324,6 @@ fn data_request_sent_records(json: &Value) -> Vec<&Value> {
         })
         .collect()
 }
-
 fn pair_request_identities(json: &Value) -> [PcRequestIdentity; 2] {
     let events = [
         memory_result_event_at_pc(json, FIRST_PC),
@@ -386,7 +354,6 @@ fn pair_request_identities(json: &Value) -> [PcRequestIdentity; 2] {
         }
     })
 }
-
 fn pair_request_evidence<'a>(
     json: &'a Value,
     identities: &[PcRequestIdentity; 2],
@@ -421,26 +388,23 @@ fn pair_request_evidence<'a>(
         }
     })
 }
-
 fn assert_data_completion_at_pc(json: &Value, event: &Value, pc: &str, address: u64) {
     let address = format!("0x{address:x}");
-    let response_tick = event_u64(event, "lsq_data_response_tick");
     let records = data_trace(json)
         .iter()
         .filter(|record| {
             event_str(record, "kind") == "load"
                 && event_str(record, "address") == address
                 && event_u64(record, "size") == 8
-                && event_u64(record, "tick") == response_tick
         })
         .collect::<Vec<_>>();
     assert_eq!(records.len(), 1, "exact translated Data completion at {pc}");
+    let tick = event_u64(records[0], "tick");
+    assert_eq!(tick, event_u64(event, "lsq_data_response_tick"));
 }
-
 fn request_sent_for_identity(json: &Value, identity: RequestIdentity) -> Option<&Value> {
     data_record_for_identity(json, "request_sent", identity)
 }
-
 fn data_record_for_identity<'a>(
     json: &'a Value,
     kind: &str,
@@ -457,7 +421,6 @@ fn data_record_for_identity<'a>(
     assert!(records.len() <= 1, "duplicate {kind} for {identity:?}");
     records.into_iter().next()
 }
-
 fn pair_request_trace(json: &Value) -> String {
     data_request_sent_records(json)
         .into_iter()
@@ -471,14 +434,12 @@ fn pair_request_trace(json: &Value) -> String {
         .collect::<Vec<_>>()
         .join(", ")
 }
-
 fn memory_trace(json: &Value) -> &[Value] {
     json.pointer("/debug/memory_trace")
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or_else(|| panic!("translated pair Memory trace missing: {json}"))
 }
-
 fn request_identity(record: &Value) -> RequestIdentity {
     RequestIdentity {
         agent: event_u64(record, "request_agent"),
