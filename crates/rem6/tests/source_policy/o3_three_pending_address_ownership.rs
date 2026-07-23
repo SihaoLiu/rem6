@@ -6,8 +6,10 @@ use super::{line_count, module_has_path_attribute};
 const PARENT: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/three_pending.rs";
 const FIXTURE: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/three_pending/fixture.rs";
+const BOUNDARY: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/three_pending/boundaries.rs";
 const PARENT_OWNER: &str =
     "crates/rem6/tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/three_pending.rs";
+const BOUNDARY_OWNER: &str = "crates/rem6/tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/three_pending/boundaries.rs";
 const ANCHORS: [&str; 6] = [
     "rem6_run_o3_three_pending_sibling_width_one_direct",
     "rem6_run_o3_three_pending_sibling_width_two_direct",
@@ -15,6 +17,14 @@ const ANCHORS: [&str; 6] = [
     "rem6_run_o3_three_pending_chain_width_four_direct",
     "rem6_run_o3_three_pending_chain_width_two_hierarchy",
     "rem6_run_o3_three_pending_mixed_fanout_width_two_hierarchy",
+];
+const BOUNDARY_ANCHORS: [&str; 6] = [
+    "rem6_run_o3_three_pending_rejects_fourth_unresolved",
+    "rem6_run_o3_three_pending_rejects_nonadjacent_graph",
+    "rem6_run_o3_three_pending_replays_middle_failure",
+    "rem6_run_o3_three_pending_checkpoint_boundary",
+    "rem6_run_host_switch_preserves_o3_three_pending_transport_ticks",
+    "rem6_run_timing_suppresses_o3_three_pending_surface",
 ];
 
 #[test]
@@ -26,6 +36,7 @@ fn o3_three_pending_positive_cli_ownership() {
     let source_policy = rem6.join("tests/source_policy.rs");
     let parent = rem6.join(PARENT);
     let fixture = rem6.join(FIXTURE);
+    let boundary = rem6.join(BOUNDARY);
 
     assert_module_path(
         &dependent_root,
@@ -38,14 +49,18 @@ fn o3_three_pending_positive_cli_ownership() {
         "source_policy/o3_three_pending_address_ownership.rs",
     );
     assert_module_path(&parent, "fixture", "three_pending/fixture.rs");
+    assert_module_path(&parent, "boundaries", "three_pending/boundaries.rs");
 
     assert_line_cap(&parent, 550);
     assert_line_cap(&fixture, 450);
+    assert_line_cap(&boundary, 550);
 
     let parent_source = read(&parent);
     let fixture_source = read(&fixture);
+    let boundary_source = read(&boundary);
     assert!(!parent_source.contains("include!("));
     assert!(!fixture_source.contains("include!("));
+    assert!(!boundary_source.contains("include!("));
 
     for anchor in ANCHORS {
         assert_eq!(
@@ -56,6 +71,18 @@ fn o3_three_pending_positive_cli_ownership() {
         assert_eq!(
             duplicate_owners(repo, anchor),
             vec![PARENT_OWNER.to_string()],
+            "{anchor} must have exactly one Rust-source owner"
+        );
+    }
+    for anchor in BOUNDARY_ANCHORS {
+        assert_eq!(
+            function_definition_count(&boundary_source, anchor),
+            1,
+            "{BOUNDARY} must define exactly one boundary test anchor {anchor}"
+        );
+        assert_eq!(
+            duplicate_owners(repo, anchor),
+            vec![BOUNDARY_OWNER.to_string()],
             "{anchor} must have exactly one Rust-source owner"
         );
     }

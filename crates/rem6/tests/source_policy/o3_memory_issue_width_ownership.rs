@@ -8,6 +8,11 @@ const CALENDAR_OWNER: &str = "crates/rem6-cpu/src/o3_runtime_issue/calendar.rs";
 const CONFIG_OWNER: &str = "crates/rem6/src/config.rs";
 const SUMMARY_JSON_OWNER: &str = "crates/rem6/src/core_summary_json.rs";
 const VALIDATION_OWNER: &str = "crates/rem6/tests/cli_run/validation/o3_memory_issue_width.rs";
+const THREE_PENDING_PARENT: &str =
+    "tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/three_pending.rs";
+const THREE_PENDING_PARENT_OWNER: &str = "crates/rem6/tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/three_pending.rs";
+const THREE_PENDING_FIXTURE: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/three_pending/fixture.rs";
+const THREE_PENDING_BOUNDARY: &str = "tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/three_pending/boundaries.rs";
 
 #[test]
 fn o3_memory_issue_width_config_and_runtime_ownership() {
@@ -22,6 +27,9 @@ fn o3_memory_issue_width_config_and_runtime_ownership() {
     );
     assert_line_cap(&cpu.join("src/o3_runtime.rs"), 1200);
     assert_line_cap(&rem6.join("src/config.rs"), 1699);
+    assert_line_cap(&rem6.join(THREE_PENDING_PARENT), 550);
+    assert_line_cap(&rem6.join(THREE_PENDING_FIXTURE), 450);
+    assert_line_cap(&rem6.join(THREE_PENDING_BOUNDARY), 550);
 
     assert_module_path(
         &rem6.join("tests/cli_run/validation.rs"),
@@ -38,6 +46,21 @@ fn o3_memory_issue_width_config_and_runtime_ownership() {
         "o3_runtime_widths",
         "o3_runtime_widths.rs",
     );
+    assert_module_path(
+        &rem6.join("tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address.rs"),
+        "three_pending",
+        "dependent_result_address/three_pending.rs",
+    );
+    assert_module_path(
+        &rem6.join(THREE_PENDING_PARENT),
+        "fixture",
+        "three_pending/fixture.rs",
+    );
+    assert_module_path(
+        &rem6.join(THREE_PENDING_PARENT),
+        "boundaries",
+        "three_pending/boundaries.rs",
+    );
 
     let config = read(&rem6.join("src/config.rs"));
     let timing = read(&rem6.join("src/config/riscv_timing.rs"));
@@ -46,6 +69,9 @@ fn o3_memory_issue_width_config_and_runtime_ownership() {
     let core_runtime = read(&rem6.join("src/riscv_core_runtime.rs"));
     let summary_json = read(&rem6.join("src/core_summary_json.rs"));
     let validation = read(&rem6.join("tests/cli_run/validation/o3_memory_issue_width.rs"));
+    let three_pending = read(&rem6.join(THREE_PENDING_PARENT));
+    let three_pending_fixture = read(&rem6.join(THREE_PENDING_FIXTURE));
+    let three_pending_boundary = read(&rem6.join(THREE_PENDING_BOUNDARY));
     let all_sources = repository_rust_sources(repo);
     let production_sources = production_rust_sources(repo);
 
@@ -105,7 +131,11 @@ fn o3_memory_issue_width_config_and_runtime_ownership() {
         assert_only_allowed_occurrences(
             &all_sources,
             &[key],
-            &[(SUMMARY_JSON_OWNER, 1), (VALIDATION_OWNER, 1)],
+            &[
+                (SUMMARY_JSON_OWNER, 1),
+                (VALIDATION_OWNER, 1),
+                (THREE_PENDING_PARENT_OWNER, 1),
+            ],
             "O3 runtime issue JSON configured-width key",
             json_key_occurrences,
         );
@@ -132,6 +162,27 @@ fn o3_memory_issue_width_config_and_runtime_ownership() {
         occurrences,
     );
     assert_synthetic_policy_scans_are_meaningful();
+
+    for anchor in [
+        "rem6_run_o3_three_pending_sibling_width_one_direct",
+        "rem6_run_o3_three_pending_sibling_width_two_direct",
+        "rem6_run_o3_three_pending_sibling_width_four_hierarchy",
+        "rem6_run_o3_three_pending_chain_width_four_direct",
+        "rem6_run_o3_three_pending_chain_width_two_hierarchy",
+        "rem6_run_o3_three_pending_mixed_fanout_width_two_hierarchy",
+    ] {
+        assert!(three_pending.contains(&format!("fn {anchor}(")));
+    }
+    assert_eq!(
+        occurrences(&three_pending_fixture, "--riscv-o3-memory-issue-width"),
+        1
+    );
+    for anchor in [
+        "rem6_run_host_switch_preserves_o3_three_pending_transport_ticks",
+        "rem6_run_timing_suppresses_o3_three_pending_surface",
+    ] {
+        assert!(three_pending_boundary.contains(&format!("fn {anchor}(")));
+    }
 }
 
 #[test]

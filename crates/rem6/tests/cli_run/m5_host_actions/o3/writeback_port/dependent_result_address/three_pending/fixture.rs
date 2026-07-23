@@ -31,14 +31,14 @@ impl ThreePendingFixture {
         }
     }
 
-    fn command(&self, max_tick: u64) -> std::process::Command {
+    pub(super) fn command(&self, max_tick: u64, switch_mode: &str) -> std::process::Command {
         let mut command = dependent_address_command(
             &self.binary,
             self.row.memory_system,
             self.row.issue_width,
             self.row.route_delay,
             max_tick,
-            "detailed",
+            switch_mode,
         );
         command.args([
             "--riscv-o3-memory-issue-width",
@@ -49,8 +49,14 @@ impl ThreePendingFixture {
     }
 
     pub(super) fn run(&self, max_tick: u64) -> Value {
+        self.run_mode(max_tick, "detailed", &[])
+    }
+
+    pub(super) fn run_mode(&self, max_tick: u64, switch_mode: &str, extra_args: &[&str]) -> Value {
         let label = format!("three pending result address {:?}", self.row);
-        let json = run_json(self.command(max_tick), &label);
+        let mut command = self.command(max_tick, switch_mode);
+        command.args(extra_args);
+        let json = run_json(command, &label);
         if max_tick == self.row.max_tick {
             assert_eq!(
                 json.pointer("/simulation/status").and_then(Value::as_str),
@@ -344,4 +350,81 @@ fn three_pending_initial_memory(topology: ThreePendingTopology) -> Vec<u8> {
     }
     write_u64(&mut data, 184, THREE_WITNESS_GUARD);
     data
+}
+
+pub(super) fn assert_host_action_rejected(
+    mut command: std::process::Command,
+    flag: &str,
+    argument: &str,
+    label: &str,
+) {
+    let artifact = unique_output(label);
+    command.args([flag, argument, "--output", artifact.to_str().unwrap()]);
+    let output = wait_for_boundary(command);
+    assert_eq!(output.status.code(), Some(2), "{label}: {output:?}");
+    assert!(output.stdout.is_empty(), "{label}: {output:?}");
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "failed to execute run: host action failed: checkpoint component is not quiescent: cpu0\n"
+    );
+    assert!(!artifact.exists(), "{label}: {}", artifact.display());
+}
+
+pub(super) fn transfer_chunk<'a>(transfer: &'a Value, name: &str, field: &str) -> &'a Value {
+    transfer
+        .pointer("/components")
+        .and_then(Value::as_array)
+        .and_then(|components| {
+            components.iter().find(|component| {
+                component.pointer("/component").and_then(Value::as_str) == Some("cpu0")
+            })
+        })
+        .and_then(|component| component.pointer("/chunks").and_then(Value::as_array))
+        .and_then(|chunks| {
+            chunks
+                .iter()
+                .find(|chunk| chunk.pointer("/name").and_then(Value::as_str) == Some(name))
+        })
+        .and_then(|chunk| chunk.pointer(&format!("/{field}")))
+        .unwrap_or_else(|| panic!("missing transfer chunk {name}/{field}: {transfer}"))
+}
+
+pub(super) fn o3_event_at_pc<'a>(json: &'a Value, pc: &str) -> Option<&'a Value> {
+    json.pointer("/debug/o3_trace/0/events")
+        .and_then(Value::as_array)
+        .and_then(|events| {
+            events
+                .iter()
+                .find(|event| event.pointer("/pc").and_then(Value::as_str) == Some(pc))
+        })
+}
+
+pub(super) fn assert_serial_data_requests(json: &Value, requests: &[&Value], row: ThreePendingRow) {
+    let trace = json
+        .pointer("/debug/memory_trace")
+        .and_then(Value::as_array)
+        .expect("timing memory trace");
+    for pair in requests.windows(2) {
+        let response_tick = trace
+            .iter()
+            .find(|record| {
+                event_str(record, "channel") == "data"
+                    && event_str(record, "kind") == "response_arrived"
+                    && event_u64(record, "request") == event_u64(pair[0], "request")
+            })
+            .map(|response| event_u64(response, "tick"))
+            .unwrap_or_else(|| panic!("{row:?} missing response for request"));
+        assert!(
+            event_u64(pair[1], "tick") >= response_tick,
+            "{row:?}: {pair:?}"
+        );
+    }
+}
+
+pub(super) fn assert_snapshot_counts(json: &Value, rob: u64, lsq: u64) {
+    let snapshot = json
+        .pointer("/cores/0/o3_runtime/snapshot")
+        .expect("O3 snapshot");
+    assert_eq!(json_u64(snapshot, "/rob/count"), rob);
+    assert_eq!(json_u64(snapshot, "/lsq/count"), lsq);
 }

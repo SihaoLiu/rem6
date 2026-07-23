@@ -30,6 +30,12 @@ const TWO_PENDING_RESULT_ADDRESS: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/two_pending.rs";
 const TWO_PENDING_RESULT_ADDRESS_BOUNDARIES: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/two_pending/boundaries.rs";
+const THREE_PENDING_RESULT_ADDRESS: &str =
+    "tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/three_pending.rs";
+const THREE_PENDING_RESULT_ADDRESS_FIXTURE: &str =
+    "tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/three_pending/fixture.rs";
+const THREE_PENDING_RESULT_ADDRESS_BOUNDARIES: &str =
+    "tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/three_pending/boundaries.rs";
 const WRITEBACK_ROOT_MODULES: [ExpectedModuleDeclaration; 7] = [
     ExpectedModuleDeclaration {
         name: "result_support",
@@ -64,7 +70,7 @@ const YOUNGER_ATOMIC_CHILD_MODULES: [ExpectedModuleDeclaration; 1] = [ExpectedMo
     name: "boundaries",
     path: "younger_atomic_result/boundaries.rs",
 }];
-const DEPENDENT_RESULT_ADDRESS_CHILD_MODULES: [ExpectedModuleDeclaration; 2] = [
+const DEPENDENT_RESULT_ADDRESS_CHILD_MODULES: [ExpectedModuleDeclaration; 3] = [
     ExpectedModuleDeclaration {
         name: "boundaries",
         path: "dependent_result_address/boundaries.rs",
@@ -73,12 +79,26 @@ const DEPENDENT_RESULT_ADDRESS_CHILD_MODULES: [ExpectedModuleDeclaration; 2] = [
         name: "two_pending",
         path: "dependent_result_address/two_pending.rs",
     },
+    ExpectedModuleDeclaration {
+        name: "three_pending",
+        path: "dependent_result_address/three_pending.rs",
+    },
 ];
 const TWO_PENDING_RESULT_ADDRESS_CHILD_MODULES: [ExpectedModuleDeclaration; 1] =
     [ExpectedModuleDeclaration {
         name: "boundaries",
         path: "two_pending/boundaries.rs",
     }];
+const THREE_PENDING_RESULT_ADDRESS_CHILD_MODULES: [ExpectedModuleDeclaration; 2] = [
+    ExpectedModuleDeclaration {
+        name: "boundaries",
+        path: "three_pending/boundaries.rs",
+    },
+    ExpectedModuleDeclaration {
+        name: "fixture",
+        path: "three_pending/fixture.rs",
+    },
+];
 const RESULT_BOUNDARY_SUPPORT_MODULES: [ExpectedModuleDeclaration; 1] =
     [ExpectedModuleDeclaration {
         name: "support",
@@ -166,13 +186,28 @@ const TWO_PENDING_RESULT_ADDRESS_ANCHORS: [&str; 6] = [
     "rem6_run_o3_two_pending_result_address_atomic_sibling_direct",
     "rem6_run_o3_two_pending_result_address_atomic_chain_hierarchy",
 ];
-const TWO_PENDING_RESULT_ADDRESS_BOUNDARY_ANCHORS: [&str; 6] = [
-    "rem6_run_o3_two_pending_result_address_rejects_third_unresolved",
+const TWO_PENDING_RESULT_ADDRESS_BOUNDARY_ANCHORS: [&str; 5] = [
     "rem6_run_o3_two_pending_result_address_replays_first_failure",
     "rem6_run_o3_two_pending_result_address_replays_second_failure",
     "rem6_run_o3_two_pending_result_address_rejects_atomic_chain_overlap",
     "rem6_run_o3_two_pending_result_address_rejects_live_checkpoint_and_handoff",
     "rem6_run_o3_two_pending_result_address_timing_mode_suppresses_o3_evidence",
+];
+const THREE_PENDING_RESULT_ADDRESS_ANCHORS: [&str; 6] = [
+    "rem6_run_o3_three_pending_sibling_width_one_direct",
+    "rem6_run_o3_three_pending_sibling_width_two_direct",
+    "rem6_run_o3_three_pending_sibling_width_four_hierarchy",
+    "rem6_run_o3_three_pending_chain_width_four_direct",
+    "rem6_run_o3_three_pending_chain_width_two_hierarchy",
+    "rem6_run_o3_three_pending_mixed_fanout_width_two_hierarchy",
+];
+const THREE_PENDING_RESULT_ADDRESS_BOUNDARY_ANCHORS: [&str; 6] = [
+    "rem6_run_o3_three_pending_rejects_fourth_unresolved",
+    "rem6_run_o3_three_pending_rejects_nonadjacent_graph",
+    "rem6_run_o3_three_pending_replays_middle_failure",
+    "rem6_run_o3_three_pending_checkpoint_boundary",
+    "rem6_run_host_switch_preserves_o3_three_pending_transport_ticks",
+    "rem6_run_timing_suppresses_o3_three_pending_surface",
 ];
 const RESULT_SUPPORT_HELPERS: [&str; 12] = [
     "data_trace",
@@ -228,6 +263,10 @@ const DEPENDENT_RESULT_ADDRESS_AGGREGATE_MAX_LINES: usize = 1000;
 const TWO_PENDING_RESULT_ADDRESS_MAX_LINES: usize = 700;
 const TWO_PENDING_RESULT_ADDRESS_BOUNDARIES_MAX_LINES: usize = 500;
 const TWO_PENDING_RESULT_ADDRESS_AGGREGATE_MAX_LINES: usize = 1050;
+const THREE_PENDING_RESULT_ADDRESS_MAX_LINES: usize = 550;
+const THREE_PENDING_RESULT_ADDRESS_FIXTURE_MAX_LINES: usize = 450;
+const THREE_PENDING_RESULT_ADDRESS_BOUNDARIES_MAX_LINES: usize = 550;
+const THREE_PENDING_RESULT_ADDRESS_AGGREGATE_MAX_LINES: usize = 1275;
 
 #[derive(Clone, Copy)]
 struct ExpectedModuleDeclaration {
@@ -263,6 +302,11 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let two_pending_result_address_path = crate_dir.join(TWO_PENDING_RESULT_ADDRESS);
     let two_pending_result_address_boundaries_path =
         crate_dir.join(TWO_PENDING_RESULT_ADDRESS_BOUNDARIES);
+    let three_pending_result_address_path = crate_dir.join(THREE_PENDING_RESULT_ADDRESS);
+    let three_pending_result_address_fixture_path =
+        crate_dir.join(THREE_PENDING_RESULT_ADDRESS_FIXTURE);
+    let three_pending_result_address_boundaries_path =
+        crate_dir.join(THREE_PENDING_RESULT_ADDRESS_BOUNDARIES);
     let root = fs::read_to_string(&root_path).unwrap();
     let fixed_fu = fs::read_to_string(&fixed_fu_path);
     let child = fs::read_to_string(&child_path).unwrap();
@@ -280,6 +324,11 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let two_pending_result_address = fs::read_to_string(&two_pending_result_address_path);
     let two_pending_result_address_boundaries =
         fs::read_to_string(&two_pending_result_address_boundaries_path);
+    let three_pending_result_address = fs::read_to_string(&three_pending_result_address_path);
+    let three_pending_result_address_fixture =
+        fs::read_to_string(&three_pending_result_address_fixture_path);
+    let three_pending_result_address_boundaries =
+        fs::read_to_string(&three_pending_result_address_boundaries_path);
 
     let root_functions = top_level_function_names(WRITEBACK_ROOT, &root);
     let mut boundary_failures = Vec::new();
@@ -372,6 +421,17 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     if two_pending_result_address_boundaries.is_err() {
         boundary_failures.push(format!(
             "{TWO_PENDING_RESULT_ADDRESS_BOUNDARIES} must exist"
+        ));
+    }
+    if three_pending_result_address.is_err() {
+        boundary_failures.push(format!("{THREE_PENDING_RESULT_ADDRESS} must exist"));
+    }
+    if three_pending_result_address_fixture.is_err() {
+        boundary_failures.push(format!("{THREE_PENDING_RESULT_ADDRESS_FIXTURE} must exist"));
+    }
+    if three_pending_result_address_boundaries.is_err() {
+        boundary_failures.push(format!(
+            "{THREE_PENDING_RESULT_ADDRESS_BOUNDARIES} must exist"
         ));
     }
     match &boundary {
@@ -479,6 +539,39 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
             ));
         }
     }
+    if let Ok(three_pending_result_address) = &three_pending_result_address {
+        boundary_failures.extend(module_declaration_failures(
+            THREE_PENDING_RESULT_ADDRESS,
+            three_pending_result_address,
+            &THREE_PENDING_RESULT_ADDRESS_CHILD_MODULES,
+        ));
+        let includes =
+            top_level_include_paths(THREE_PENDING_RESULT_ADDRESS, three_pending_result_address);
+        if !includes.is_empty() {
+            boundary_failures.push(format!(
+                "{THREE_PENDING_RESULT_ADDRESS} must not contain top-level include! fragments: {includes:?}"
+            ));
+        }
+    }
+    for (relative, source) in [
+        (
+            THREE_PENDING_RESULT_ADDRESS_FIXTURE,
+            &three_pending_result_address_fixture,
+        ),
+        (
+            THREE_PENDING_RESULT_ADDRESS_BOUNDARIES,
+            &three_pending_result_address_boundaries,
+        ),
+    ] {
+        if let Ok(source) = source {
+            let includes = top_level_include_paths(relative, source);
+            if !includes.is_empty() {
+                boundary_failures.push(format!(
+                    "{relative} must not contain top-level include! fragments: {includes:?}"
+                ));
+            }
+        }
+    }
     assert!(
         boundary_failures.is_empty(),
         "writeback result ownership boundary is incomplete:\n{}",
@@ -497,6 +590,9 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let dependent_result_address_boundaries = dependent_result_address_boundaries.unwrap();
     let two_pending_result_address = two_pending_result_address.unwrap();
     let two_pending_result_address_boundaries = two_pending_result_address_boundaries.unwrap();
+    let three_pending_result_address = three_pending_result_address.unwrap();
+    let three_pending_result_address_fixture = three_pending_result_address_fixture.unwrap();
+    let three_pending_result_address_boundaries = three_pending_result_address_boundaries.unwrap();
 
     assert!(
         line_count(&fixed_fu_path) <= FIXED_FU_MAX_LINES,
@@ -590,6 +686,28 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
             < TWO_PENDING_RESULT_ADDRESS_AGGREGATE_MAX_LINES,
         "two-pending result-address evidence must remain below {TWO_PENDING_RESULT_ADDRESS_AGGREGATE_MAX_LINES} aggregate lines"
     );
+    assert!(
+        line_count(&three_pending_result_address_path)
+            <= THREE_PENDING_RESULT_ADDRESS_MAX_LINES,
+        "{THREE_PENDING_RESULT_ADDRESS} must remain at or below {THREE_PENDING_RESULT_ADDRESS_MAX_LINES} lines"
+    );
+    assert!(
+        line_count(&three_pending_result_address_fixture_path)
+            <= THREE_PENDING_RESULT_ADDRESS_FIXTURE_MAX_LINES,
+        "{THREE_PENDING_RESULT_ADDRESS_FIXTURE} must remain at or below {THREE_PENDING_RESULT_ADDRESS_FIXTURE_MAX_LINES} lines"
+    );
+    assert!(
+        line_count(&three_pending_result_address_boundaries_path)
+            <= THREE_PENDING_RESULT_ADDRESS_BOUNDARIES_MAX_LINES,
+        "{THREE_PENDING_RESULT_ADDRESS_BOUNDARIES} must remain at or below {THREE_PENDING_RESULT_ADDRESS_BOUNDARIES_MAX_LINES} lines"
+    );
+    assert!(
+        line_count(&three_pending_result_address_path)
+            + line_count(&three_pending_result_address_fixture_path)
+            + line_count(&three_pending_result_address_boundaries_path)
+            <= THREE_PENDING_RESULT_ADDRESS_AGGREGATE_MAX_LINES,
+        "three-pending result-address evidence must remain at or below {THREE_PENDING_RESULT_ADDRESS_AGGREGATE_MAX_LINES} aggregate lines"
+    );
     let support_leaf_failures = support_leaf_failures(RESULT_SUPPORT, &support);
     assert!(
         support_leaf_failures.is_empty(),
@@ -638,6 +756,22 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         )
         .is_empty(),
         "{TWO_PENDING_RESULT_ADDRESS_BOUNDARIES} must remain a leaf module"
+    );
+    assert!(
+        top_level_module_names(
+            THREE_PENDING_RESULT_ADDRESS_FIXTURE,
+            &three_pending_result_address_fixture,
+        )
+        .is_empty(),
+        "{THREE_PENDING_RESULT_ADDRESS_FIXTURE} must remain a leaf module"
+    );
+    assert!(
+        top_level_module_names(
+            THREE_PENDING_RESULT_ADDRESS_BOUNDARIES,
+            &three_pending_result_address_boundaries,
+        )
+        .is_empty(),
+        "{THREE_PENDING_RESULT_ADDRESS_BOUNDARIES} must remain a leaf module"
     );
 
     let child_functions = top_level_function_names(RESULT_CLASSES, &child);
@@ -1158,7 +1292,7 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     assert_eq!(
         two_pending_result_address_boundary_tests,
         TWO_PENDING_RESULT_ADDRESS_BOUNDARY_ANCHORS,
-        "{TWO_PENDING_RESULT_ADDRESS_BOUNDARIES} must own exactly the six boundary anchors in order"
+        "{TWO_PENDING_RESULT_ADDRESS_BOUNDARIES} must own exactly the five boundary anchors in order"
     );
     for anchor in TWO_PENDING_RESULT_ADDRESS_BOUNDARY_ANCHORS {
         assert_eq!(
@@ -1199,22 +1333,71 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         }
     }
 
+    let three_pending_result_address_tests =
+        top_level_test_names(THREE_PENDING_RESULT_ADDRESS, &three_pending_result_address);
+    assert_eq!(
+        three_pending_result_address_tests, THREE_PENDING_RESULT_ADDRESS_ANCHORS,
+        "{THREE_PENDING_RESULT_ADDRESS} must own exactly the six positive anchors in order"
+    );
+    let three_pending_result_address_boundary_tests = top_level_test_names(
+        THREE_PENDING_RESULT_ADDRESS_BOUNDARIES,
+        &three_pending_result_address_boundaries,
+    );
+    assert_eq!(
+        three_pending_result_address_boundary_tests,
+        THREE_PENDING_RESULT_ADDRESS_BOUNDARY_ANCHORS,
+        "{THREE_PENDING_RESULT_ADDRESS_BOUNDARIES} must own exactly the six boundary anchors in order"
+    );
+    let owned_sources = [
+        (
+            THREE_PENDING_RESULT_ADDRESS,
+            three_pending_result_address.as_str(),
+        ),
+        (
+            THREE_PENDING_RESULT_ADDRESS_FIXTURE,
+            three_pending_result_address_fixture.as_str(),
+        ),
+        (
+            THREE_PENDING_RESULT_ADDRESS_BOUNDARIES,
+            three_pending_result_address_boundaries.as_str(),
+        ),
+    ];
+    for (anchor, owner) in THREE_PENDING_RESULT_ADDRESS_ANCHORS
+        .into_iter()
+        .map(|anchor| (anchor, THREE_PENDING_RESULT_ADDRESS))
+        .chain(
+            THREE_PENDING_RESULT_ADDRESS_BOUNDARY_ANCHORS
+                .into_iter()
+                .map(|anchor| (anchor, THREE_PENDING_RESULT_ADDRESS_BOUNDARIES)),
+        )
+    {
+        let owners = owned_sources
+            .iter()
+            .filter_map(|(relative, source)| source.contains(anchor).then_some(*relative))
+            .collect::<Vec<_>>();
+        assert_eq!(owners, vec![owner], "three-pending anchor `{anchor}` owner");
+    }
+
     let registered_core_anchors = CORE_TEST_ANCHORS
         .lines()
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
-    let task8_anchors = TWO_PENDING_RESULT_ADDRESS_ANCHORS
+    let two_pending_anchors = TWO_PENDING_RESULT_ADDRESS_ANCHORS
         .into_iter()
         .chain(TWO_PENDING_RESULT_ADDRESS_BOUNDARY_ANCHORS)
         .collect::<Vec<_>>();
-    for anchor in &task8_anchors {
+    let three_pending_anchors = THREE_PENDING_RESULT_ADDRESS_ANCHORS
+        .into_iter()
+        .chain(THREE_PENDING_RESULT_ADDRESS_BOUNDARY_ANCHORS)
+        .collect::<Vec<_>>();
+    for anchor in two_pending_anchors.iter().chain(&three_pending_anchors) {
         assert_eq!(
             registered_core_anchors
                 .iter()
                 .filter(|registered| *registered == anchor)
                 .count(),
             1,
-            "core_test_anchors.txt must register Task 8 anchor `{anchor}` exactly once"
+            "core_test_anchors.txt must register writeback anchor `{anchor}` exactly once"
         );
     }
     let dependent_result_address_tail = "rem6_run_timing_suppresses_o3_dependent_result_address";
@@ -1222,11 +1405,20 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         .iter()
         .position(|anchor| *anchor == dependent_result_address_tail)
         .expect("core_test_anchors.txt must retain the dependent-result-address tail anchor");
-    let task8_anchor_start = dependent_result_address_tail_index + 1;
+    let two_pending_anchor_start = dependent_result_address_tail_index + 1;
     assert_eq!(
-        registered_core_anchors.get(task8_anchor_start..task8_anchor_start + task8_anchors.len()),
-        Some(task8_anchors.as_slice()),
-        "Task 8 anchors must immediately follow the current dependent-result-address anchors"
+        registered_core_anchors
+            .get(two_pending_anchor_start..two_pending_anchor_start + two_pending_anchors.len()),
+        Some(two_pending_anchors.as_slice()),
+        "two-pending anchors must immediately follow the dependent-result-address anchors"
+    );
+    let three_pending_anchor_start = two_pending_anchor_start + two_pending_anchors.len();
+    assert_eq!(
+        registered_core_anchors.get(
+            three_pending_anchor_start..three_pending_anchor_start + three_pending_anchors.len()
+        ),
+        Some(three_pending_anchors.as_slice()),
+        "three-pending anchors must immediately follow the two-pending anchors"
     );
 
     assert_rustfmt_clean(&fixed_fu_path);
@@ -1243,6 +1435,9 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     assert_rustfmt_clean(&dependent_result_address_boundaries_path);
     assert_rustfmt_clean(&two_pending_result_address_path);
     assert_rustfmt_clean(&two_pending_result_address_boundaries_path);
+    assert_rustfmt_clean(&three_pending_result_address_path);
+    assert_rustfmt_clean(&three_pending_result_address_fixture_path);
+    assert_rustfmt_clean(&three_pending_result_address_boundaries_path);
 }
 
 #[test]
@@ -1423,6 +1618,8 @@ fn writeback_dependent_result_address_boundary_module_policy_rejects_wrong_owner
 mod boundaries;
 #[path = "dependent_result_address/two_pending.rs"]
 mod two_pending;
+#[path = "dependent_result_address/three_pending.rs"]
+mod three_pending;
 "#;
     assert!(module_declaration_failures(
         "synthetic.rs",
@@ -1443,6 +1640,35 @@ mod two_pending;
             "synthetic.rs",
             source,
             &DEPENDENT_RESULT_ADDRESS_CHILD_MODULES,
+        )
+        .is_empty());
+    }
+}
+
+#[test]
+fn writeback_three_pending_result_address_module_policy_rejects_wrong_ownership() {
+    let valid = r#"
+#[path = "three_pending/boundaries.rs"]
+mod boundaries;
+#[path = "three_pending/fixture.rs"]
+mod fixture;
+"#;
+    assert!(module_declaration_failures(
+        "synthetic.rs",
+        valid,
+        &THREE_PENDING_RESULT_ADDRESS_CHILD_MODULES,
+    )
+    .is_empty());
+
+    for source in [
+        "#[path = \"three_pending/boundaries.rs\"]\nmod boundaries;",
+        "#[path = \"wrong.rs\"]\nmod boundaries;\n#[path = \"three_pending/fixture.rs\"]\nmod fixture;",
+        "#[path = \"three_pending/boundaries.rs\"]\nmod boundaries;\n#[path = \"three_pending/fixture.rs\"]\nmod fixture {}",
+    ] {
+        assert!(!module_declaration_failures(
+            "synthetic.rs",
+            source,
+            &THREE_PENDING_RESULT_ADDRESS_CHILD_MODULES,
         )
         .is_empty());
     }

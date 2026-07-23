@@ -1,44 +1,15 @@
 use super::*;
 
-const THIRD_PENDING_PC: &str = "0x8000003c";
 const BOUNDARY_MAX_TICK: u64 = 1_200;
 const MMIO_POINTER: u64 = 0x1000_0000;
 const MMIO_VALUE: u64 = 0x5151_6161_7171_8181;
-const THIRD_POINTER: u64 = TWO_PENDING_DATA_START + 112;
-const THIRD_VALUE: u64 = 0x4242_5252_6262_7272;
 const REPLAY_VALUE: u64 = 0x3131_4141_5151_6161;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum BoundaryCase {
-    ThirdUnresolved,
     FirstReplay,
     SecondReplay,
     AtomicOverlap,
-}
-
-#[test]
-fn rem6_run_o3_two_pending_result_address_rejects_third_unresolved() {
-    let fixture = BoundaryFixture::new(BoundaryCase::ThirdUnresolved);
-    let completed = fixture.run(BOUNDARY_MAX_TICK);
-    let resident = fixture.before_head_response(&completed);
-    assert_eq!(
-        json_u64(&resident, "/cores/0/o3_runtime/snapshot/rob/count"),
-        3
-    );
-    assert_eq!(
-        json_u64(&resident, "/cores/0/o3_runtime/snapshot/lsq/count"),
-        3
-    );
-    let pending = [FIRST_PENDING_PC, SECOND_PENDING_PC]
-        .map(|pc| event_u64(rob_entry_at_pc(&resident, pc), "sequence"));
-    assert_eq!(addressless_sequences(&resident), pending);
-    assert!(!rob_has_pc(&resident, THIRD_PENDING_PC));
-    assert_eq!(data_requests_sent(&resident).len(), 1);
-    assert_eq!(load_count(&resident, THIRD_POINTER), 0);
-    assert_boundary_architecture(BoundaryCase::ThirdUnresolved, &completed);
-    for address in [FIRST_POINTER, SECOND_POINTER, THIRD_POINTER] {
-        assert_eq!(load_count(&completed, address), 1, "load at 0x{address:x}");
-    }
 }
 
 #[test]
@@ -364,11 +335,7 @@ fn boundary_binary(case: BoundaryCase) -> std::path::PathBuf {
         },
         i_type(0, 5, 0b011, 6, 0x03),
         i_type(0, 6, 0b011, 7, 0x03),
-        if case == BoundaryCase::ThirdUnresolved {
-            i_type(0, 7, 0b011, 8, 0x03)
-        } else {
-            i_type(1, 7, 0, 8, 0x13)
-        },
+        i_type(1, 7, 0, 8, 0x13),
         s_type(128, 6, 9, 0b011),
         s_type(136, 7, 9, 0b011),
         s_type(144, 8, 9, 0b011),
@@ -393,22 +360,15 @@ fn boundary_initial_memory(case: BoundaryCase) -> Vec<u8> {
         FIRST_POINTER
     };
     let first = match case {
-        BoundaryCase::ThirdUnresolved => SECOND_POINTER,
         BoundaryCase::SecondReplay => MMIO_POINTER,
         BoundaryCase::AtomicOverlap => TWO_PENDING_DATA_START,
         BoundaryCase::FirstReplay => 0,
-    };
-    let second = if case == BoundaryCase::ThirdUnresolved {
-        THIRD_POINTER
-    } else {
-        REPLAY_VALUE
     };
     for (offset, value) in [
         (0, head),
         (8, HEAD_GUARD),
         (64, first),
-        (96, second),
-        (112, THIRD_VALUE),
+        (96, REPLAY_VALUE),
         (152, WITNESS_GUARD),
     ] {
         write_u64(&mut data, offset, value);
@@ -418,9 +378,6 @@ fn boundary_initial_memory(case: BoundaryCase) -> Vec<u8> {
 
 fn assert_boundary_architecture(case: BoundaryCase, json: &Value) {
     let [x5, x6, x7, x8] = match case {
-        BoundaryCase::ThirdUnresolved => {
-            [FIRST_POINTER, SECOND_POINTER, THIRD_POINTER, THIRD_VALUE]
-        }
         BoundaryCase::FirstReplay => [MMIO_POINTER, SECOND_POINTER, REPLAY_VALUE, REPLAY_VALUE + 1],
         BoundaryCase::SecondReplay => [FIRST_POINTER, MMIO_POINTER, MMIO_VALUE, MMIO_VALUE + 1],
         BoundaryCase::AtomicOverlap => [
@@ -460,10 +417,4 @@ fn window_sequences(json: &Value) -> [u64; 3] {
 fn completed_window_sequences(json: &Value) -> [u64; 3] {
     [FIRST_PENDING_PC, SECOND_PENDING_PC, SCALAR_SUFFIX_PC]
         .map(|pc| event_u64(event_at_pc(json, pc), "sequence"))
-}
-
-fn rob_has_pc(json: &Value, pc: &str) -> bool {
-    rob_entries(json)
-        .iter()
-        .any(|entry| entry.pointer("/pc").and_then(Value::as_str) == Some(pc))
 }

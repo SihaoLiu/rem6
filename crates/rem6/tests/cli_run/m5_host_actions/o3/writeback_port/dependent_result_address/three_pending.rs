@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "three_pending/boundaries.rs"]
+mod boundaries;
+
 #[path = "three_pending/fixture.rs"]
 mod fixture;
 use fixture::*;
@@ -179,6 +182,56 @@ fn assert_three_pending_order(
         commits.windows(2).all(|pair| pair[0] <= pair[1]),
         "{row:?} commits: {commits:?}"
     );
+}
+
+fn assert_discarded_middle_ownership(json: &Value, sequences: &[u64], physical: [u64; 2]) {
+    assert!(lsq_entries(json)
+        .iter()
+        .all(|entry| !sequences.contains(&event_u64(entry, "sequence"))));
+    assert!(addressless_sequences(json)
+        .iter()
+        .all(|sequence| !sequences.contains(sequence)));
+    let rename = json
+        .pointer("/cores/0/o3_runtime/snapshot/rename_map/entries")
+        .and_then(Value::as_array)
+        .expect("middle replay rename map");
+    assert!(physical.iter().all(|physical| !rename.iter().any(|entry| {
+        entry.pointer("/register_class").and_then(Value::as_str) == Some("integer")
+            && entry.pointer("/physical").and_then(Value::as_u64) == Some(*physical)
+    })));
+}
+
+fn three_pending_stat_paths(json: &Value) -> std::collections::BTreeSet<&str> {
+    json.pointer("/stats")
+        .and_then(Value::as_array)
+        .expect("run stats")
+        .iter()
+        .filter_map(|sample| sample.pointer("/path").and_then(Value::as_str))
+        .collect()
+}
+
+fn assert_exact_request_count(json: &Value, expected: usize, bypass_requests: usize) {
+    let requests = data_requests_sent(json);
+    assert_eq!(
+        requests.len() + bypass_requests,
+        expected,
+        "requests: {requests:?}"
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| event_u64(request, "request"))
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        requests.len(),
+        "duplicate requests: {requests:?}"
+    );
+}
+
+fn rob_has_pc(json: &Value, pc: &str) -> bool {
+    rob_entries(json)
+        .iter()
+        .any(|entry| entry.pointer("/pc").and_then(Value::as_str) == Some(pc))
 }
 
 fn assert_three_pending_counters(row: ThreePendingRow, completed: &Value, resident: &Value) {
