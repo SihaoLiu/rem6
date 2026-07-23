@@ -2,6 +2,11 @@ use rem6_kernel::{PendingEventSnapshot, SchedulerInstanceId, Tick};
 
 use crate::{CpuFetchEvent, RiscvCore, RiscvCoreState, RiscvCpuError};
 
+#[path = "riscv_o3_writeback_wake/desired.rs"]
+mod desired;
+
+use desired::desired_o3_writeback_wake;
+
 impl RiscvCoreState {
     pub(crate) fn wake_ready_o3_data_access_younger_window(
         &mut self,
@@ -153,42 +158,11 @@ impl RiscvCore {
         };
         let mut state = self.state.lock().expect("riscv core lock");
         state.o3_runtime.prune_writeback_calendar_before(now);
-        let memory_result = state
-            .o3_runtime
-            .earliest_unpublished_memory_result_writeback_tick();
-        let pending_address = state.o3_runtime.pending_data_address_wake_tick();
-        let live_gate_ready_tick = state.live_retire_gate.pending_ready_tick();
-        let live_gate_wakes = state.live_retire_gate.owned_scheduler_wakes();
-        let restored_live_gate = live_gate_wakes
-            .is_empty()
-            .then_some(live_gate_ready_tick)
-            .flatten();
-        let forwarded_control = state
-            .o3_runtime
-            .producer_forwarded_control_target()
-            .filter(|forwarded| {
-                !state
-                    .branch_speculations
-                    .contains_key(&forwarded.fetch_request().sequence())
-            })
-            .map(|forwarded| forwarded.ready_tick().max(now));
-        let translated_result_retry = state.translated_result_pair_retry_wake_tick(now);
-        let desired = [
-            memory_result,
-            pending_address,
-            restored_live_gate,
-            forwarded_control,
-            translated_result_pair,
-            translated_result_retry,
-        ]
-        .into_iter()
-        .flatten()
-        .min();
-        state.o3_writeback_wake.set_desired_tick(desired, now);
-        if pending_address == Some(now)
-            || restored_live_gate == Some(now)
-            || forwarded_control == Some(now)
-        {
+        let demand = desired_o3_writeback_wake(&state, now, translated_result_pair);
+        state
+            .o3_writeback_wake
+            .set_desired_tick(demand.desired_tick, now);
+        if demand.allow_current {
             state
                 .o3_writeback_wake
                 .requested_tick_with_current(now, true)
@@ -259,38 +233,9 @@ impl RiscvCore {
 
 impl RiscvCoreState {
     pub(crate) fn refresh_o3_writeback_wake(&mut self, now: Tick) {
-        let memory_result = self
-            .o3_runtime
-            .earliest_unpublished_memory_result_writeback_tick();
-        let pending_address = self.o3_runtime.pending_data_address_wake_tick();
-        let live_gate_ready_tick = self.live_retire_gate.pending_ready_tick();
-        let restored_live_gate = self
-            .live_retire_gate
-            .owned_scheduler_wakes()
-            .is_empty()
-            .then_some(live_gate_ready_tick)
-            .flatten();
-        let forwarded_control = self
-            .o3_runtime
-            .producer_forwarded_control_target()
-            .filter(|forwarded| {
-                !self
-                    .branch_speculations
-                    .contains_key(&forwarded.fetch_request().sequence())
-            })
-            .map(|forwarded| forwarded.ready_tick().max(now));
-        let translated_result_retry = self.translated_result_pair_retry_wake_tick(now);
-        let desired = [
-            memory_result,
-            pending_address,
-            restored_live_gate,
-            forwarded_control,
-            translated_result_retry,
-        ]
-        .into_iter()
-        .flatten()
-        .min();
-        self.o3_writeback_wake.set_desired_tick(desired, now);
+        let demand = desired_o3_writeback_wake(self, now, None);
+        self.o3_writeback_wake
+            .set_desired_tick(demand.desired_tick, now);
     }
 }
 

@@ -7,6 +7,14 @@ const MAX_O3_RUNTIME_ISSUE_DEPENDENCY_LINES: usize = 500;
 const MAX_O3_RUNTIME_ISSUE_DEPENDENCY_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_ISSUE_CALENDAR_LINES: usize = 450;
 const MAX_O3_RUNTIME_ISSUE_CALENDAR_TEST_LINES: usize = 450;
+const MAX_O3_RUNTIME_LIVE_ISSUE_IDENTITY_LINES: usize = 350;
+const MAX_RISCV_O3_WRITEBACK_WAKE_DESIRED_LINES: usize = 220;
+const MAX_O3_RUNTIME_ISSUE_STATE_LINES: usize = 450;
+const MAX_O3_RUNTIME_ISSUE_STATE_TEST_LINES: usize = 500;
+const MAX_O3_RUNTIME_ISSUE_SERVICE_LINES: usize = 600;
+const MAX_O3_RUNTIME_ISSUE_SERVICE_TEST_LINES: usize = 500;
+const MAX_O3_RUNTIME_ISSUE_TRANSACTION_LINES: usize = 450;
+const MAX_O3_RUNTIME_ISSUE_TRANSACTION_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_ISSUE_QUEUE_LINES: usize = 600;
 const MAX_O3_RUNTIME_ISSUE_QUEUE_TEST_LINES: usize = 450;
 const MAX_O3_RUNTIME_ISSUE_LINES: usize = 800;
@@ -84,6 +92,54 @@ const MAX_RISCV_TRANSLATED_RESULT_PAIR_ISSUE_REVIEW_LINES: usize = 160;
 const MAX_RISCV_FAILURE_DIAGNOSTIC_LINES: usize = 300;
 const MAX_RISCV_PRODUCER_FORWARDED_DESCENDANT_LINES: usize = 120;
 const MAX_SOURCE_LINES: usize = 1800;
+
+#[test]
+#[ignore = "RED until Tasks 2, 4, and 5 create all focused issue owners"]
+fn o3_persistent_iq_cpu_files_stay_focused() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for (relative, limit) in [
+        (
+            "src/o3_runtime_live_window/issue_identity.rs",
+            MAX_O3_RUNTIME_LIVE_ISSUE_IDENTITY_LINES,
+        ),
+        (
+            "src/riscv_o3_writeback_wake/desired.rs",
+            MAX_RISCV_O3_WRITEBACK_WAKE_DESIRED_LINES,
+        ),
+        (
+            "src/o3_runtime_issue/state.rs",
+            MAX_O3_RUNTIME_ISSUE_STATE_LINES,
+        ),
+        (
+            "src/o3_runtime_issue/state_tests.rs",
+            MAX_O3_RUNTIME_ISSUE_STATE_TEST_LINES,
+        ),
+        (
+            "src/o3_runtime_issue/service.rs",
+            MAX_O3_RUNTIME_ISSUE_SERVICE_LINES,
+        ),
+        (
+            "src/o3_runtime_issue/service_tests.rs",
+            MAX_O3_RUNTIME_ISSUE_SERVICE_TEST_LINES,
+        ),
+        (
+            "src/o3_runtime_issue/transaction.rs",
+            MAX_O3_RUNTIME_ISSUE_TRANSACTION_LINES,
+        ),
+        (
+            "src/o3_runtime_issue/transaction_tests.rs",
+            MAX_O3_RUNTIME_ISSUE_TRANSACTION_TEST_LINES,
+        ),
+    ] {
+        let path = crate_dir.join(relative);
+        assert!(path.is_file(), "missing focused owner {}", path.display());
+        let lines = line_count(&path);
+        assert!(
+            lines <= limit,
+            "{relative} has {lines} lines; limit is {limit}"
+        );
+    }
+}
 
 #[test]
 fn cpu_lib_rs_remains_a_facade() {

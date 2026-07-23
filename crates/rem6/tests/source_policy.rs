@@ -28,6 +28,8 @@ mod o3_alias_authority;
 mod o3_live_window_ownership;
 #[path = "source_policy/o3_memory_issue_width_ownership.rs"]
 mod o3_memory_issue_width_ownership;
+#[path = "source_policy/o3_persistent_iq_ownership.rs"]
+mod o3_persistent_iq_ownership;
 #[path = "source_policy/o3_three_pending_address_ownership.rs"]
 mod o3_three_pending_address_ownership;
 #[path = "source_policy/o3_translated_mmio_pair_ownership.rs"]
