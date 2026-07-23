@@ -13,7 +13,7 @@ use crate::{
     riscv_live_retire_window::{
         completed_fetch_instruction_from_events, completed_fetch_instruction_starting_with,
     },
-    CpuFetchEvent, RiscvCoreState, RiscvCpuExecutionEvent,
+    CpuFetchEvent, CpuFetchEventKind, RiscvCoreState, RiscvCpuExecutionEvent,
 };
 
 impl RiscvCoreState {
@@ -38,10 +38,9 @@ impl RiscvCoreState {
         };
         let authorization = *authorization;
         let executed_fetches = BTreeSet::new();
-        let Some(head_event) = fetch_events
-            .iter()
-            .find(|event| event.request_id() == head_fetch_request)
-        else {
+        let Some(head_event) = fetch_events.iter().find(|event| {
+            event.request_id() == head_fetch_request && event.kind() == CpuFetchEventKind::Completed
+        }) else {
             return false;
         };
         let Some(head) =

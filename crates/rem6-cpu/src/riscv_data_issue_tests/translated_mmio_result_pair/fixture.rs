@@ -13,10 +13,13 @@ const YOUNGER_VIRTUAL_ADDRESS: u64 = 0x5000;
 pub(super) fn translated_result_pair_with_outstanding_head(memory_issue_width: usize) -> RiscvCore {
     translated_result_pair_with_fetches(
         memory_issue_width,
-        vec![
-            completed_fetch_with_raw(0, HEAD_PC, ld(11, 2)),
-            completed_fetch_with_raw(1, YOUNGER_PC, ld(12, 3)),
-        ],
+        [
+            issued_and_completed_fetch_with_raw(0, HEAD_PC, ld(11, 2)),
+            issued_and_completed_fetch_with_raw(1, YOUNGER_PC, ld(12, 3)),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
         fetch_request(0),
         fetch_request(1),
     )
@@ -28,11 +31,14 @@ pub(super) fn translated_split_gapped_result_pair_with_outstanding_head(
     let head_bytes = ld(11, 2).to_le_bytes();
     translated_result_pair_with_fetches(
         memory_issue_width,
-        vec![
-            completed_fetch_with_data(10, HEAD_PC, head_bytes[..2].to_vec()),
-            completed_fetch_with_data(20, HEAD_PC + 2, head_bytes[2..].to_vec()),
-            completed_fetch_with_raw(40, YOUNGER_PC, ld(12, 3)),
-        ],
+        [
+            issued_and_completed_fetch_with_data(10, HEAD_PC, head_bytes[..2].to_vec()),
+            issued_and_completed_fetch_with_data(20, HEAD_PC + 2, head_bytes[2..].to_vec()),
+            issued_and_completed_fetch_with_raw(40, YOUNGER_PC, ld(12, 3)),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
         fetch_request(10),
         fetch_request(40),
     )
@@ -291,23 +297,28 @@ fn install_cached_head_translation(core: &RiscvCore, page_map: &TranslationPageM
         .unwrap();
 }
 
-fn completed_fetch_with_raw(sequence: u64, pc: u64, raw: u32) -> CpuFetchEvent {
-    completed_fetch_with_data(sequence, pc, raw.to_le_bytes().to_vec())
+fn issued_and_completed_fetch_with_raw(sequence: u64, pc: u64, raw: u32) -> [CpuFetchEvent; 2] {
+    issued_and_completed_fetch_with_data(sequence, pc, raw.to_le_bytes().to_vec())
 }
 
-fn completed_fetch_with_data(sequence: u64, pc: u64, data: Vec<u8>) -> CpuFetchEvent {
-    CpuFetchEvent::completed(
-        CpuFetchRecord::new(
-            10 + sequence,
-            PartitionId::new(0),
-            MemoryRouteId::new(0),
-            endpoint("cpu0.ifetch"),
-            fetch_request(sequence),
-            Address::new(pc),
-            AccessSize::new(4).unwrap(),
-        ),
-        data,
-    )
+fn issued_and_completed_fetch_with_data(
+    sequence: u64,
+    pc: u64,
+    data: Vec<u8>,
+) -> [CpuFetchEvent; 2] {
+    let record = CpuFetchRecord::new(
+        10 + sequence,
+        PartitionId::new(0),
+        MemoryRouteId::new(0),
+        endpoint("cpu0.ifetch"),
+        fetch_request(sequence),
+        Address::new(pc),
+        AccessSize::new(4).unwrap(),
+    );
+    [
+        CpuFetchEvent::issued(record.clone()),
+        CpuFetchEvent::completed(record, data),
+    ]
 }
 
 pub(super) fn fetch_request(sequence: u64) -> MemoryRequestId {
