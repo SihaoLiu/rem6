@@ -57,6 +57,58 @@ fn live_issue_state_requests_current_tick_on_admission() {
 }
 
 #[test]
+fn live_issue_full_discard_clears_persistent_state_without_trace() {
+    let mut runtime = O3RuntimeState::default();
+    let instruction = addi(3, 0, 1);
+    runtime
+        .stage_live_instruction(Address::new(BRANCH_PC), instruction, 0)
+        .unwrap();
+    assert!(runtime.bind_live_staged_issue_packet(
+        Address::new(BRANCH_PC),
+        decoded(instruction),
+        &[request(11)],
+        31,
+    ));
+    assert_eq!(runtime.live_issue.resident_sequences().len(), 1);
+    assert_eq!(runtime.live_issue_service_tick(), Some(31));
+    let trace_records = runtime.live_issue_trace_records().to_vec();
+
+    runtime.discard_live_staged_instructions();
+
+    assert!(runtime.live_issue.resident_sequences().is_empty());
+    assert_eq!(runtime.live_issue_telemetry().current_occupancy(), 0);
+    assert_eq!(runtime.live_issue_service_tick(), None);
+    assert!(runtime.live_issue_is_quiescent());
+    assert_eq!(runtime.live_issue_trace_records(), trace_records);
+}
+
+#[test]
+fn live_issue_timed_full_discard_clears_persistent_state_without_trace() {
+    let mut runtime = O3RuntimeState::default();
+    let instruction = addi(3, 0, 1);
+    runtime
+        .stage_live_instruction(Address::new(BRANCH_PC), instruction, 0)
+        .unwrap();
+    assert!(runtime.bind_live_staged_issue_packet(
+        Address::new(BRANCH_PC),
+        decoded(instruction),
+        &[request(11)],
+        31,
+    ));
+    assert_eq!(runtime.live_issue.resident_sequences().len(), 1);
+    assert_eq!(runtime.live_issue_service_tick(), Some(31));
+    let trace_records = runtime.live_issue_trace_records().to_vec();
+
+    runtime.discard_live_staged_instructions_at(32);
+
+    assert!(runtime.live_issue.resident_sequences().is_empty());
+    assert_eq!(runtime.live_issue_telemetry().current_occupancy(), 0);
+    assert_eq!(runtime.live_issue_service_tick(), None);
+    assert!(runtime.live_issue_is_quiescent());
+    assert_eq!(runtime.live_issue_trace_records(), trace_records);
+}
+
+#[test]
 fn live_issue_state_removes_exact_and_suffix_rows_atomically() {
     let mut state = O3LiveIssueState::default();
     for sequence in 1..=4 {

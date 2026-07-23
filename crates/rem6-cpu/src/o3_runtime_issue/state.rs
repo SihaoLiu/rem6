@@ -1,8 +1,9 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    ops::{Deref, DerefMut},
+};
 
 use rem6_memory::Address;
-
-use super::*;
 
 macro_rules! copy_getters {
     ($($name:ident -> $value:ty),+ $(,)?) => {
@@ -113,8 +114,25 @@ struct O3LiveIssueActiveTick {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct O3LiveIssueResidentSequences(Vec<u64>);
+
+impl Deref for O3LiveIssueResidentSequences {
+    type Target = Vec<u64>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for O3LiveIssueResidentSequences {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(in crate::o3_runtime) struct O3LiveIssueState {
-    resident_sequences: Vec<u64>,
+    resident_sequences: O3LiveIssueResidentSequences,
     requested_service_tick: Option<u64>,
     compatibility_cycle_ticks: BTreeSet<u64>,
     active_tick: Option<O3LiveIssueActiveTick>,
@@ -127,7 +145,7 @@ pub(in crate::o3_runtime) struct O3LiveIssueState {
 
 impl O3LiveIssueState {
     pub(in crate::o3_runtime) fn resident_sequences(&self) -> &[u64] {
-        &self.resident_sequences
+        self.resident_sequences.as_slice()
     }
 
     pub(in crate::o3_runtime) fn enqueue_at(
@@ -247,6 +265,23 @@ impl O3LiveIssueState {
 
     pub(in crate::o3_runtime) fn discard_suffix(&mut self, boundary: u64) -> usize {
         self.take_suffix(boundary).len()
+    }
+
+    pub(in crate::o3_runtime) fn discard_all(&mut self) {
+        let mut changed =
+            !self.resident_sequences.is_empty() || self.requested_service_tick.is_some();
+        self.resident_sequences.clear();
+        self.requested_service_tick = None;
+        if let Some(active) = self.active_tick.as_mut() {
+            changed |= !active.blocked_sequences.is_empty()
+                || !active.baseline_blocked_sequences.is_empty();
+            active.blocked_sequences.clear();
+            active.baseline_blocked_sequences.clear();
+        }
+        if changed {
+            self.mark_mutated();
+        }
+        self.telemetry.current_occupancy = 0;
     }
 
     pub(in crate::o3_runtime) fn request_service_at(&mut self, tick: u64) {
@@ -399,49 +434,6 @@ impl O3LiveIssueState {
             O3LiveIssueTraceClass::Control => &mut self.telemetry.control_issued_rows,
         };
         *counter = counter.saturating_add(1);
-    }
-}
-
-impl O3RuntimeState {
-    pub(in crate::o3_runtime) fn enqueue_bound_live_issue_sequence_at(
-        &mut self,
-        sequence: u64,
-        tick: u64,
-    ) -> bool {
-        let Some(rob) = self
-            .snapshot
-            .reorder_buffer
-            .iter()
-            .copied()
-            .find(|entry| entry.is_live_staged() && entry.sequence() == sequence)
-        else {
-            return false;
-        };
-        if self
-            .live_speculative_executions
-            .iter()
-            .any(|issued| issued.sequence == sequence)
-        {
-            return true;
-        }
-        let pending = self.pending_data_addresses.find_sequence(sequence);
-        if pending.is_some_and(|row| row.materialized.is_some()) {
-            return true;
-        }
-        let Some(packet) = self.live_staged_issue_packet(sequence) else {
-            return false;
-        };
-        let issue_class = if pending.is_some() {
-            Some(O3LiveIssueTraceClass::MemoryAgu)
-        } else {
-            live_issue_trace_class(packet.instruction())
-        };
-        let Some(issue_class) = issue_class else {
-            return true;
-        };
-        self.live_issue
-            .enqueue_at(sequence, rob.pc(), issue_class, tick);
-        true
     }
 }
 

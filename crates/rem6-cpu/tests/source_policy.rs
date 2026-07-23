@@ -3888,31 +3888,12 @@ fn o3_persistent_live_issue_state_owns_membership() {
     );
     assert!(!root.contains("live_issue_cycle_ticks"));
 
-    let vec_u64_inventory =
-        production_struct_generic_field_storage(&production_sources, "Vec", "u64");
-    assert_eq!(
-        vec_u64_inventory,
-        vec![
-            (PathBuf::from("src/multiperspective_perceptron.rs"), 3),
-            (PathBuf::from("src/o3_runtime_control_window.rs"), 1),
-            (PathBuf::from("src/o3_runtime_issue/queue.rs"), 1),
-            (PathBuf::from("src/o3_runtime_issue/state.rs"), 1),
-            (PathBuf::from("src/statistical_corrector.rs"), 1),
-            (PathBuf::from("src/tournament_predictor.rs"), 2),
-        ],
-        "all production Vec<u64> struct storage must match the ratcheted inventory",
-    );
-
-    let resident_inventory_owners = production_struct_named_generic_field_storage(
-        &production_sources,
-        "resident_sequences",
-        "Vec",
-        "u64",
-    );
+    let resident_inventory_owners =
+        production_struct_named_type_storage(&production_sources, "O3LiveIssueResidentSequences");
     assert_eq!(
         resident_inventory_owners,
         vec![(PathBuf::from("src/o3_runtime_issue/state.rs"), 1)],
-        "persistent live issue resident sequence inventory must be unique",
+        "persistent live issue resident storage must have one dedicated owner",
     );
 
     let packet_inventory_owners = production_sources
@@ -7157,166 +7138,6 @@ fn production_struct_named_type_storage(
         .collect()
 }
 
-fn production_struct_named_generic_field_storage(
-    production: &[(PathBuf, String)],
-    field: &str,
-    outer: &str,
-    inner: &str,
-) -> Vec<(PathBuf, usize)> {
-    production
-        .iter()
-        .filter_map(|(path, source)| {
-            let count = production_struct_fields(source)
-                .iter()
-                .filter(|(name, field_type)| {
-                    name.as_deref() == Some(field)
-                        && rust_type_is_single_generic(field_type, outer, inner)
-                })
-                .count();
-            (count > 0).then(|| (path.clone(), count))
-        })
-        .collect()
-}
-
-fn production_struct_generic_field_storage(
-    production: &[(PathBuf, String)],
-    outer: &str,
-    inner: &str,
-) -> Vec<(PathBuf, usize)> {
-    production
-        .iter()
-        .filter_map(|(path, source)| {
-            let count = production_struct_fields(source)
-                .iter()
-                .filter(|(_, field_type)| rust_type_is_single_generic(field_type, outer, inner))
-                .count();
-            (count > 0).then(|| (path.clone(), count))
-        })
-        .collect()
-}
-
-fn production_struct_fields(source: &str) -> Vec<(Option<String>, String)> {
-    let mut fields = Vec::new();
-    for definition in production_struct_definitions(source) {
-        let code = production_rust_source(&definition);
-        let chars = code.chars().collect::<Vec<_>>();
-        let Some((open, close, named)) = rust_struct_storage(&chars) else {
-            continue;
-        };
-        let mut index = open + 1;
-        while index < close {
-            let field_end = rust_field_type_end(&chars, index, close);
-            if let Some(field) = rust_struct_field(&chars, index, field_end, named) {
-                fields.push(field);
-            }
-            index = field_end.saturating_add(1);
-        }
-    }
-    fields
-}
-
-fn rust_struct_storage(chars: &[char]) -> Option<(usize, usize, bool)> {
-    let close = chars
-        .iter()
-        .rposition(|character| !character.is_whitespace())?;
-    let (open_delimiter, close_delimiter, named) = match chars[close] {
-        '}' => ('{', '}', true),
-        ')' => ('(', ')', false),
-        _ => return None,
-    };
-    let open = chars.iter().enumerate().find_map(|(index, character)| {
-        (*character == open_delimiter
-            && matching_delimiter(chars, index, open_delimiter, close_delimiter) == Some(close))
-        .then_some(index)
-    })?;
-    Some((open, close, named))
-}
-
-fn rust_struct_field(
-    chars: &[char],
-    start: usize,
-    end: usize,
-    named: bool,
-) -> Option<(Option<String>, String)> {
-    let mut index = skip_rust_whitespace(chars, start);
-    while chars.get(index) == Some(&'#') {
-        let open = skip_rust_whitespace(chars, index + 1);
-        index = matching_delimiter(chars, open, '[', ']')? + 1;
-        index = skip_rust_whitespace(chars, index);
-    }
-    if let Some((visibility, visibility_end)) = rust_identifier_at(chars, index) {
-        if visibility == "pub" {
-            index = skip_rust_whitespace(chars, visibility_end);
-            if chars.get(index) == Some(&'(') {
-                index = matching_delimiter(chars, index, '(', ')')? + 1;
-            }
-            index = skip_rust_whitespace(chars, index);
-        }
-    }
-    let name = if named {
-        let (name, name_end) = rust_identifier_at(chars, index)?;
-        let colon = skip_rust_whitespace(chars, name_end);
-        (chars.get(colon) == Some(&':')).then_some(())?;
-        index = skip_rust_whitespace(chars, colon + 1);
-        Some(name)
-    } else {
-        None
-    };
-    let type_end = (index..end)
-        .rev()
-        .find(|candidate| !chars[*candidate].is_whitespace())?
-        + 1;
-    (index < type_end).then(|| (name, chars[index..type_end].iter().collect()))
-}
-
-fn rust_field_type_end(chars: &[char], start: usize, struct_close: usize) -> usize {
-    let (mut angle, mut paren, mut bracket, mut brace) = (0_u32, 0_u32, 0_u32, 0_u32);
-    for (index, character) in chars
-        .iter()
-        .copied()
-        .enumerate()
-        .take(struct_close)
-        .skip(start)
-    {
-        match character {
-            '<' => angle += 1,
-            '>' => angle = angle.saturating_sub(1),
-            '(' => paren += 1,
-            ')' => paren = paren.saturating_sub(1),
-            '[' => bracket += 1,
-            ']' => bracket = bracket.saturating_sub(1),
-            '{' => brace += 1,
-            '}' => brace = brace.saturating_sub(1),
-            ',' if angle == 0 && paren == 0 && bracket == 0 && brace == 0 => return index,
-            _ => {}
-        }
-    }
-    struct_close
-}
-
-fn rust_type_is_single_generic(source: &str, outer: &str, inner: &str) -> bool {
-    let code = production_rust_source(source);
-    let chars = code.chars().collect::<Vec<_>>();
-    let start = skip_rust_whitespace(&chars, 0);
-    let Some((identifier, end)) = rust_identifier_at(&chars, start) else {
-        return false;
-    };
-    let open = skip_rust_whitespace(&chars, end);
-    if identifier != outer || chars.get(open) != Some(&'<') {
-        return false;
-    }
-    let Some(close) = matching_delimiter(&chars, open, '<', '>') else {
-        return false;
-    };
-    let argument_start = skip_rust_whitespace(&chars, open + 1);
-    let Some((argument, argument_end)) = rust_identifier_at(&chars, argument_start) else {
-        return false;
-    };
-    argument == inner
-        && skip_rust_whitespace(&chars, argument_end) == close
-        && skip_rust_whitespace(&chars, close + 1) == chars.len()
-}
-
 fn production_renamed_use_aliases(source: &str, protected_names: &[&str]) -> Vec<String> {
     let code = production_rust_source(source);
     let chars = code.chars().collect::<Vec<_>>();
@@ -8090,43 +7911,40 @@ fn query() -> Option<O3ProducerForwardedScalarDescendant> { None }\n";
 }
 
 #[test]
-fn source_policy_helper_structurally_detects_vec_u64_struct_fields() {
+fn source_policy_helper_detects_dedicated_live_issue_resident_storage() {
     let state_path = PathBuf::from("src/o3_runtime_issue/state.rs");
-    let whitespace = vec![(
+    let canonical = vec![(
         state_path.clone(),
-        production_rust_source("struct O3LiveIssueState { resident_sequences : Vec < u64 >, }"),
+        production_rust_source(
+            "struct O3LiveIssueState { resident_sequences: O3LiveIssueResidentSequences, }",
+        ),
     )];
     assert_eq!(
-        production_struct_generic_field_storage(&whitespace, "Vec", "u64"),
+        production_struct_named_type_storage(&canonical, "O3LiveIssueResidentSequences"),
         [(state_path.clone(), 1)],
     );
 
-    let renamed = vec![(
+    let duplicate = vec![(
         state_path.clone(),
-        production_rust_source("struct O3LiveIssueState { queued_sequences: Vec<u64>, }"),
+        production_rust_source(
+            "struct O3LiveIssueState { resident_sequences: O3LiveIssueResidentSequences, queued_sequences: O3LiveIssueResidentSequences, }",
+        ),
+    )];
+    let duplicate_storage =
+        production_struct_named_type_storage(&duplicate, "O3LiveIssueResidentSequences");
+    assert_eq!(duplicate_storage, [(state_path.clone(), 2)]);
+    assert_ne!(duplicate_storage, [(state_path.clone(), 1)]);
+
+    let vec_spelling_noise = vec![(
+        state_path,
+        production_rust_source(
+            "type SequenceRows = Vec<u64>; struct O3LiveIssueState { resident_sequences: O3LiveIssueResidentSequences, qualified: std::vec::Vec<u64>, aliased: SequenceRows, }",
+        ),
     )];
     assert_eq!(
-        production_struct_generic_field_storage(&renamed, "Vec", "u64"),
-        [(state_path.clone(), 1)],
+        production_struct_named_type_storage(&vec_spelling_noise, "O3LiveIssueResidentSequences",),
+        [(PathBuf::from("src/o3_runtime_issue/state.rs"), 1)],
     );
-
-    let second_inventory = vec![(
-        state_path.clone(),
-        production_rust_source(
-            "struct O3LiveIssueState { resident_sequences: Vec<u64>, queued_sequences: Vec<u64>, }",
-        ),
-    )];
-    let second_storage = production_struct_generic_field_storage(&second_inventory, "Vec", "u64");
-    assert_eq!(second_storage, [(state_path.clone(), 2)],);
-    assert_ne!(second_storage, [(state_path, 1)]);
-
-    let unrelated = vec![(
-        PathBuf::from("src/unrelated.rs"),
-        production_rust_source(
-            "type Sequences = Vec<u64>; fn sequences() -> Vec<u64> { Vec::new() }",
-        ),
-    )];
-    assert!(production_struct_generic_field_storage(&unrelated, "Vec", "u64").is_empty());
 }
 
 #[test]

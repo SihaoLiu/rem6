@@ -77,6 +77,47 @@ impl O3LiveIssueHeadReservation {
 }
 
 impl O3RuntimeState {
+    pub(in crate::o3_runtime) fn enqueue_bound_live_issue_sequence_at(
+        &mut self,
+        sequence: u64,
+        tick: u64,
+    ) -> bool {
+        let Some(rob) = self
+            .snapshot
+            .reorder_buffer
+            .iter()
+            .copied()
+            .find(|entry| entry.is_live_staged() && entry.sequence() == sequence)
+        else {
+            return false;
+        };
+        if self
+            .live_speculative_executions
+            .iter()
+            .any(|issued| issued.sequence == sequence)
+        {
+            return true;
+        }
+        let pending = self.pending_data_addresses.find_sequence(sequence);
+        if pending.is_some_and(|row| row.materialized.is_some()) {
+            return true;
+        }
+        let Some(packet) = self.live_staged_issue_packet(sequence) else {
+            return false;
+        };
+        let issue_class = if pending.is_some() {
+            Some(O3LiveIssueTraceClass::MemoryAgu)
+        } else {
+            queue::live_issue_trace_class(packet.instruction())
+        };
+        let Some(issue_class) = issue_class else {
+            return true;
+        };
+        self.live_issue
+            .enqueue_at(sequence, rob.pc(), issue_class, tick);
+        true
+    }
+
     pub(crate) fn live_data_access_head_reservation(
         &self,
         fetch_request: MemoryRequestId,
