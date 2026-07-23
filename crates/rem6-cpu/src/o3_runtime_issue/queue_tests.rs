@@ -13,8 +13,8 @@ fn live_issue_queue_packet_binding_is_idempotent_and_exact() {
     let decoded = decoded(instruction);
     let requests = [request(11)];
 
-    assert!(runtime.bind_live_staged_issue_packet(Address::new(BRANCH_PC), decoded, &requests,));
-    assert!(runtime.bind_live_staged_issue_packet(Address::new(BRANCH_PC), decoded, &requests,));
+    assert!(runtime.bind_live_staged_issue_packet(Address::new(BRANCH_PC), decoded, &requests, 20,));
+    assert!(runtime.bind_live_staged_issue_packet(Address::new(BRANCH_PC), decoded, &requests, 20,));
 
     let packet = runtime
         .live_staged_issue_packet(sequence)
@@ -37,17 +37,20 @@ fn live_issue_queue_packet_rebinding_rejects_any_identity_change() {
         Address::new(BRANCH_PC),
         original,
         &original_requests,
+        20,
     ));
 
     assert!(!runtime.bind_live_staged_issue_packet(
         Address::new(BRANCH_PC),
         decoded(addi(4, 0, 1)),
         &original_requests,
+        20,
     ));
     assert!(!runtime.bind_live_staged_issue_packet(
         Address::new(BRANCH_PC),
         original,
         &[request(12)],
+        20,
     ));
 
     let packet = runtime.live_staged_issue_packet(sequence).unwrap();
@@ -146,6 +149,7 @@ fn live_issue_queue_excludes_unsupported_bound_packets() {
             Address::new(pc),
             decoded,
             &[request(request_sequence)],
+            20,
         ));
     }
 
@@ -300,6 +304,7 @@ fn bind_queue_row(
         Address::new(pc),
         decoded(instruction),
         &[request(request_sequence)],
+        20,
     ));
 }
 
@@ -359,6 +364,7 @@ fn stage_queue_pending_row(runtime: &mut O3RuntimeState) -> (O3LiveIssueHeadRese
             load.fetch().request_id(),
             vec![pending],
             std::iter::empty::<(Address, RiscvInstruction)>(),
+            0,
         ),
         1,
     );

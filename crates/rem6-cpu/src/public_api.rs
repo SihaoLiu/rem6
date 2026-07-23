@@ -82,6 +82,7 @@ pub use crate::o3_pipeline::{
     O3WritebackTransferPolicy, O3WritebackTransferSnapshot,
 };
 pub use crate::o3_runtime::{
+    O3LiveIssueTelemetry, O3LiveIssueTraceAction, O3LiveIssueTraceClass, O3LiveIssueTraceRecord,
     O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry,
     O3RuntimeCheckpointPayload, O3RuntimeError, O3RuntimeSnapshot, O3RuntimeStats,
     O3RuntimeWritebackReservation, RiscvO3WritebackDebugState,

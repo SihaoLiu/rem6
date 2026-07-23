@@ -3821,6 +3821,144 @@ fn disjoint_store_prefix_uses_ordered_store_ownership_not_overlap_connectivity()
 }
 
 #[test]
+fn o3_persistent_live_issue_state_owns_membership() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_path = crate_dir.join("src/o3_runtime.rs");
+    let issue_path = crate_dir.join("src/o3_runtime_issue.rs");
+    let issue_tests_path = crate_dir.join("src/o3_runtime_issue_tests.rs");
+    let state_path = crate_dir.join("src/o3_runtime_issue/state.rs");
+    let state_tests_path = crate_dir.join("src/o3_runtime_issue/state_tests.rs");
+    let identity_path = crate_dir.join("src/o3_runtime_live_window/issue_identity.rs");
+    let checkpoint_path = crate_dir.join("src/o3_runtime_checkpoint.rs");
+    let root_source = fs::read_to_string(&root_path).unwrap();
+    let root = production_rust_source(&root_source);
+    let issue_source = fs::read_to_string(&issue_path).unwrap();
+    let issue_tests_source = fs::read_to_string(&issue_tests_path).unwrap();
+    let checkpoint = production_rust_source(&fs::read_to_string(checkpoint_path).unwrap());
+
+    assert!(
+        state_path.is_file(),
+        "missing persistent live issue state owner"
+    );
+    assert!(
+        state_tests_path.is_file(),
+        "missing focused persistent live issue state tests"
+    );
+    assert!(line_count(&state_path) <= MAX_O3_RUNTIME_ISSUE_STATE_LINES);
+    assert!(line_count(&state_tests_path) <= MAX_O3_RUNTIME_ISSUE_STATE_TEST_LINES);
+    assert_eq!(
+        path_owned_module_declaration_count(&issue_source, "o3_runtime_issue/state.rs", "state",),
+        1,
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &issue_tests_source,
+            "o3_runtime_issue/state_tests.rs",
+            "live_issue_state",
+        ),
+        1,
+    );
+
+    let production_sources = rust_source_files(&crate_dir.join("src"))
+        .into_iter()
+        .filter_map(|path| {
+            let relative = path.strip_prefix(crate_dir).unwrap().to_path_buf();
+            (!is_test_only_rust_source(&relative)).then(|| {
+                let source = fs::read_to_string(path).unwrap();
+                (relative, production_rust_source(&source))
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        production_struct_named_type_storage(&production_sources, "O3LiveIssueState"),
+        vec![(PathBuf::from("src/o3_runtime.rs"), 1)],
+        "O3RuntimeState must be the sole persistent O3LiveIssueState owner",
+    );
+    let runtime_state = source_section(
+        &root,
+        "pub struct O3RuntimeState {",
+        "struct O3PendingDataAccess",
+    );
+    assert_eq!(
+        runtime_state
+            .matches("live_issue: O3LiveIssueState")
+            .count(),
+        1
+    );
+    assert!(!root.contains("live_issue_cycle_ticks"));
+
+    let resident_inventory_owners = production_sources
+        .iter()
+        .filter_map(|(relative, source)| {
+            let count = production_struct_definitions(source)
+                .iter()
+                .filter(|definition| definition.contains("resident_sequences: Vec<u64>"))
+                .count();
+            (count > 0).then(|| (relative.clone(), count))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        resident_inventory_owners,
+        vec![(PathBuf::from("src/o3_runtime_issue/state.rs"), 1)],
+        "persistent live issue resident sequence inventory must be unique",
+    );
+
+    let packet_inventory_owners = production_sources
+        .iter()
+        .filter_map(|(relative, source)| {
+            let count = production_struct_definitions(source)
+                .iter()
+                .map(|definition| {
+                    let storage = production_definition_named_type_storage_count(
+                        definition,
+                        "O3LiveIssuePacket",
+                    );
+                    let transient_queue_entry = relative
+                        == Path::new("src/o3_runtime_issue/queue.rs")
+                        && production_defines_exact_named_item(
+                            definition,
+                            "struct",
+                            "O3LiveIssueQueueEntry",
+                        )
+                        && storage == 1;
+                    if transient_queue_entry {
+                        0
+                    } else {
+                        storage
+                    }
+                })
+                .sum::<usize>();
+            (count > 0).then(|| (relative.clone(), count))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        packet_inventory_owners,
+        vec![(
+            identity_path.strip_prefix(crate_dir).unwrap().to_path_buf(),
+            1,
+        )],
+        "bound issue packets must remain unique to staged issue identity storage",
+    );
+
+    let checkpoint_snapshot = source_section(
+        &root,
+        "pub struct O3RuntimeSnapshot {",
+        "impl O3RuntimeSnapshot",
+    );
+    for forbidden in [
+        "O3LiveIssueState",
+        "O3LiveIssueTelemetry",
+        "O3LiveIssueTraceRecord",
+        "resident_sequences",
+    ] {
+        assert!(
+            !checkpoint.contains(forbidden) && !checkpoint_snapshot.contains(forbidden),
+            "checkpoint payloads must not persist transient live issue evidence `{forbidden}`",
+        );
+    }
+}
+
+#[test]
 fn o3_live_issue_queue_owns_candidate_inventory() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let issue_path = crate_dir.join("src/o3_runtime_issue.rs");
@@ -4643,7 +4781,7 @@ fn o3_runtime_writeback_lives_in_focused_module() {
     );
     assert_eq!(
         runtime_state.matches("BTreeSet<u64>").count(),
-        5,
+        4,
         "O3RuntimeState gained an unreviewed sequence-set authority"
     );
     assert!(

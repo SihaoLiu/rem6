@@ -90,6 +90,7 @@ impl TwoPendingIssueFixture {
                 head.fetch().request_id(),
                 pending,
                 [(Address::new(SUFFIX_PC), decode(addi(8, 7, 1)).instruction())],
+                ISSUE_TICK,
             ),
             3
         );

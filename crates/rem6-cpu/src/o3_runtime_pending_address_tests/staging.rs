@@ -113,6 +113,7 @@ fn pending_address_rejects_a_second_owner() {
                 reg(5),
             )],
             [],
+            0,
         ),
         0
     );

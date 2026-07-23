@@ -12,10 +12,16 @@ pub(in crate::o3_runtime) mod calendar;
 mod pending_address;
 #[path = "o3_runtime_issue/queue.rs"]
 pub(in crate::o3_runtime) mod queue;
+#[path = "o3_runtime_issue/state.rs"]
+mod state;
 use calendar::{O3LiveIssueCalendar, O3LiveIssueTickDecision};
 pub(crate) use dependency::O3LiveIssueDependencyTable;
 use queue::{
     live_issue_op_class, O3LiveIssueQueue, O3LiveIssueQueueCapture, O3LiveSpeculativeIssueCandidate,
+};
+pub(in crate::o3_runtime) use state::O3LiveIssueState;
+pub use state::{
+    O3LiveIssueTelemetry, O3LiveIssueTraceAction, O3LiveIssueTraceClass, O3LiveIssueTraceRecord,
 };
 
 #[derive(Clone)]
@@ -132,6 +138,7 @@ impl O3RuntimeState {
                 tick: head.issue_tick,
             })?;
         let consumes_writeback_slot = staged_rename_entry(entry).is_some();
+        let issue_class = live_issue_trace_class(execution.instruction());
         let (admitted_writeback_tick, writeback_slot) = self.reserve_fixed_fu_writeback(
             head.sequence(),
             raw_ready_tick,
@@ -158,6 +165,15 @@ impl O3RuntimeState {
             });
         self.live_speculative_executions
             .sort_by_key(|recorded| recorded.sequence);
+        if let Some(issue_class) = issue_class {
+            self.live_issue.remove_exact_at(
+                head.sequence(),
+                O3LiveIssueTraceAction::Selected,
+                entry.pc(),
+                issue_class,
+                head.issue_tick,
+            );
+        }
         Ok(true)
     }
 
@@ -371,7 +387,7 @@ impl O3RuntimeState {
         dependency_blocked_rows: usize,
         total_rows_at_tick: usize,
     ) {
-        let new_cycle = self.live_issue_cycle_ticks.insert(tick);
+        let new_cycle = self.live_issue.begin_compatibility_cycle_at(tick);
         self.stats.record_issue_cycle(
             new_cycle,
             issued_rows,

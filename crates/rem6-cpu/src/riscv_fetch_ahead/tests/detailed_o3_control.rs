@@ -72,6 +72,7 @@ pub(super) fn live_same_link_core(with_target_fetch: bool) -> (RiscvCore, RiscvC
             Address::new(0x8004),
             producer_decoded,
             &[request(1)],
+            20,
         ));
         assert!(state
             .o3_runtime
@@ -99,6 +100,7 @@ pub(super) fn live_same_link_core(with_target_fetch: bool) -> (RiscvCore, RiscvC
             Address::new(0x8008),
             call_decoded,
             &[request(2)],
+            21,
         ));
         assert!(state
             .o3_runtime

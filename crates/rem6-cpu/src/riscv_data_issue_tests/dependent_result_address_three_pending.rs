@@ -81,6 +81,7 @@ impl ThreePendingIssueFixture {
                 head.fetch().request_id(),
                 pending,
                 [],
+                ISSUE_TICK,
             ),
             3
         );

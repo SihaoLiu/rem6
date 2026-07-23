@@ -17,7 +17,7 @@ fn stage_pending(
 ) -> usize {
     fixture
         .runtime
-        .stage_pending_data_address_window(fixture.head_fetch, pending, suffix)
+        .stage_pending_data_address_window(fixture.head_fetch, pending, suffix, 0)
 }
 fn schedule(
     runtime: &mut O3RuntimeState,
@@ -94,6 +94,7 @@ fn ready_two_pending_issue(
         Address::new(SCALAR_SUFFIX_PC),
         decoded(addi(8, 5, 1)),
         &[request(13)],
+        0,
     ));
     let head = fixture
         .runtime

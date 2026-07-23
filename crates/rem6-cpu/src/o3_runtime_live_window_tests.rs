@@ -374,7 +374,6 @@ fn scalar_load_head_discard_removes_every_younger_row() {
             (Address::new(0x800c), add(7, 5, 6)),
         ],
     );
-
     runtime.discard_live_staged_instructions();
 
     assert!(runtime.snapshot().reorder_buffer().is_empty());
@@ -389,6 +388,7 @@ fn retire_live(runtime: &mut O3RuntimeState, execution: &RiscvCpuExecutionEvent,
         Address::new(execution.execution().pc()),
         decoded(execution.instruction()),
         &consumed_requests,
+        retire_tick,
     ));
     runtime.retire_live_staged_instruction(execution, &consumed_requests, retire_tick);
 }

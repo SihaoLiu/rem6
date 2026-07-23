@@ -18,6 +18,7 @@ pub(super) fn recorded_linked_scalar_runtime(
             Address::new(0x9000),
             decoded(scalar),
             &[request(13)],
+            0,
         )
         .expect("linked-call scalar descendant append");
     let candidate = runtime
@@ -89,6 +90,7 @@ fn producer_forwarded_scalar_return_waits_for_data_head_retirement() {
             Address::new(0x9004),
             decoded(return_jump),
             &[request(14)],
+            0,
         ),
         None
     );
@@ -101,6 +103,7 @@ fn producer_forwarded_scalar_return_waits_for_data_head_retirement() {
             Address::new(0x9004),
             decoded(return_jump),
             &[request(14)],
+            0,
         )
         .expect("post-head scalar-sequential return append");
     assert_eq!(runtime.snapshot.reorder_buffer.len(), 4);
@@ -146,6 +149,7 @@ fn producer_forwarded_split_link_scalar_return_uses_link_destination() {
             Address::new(0x9004),
             decoded(return_jump),
             &[request(14)],
+            0,
         )
         .is_some());
 }
@@ -186,6 +190,7 @@ fn producer_forwarded_scalar_return_rejects_nonordinary_shapes() {
                 pc,
                 decoded(instruction),
                 &[request(14)],
+                0,
             ),
             None,
             "unexpected scalar-return admission for {instruction:?} at {pc:?}"
@@ -212,6 +217,7 @@ fn producer_forwarded_scalar_lineage_fails_closed_after_identity_change() {
             Address::new(0x9004),
             decoded(jalr_return(1)),
             &[request(14)],
+            0,
         ),
         None
     );

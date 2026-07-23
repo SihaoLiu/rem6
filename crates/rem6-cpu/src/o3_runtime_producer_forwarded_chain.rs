@@ -521,6 +521,7 @@ impl O3RuntimeState {
         pc: Address,
         decoded: RiscvDecodedInstruction,
         consumed_requests: &[MemoryRequestId],
+        admission_tick: u64,
     ) -> Option<u64> {
         let instruction = decoded.instruction();
         let current = self.producer_forwarded_scalar_return_issue_context()?.0;
@@ -534,7 +535,12 @@ impl O3RuntimeState {
             return None;
         }
         let sequence = self.stage_live_instruction(pc, instruction, 0)?;
-        if !self.bind_live_staged_issue_packet_at_sequence(sequence, decoded, consumed_requests) {
+        if !self.bind_live_staged_issue_packet_at_sequence(
+            sequence,
+            decoded,
+            consumed_requests,
+            admission_tick,
+        ) {
             self.discard_live_staged_window_from(sequence);
             return None;
         }

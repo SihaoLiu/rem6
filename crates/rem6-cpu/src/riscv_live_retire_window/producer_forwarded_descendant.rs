@@ -57,18 +57,6 @@ fn stage_o3_producer_forwarded_control_descendant_inner(
     {
         return false;
     }
-    if state
-        .o3_runtime
-        .append_producer_forwarded_control_descendant(
-            authority,
-            descendant.pc(),
-            descendant_decoded,
-            descendant.consumed_requests(),
-        )
-        .is_none()
-    {
-        return false;
-    }
     let issue_tick = descendant
         .consumed_requests()
         .iter()
@@ -82,6 +70,19 @@ fn stage_o3_producer_forwarded_control_descendant_inner(
         })
         .max()
         .unwrap_or_else(|| descendant.fetch().tick());
+    if state
+        .o3_runtime
+        .append_producer_forwarded_control_descendant(
+            authority,
+            descendant.pc(),
+            descendant_decoded,
+            descendant.consumed_requests(),
+            issue_tick,
+        )
+        .is_none()
+    {
+        return false;
+    }
     schedule_o3_live_speculative_younger_executions(
         state,
         head,

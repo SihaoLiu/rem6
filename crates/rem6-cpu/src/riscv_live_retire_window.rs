@@ -702,6 +702,7 @@ fn stage_o3_live_retire_window(
         pc,
         decoded,
         &head_instruction.consumed_requests,
+        head_issue_tick,
     ) {
         return Ok(None);
     }
@@ -829,6 +830,7 @@ pub(crate) fn stage_o3_producer_forwarded_scalar_return_descendant(
     };
     let decoded = returned.decoded();
     let instruction = decoded.instruction();
+    let issue_tick = returned.fetch().tick().max(retirement_tick);
     if crate::o3_runtime::o3_exact_link_return_source(instruction) != parent.link_destination()
         || state
             .o3_runtime
@@ -837,6 +839,7 @@ pub(crate) fn stage_o3_producer_forwarded_scalar_return_descendant(
                 returned.pc(),
                 decoded,
                 returned.consumed_requests(),
+                issue_tick,
             )
             .is_none()
     {
@@ -846,7 +849,7 @@ pub(crate) fn stage_o3_producer_forwarded_scalar_return_descendant(
         state,
         head,
         std::slice::from_ref(&returned),
-        returned.fetch().tick().max(retirement_tick),
+        issue_tick,
     )
     .expect("producer-forwarded scalar-return writeback reservation");
     state.producer_forwarded_scalar_continuation = None;
@@ -937,6 +940,7 @@ fn schedule_o3_live_speculative_younger_executions(
             younger.pc,
             younger.decoded,
             &younger.consumed_requests,
+            issue_tick,
         ) {
             if pending_window {
                 state.o3_runtime.discard_pending_data_address();
@@ -1623,6 +1627,7 @@ mod tests {
             Address::new(0x8004),
             RiscvInstruction::decode_with_length(raw).unwrap(),
             &[request(7, 11), request(7, 12)],
+            0,
         ));
         state
             .o3_runtime

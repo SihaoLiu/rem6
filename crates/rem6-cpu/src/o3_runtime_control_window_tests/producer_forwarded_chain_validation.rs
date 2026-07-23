@@ -17,6 +17,7 @@ fn executed_direct_return_runtime(
             Address::new(0x9000),
             decoded(instruction),
             &[request(13)],
+            0,
         )
         .expect("same-link direct return append");
     let candidate = runtime
@@ -45,6 +46,7 @@ fn executed_scalar_return_runtime() -> (O3RuntimeState, u64) {
             Address::new(0x9004),
             decoded(instruction),
             &[request(14)],
+            0,
         )
         .expect("linked-call scalar return append");
     let candidate = runtime

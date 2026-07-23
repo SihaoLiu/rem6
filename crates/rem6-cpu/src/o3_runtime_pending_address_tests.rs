@@ -71,6 +71,7 @@ impl PendingAddressFixture {
             self.head_fetch,
             vec![self.pending.clone()],
             self.suffix.clone(),
+            0,
         )
     }
 }

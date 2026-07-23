@@ -85,6 +85,7 @@ pub(super) fn stage_dependent_result_address_window(
         suffix
             .iter()
             .map(|instruction| (instruction.pc(), instruction.decoded().instruction())),
+        issue_tick,
     );
     if staged != expected_staged {
         state.o3_runtime.discard_pending_data_address();

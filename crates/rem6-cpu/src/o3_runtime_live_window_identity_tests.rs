@@ -294,11 +294,13 @@ fn wrong_same_pc_retirement_does_not_claim_bound_live_staged_row() {
         Address::new(0x8000),
         decoded(div_x3()),
         &[request(1)],
+        29,
     ));
     assert!(runtime.bind_live_staged_issue_packet(
         Address::new(0x8004),
         decoded(younger_instruction),
         &[request(2)],
+        29,
     ));
     assert_eq!(
         runtime.live_staged_sequence_for_fetch_identity(
@@ -324,14 +326,12 @@ fn wrong_same_pc_retirement_does_not_claim_bound_live_staged_row() {
         ),
         None
     );
-
     let divide = execution_event(div_x3(), 0x8000, 1, 3);
     runtime.retire_live_staged_instruction(&divide, &[request(1)], 29);
     let staged_row = runtime.snapshot.reorder_buffer[0];
     let stale_destination = staged_row.destination().unwrap();
     let retired_before = runtime.live_retired_instructions.clone();
     let committed_rename_before = runtime.snapshot.rename_map.clone();
-
     let wrong_instruction = addi(4, 1);
     let wrong = execution_event(wrong_instruction, 0x8004, 2, 4);
     runtime.retire_live_staged_instruction(&wrong, &[request(2)], 30);
@@ -380,13 +380,14 @@ fn restored_live_staged_row_without_transient_identity_fails_closed() {
         Address::new(0x8000),
         decoded(div_x3()),
         &[request(1)],
+        29,
     ));
     assert!(runtime.bind_live_staged_issue_packet(
         Address::new(0x8004),
         decoded(younger_instruction),
         &[request(2)],
+        29,
     ));
-
     let checkpoint = runtime.checkpoint_payload();
     runtime.restore_checkpoint_payload(checkpoint).unwrap();
     assert!(runtime.live_staged_fetch_identities.is_empty());
@@ -398,7 +399,6 @@ fn restored_live_staged_row_without_transient_identity_fails_closed() {
         .collect::<Vec<_>>();
     let retired_before = runtime.live_retired_instructions.clone();
     let committed_rename_before = runtime.snapshot.rename_map.clone();
-
     let younger = execution_event(younger_instruction, 0x8004, 2, 4);
     runtime.retire_live_staged_instruction(&younger, &[request(2)], 30);
     assert_eq!(runtime.snapshot.reorder_buffer.len(), 1);

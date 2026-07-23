@@ -99,10 +99,14 @@ use o3_runtime_helpers::{
     rob_commit_tick, validate_live_staged_rob_metadata, validate_runtime_snapshot, validate_unique,
     O3RuntimeUniqueKey,
 };
-use o3_runtime_issue::queue::O3LiveSpeculativeIssueCandidate;
+use o3_runtime_issue::queue::{live_issue_trace_class, O3LiveSpeculativeIssueCandidate};
 pub(crate) use o3_runtime_issue::O3LiveIssueHeadReservation;
+use o3_runtime_issue::O3LiveIssueState;
 #[cfg(test)]
 pub(crate) use o3_runtime_issue::{O3LiveIssueDependencyTable, O3PreparedLiveIssue};
+pub use o3_runtime_issue::{
+    O3LiveIssueTelemetry, O3LiveIssueTraceAction, O3LiveIssueTraceClass, O3LiveIssueTraceRecord,
+};
 use o3_runtime_live_window::{
     staged_rename_entry, O3LiveRetiredInstruction, O3LiveStagedFetchIdentity,
 };
@@ -244,7 +248,7 @@ pub struct O3RuntimeState {
     dependency_producers_with_consumers: BTreeSet<O3PhysicalRegisterId>,
     live_retired_instructions: Vec<O3LiveRetiredInstruction>,
     live_speculative_executions: Vec<O3LiveSpeculativeExecution>,
-    live_issue_cycle_ticks: BTreeSet<u64>,
+    live_issue: O3LiveIssueState,
     writeback_calendar: O3WritebackReservationCalendar,
     published_writeback_sequences: BTreeSet<u64>,
     live_writeback_counted_sequences: BTreeSet<u64>,
@@ -294,7 +298,7 @@ impl O3RuntimeState {
         self.dependency_producers_with_consumers.clear();
         self.live_retired_instructions.clear();
         self.live_speculative_executions.clear();
-        self.live_issue_cycle_ticks.clear();
+        self.live_issue = O3LiveIssueState::default();
         self.clear_all_writeback_state();
         self.seed_finalized_writeback_stats_from_aggregate();
         self.live_control_lineages.clear();
@@ -332,6 +336,22 @@ impl O3RuntimeState {
 
     pub fn trace_records(&self) -> &[O3RuntimeTraceRecord] {
         &self.trace_records
+    }
+
+    pub(crate) fn live_issue_service_tick(&self) -> Option<u64> {
+        self.live_issue.requested_service_tick()
+    }
+
+    pub(crate) fn live_issue_is_quiescent(&self) -> bool {
+        self.live_issue.is_quiescent()
+    }
+
+    pub fn live_issue_telemetry(&self) -> O3LiveIssueTelemetry {
+        self.live_issue.telemetry()
+    }
+
+    pub fn live_issue_trace_records(&self) -> &[O3LiveIssueTraceRecord] {
+        self.live_issue.trace_records()
     }
 
     pub fn take_trace_updates(&mut self, start: usize) -> (usize, Vec<O3RuntimeTraceRecord>) {
@@ -388,7 +408,7 @@ impl O3RuntimeState {
 
     pub fn reset_stats(&mut self) {
         self.stats = O3RuntimeStats::default();
-        self.live_issue_cycle_ticks.clear();
+        self.live_issue.reset_stats_baseline();
         self.reset_writeback_stats_ownership();
         let live_rob_occupancy = self
             .live_retired_instructions
@@ -635,7 +655,7 @@ impl Default for O3RuntimeState {
             dependency_producers_with_consumers: BTreeSet::new(),
             live_retired_instructions: Vec::new(),
             live_speculative_executions: Vec::new(),
-            live_issue_cycle_ticks: BTreeSet::new(),
+            live_issue: O3LiveIssueState::default(),
             writeback_calendar: O3WritebackReservationCalendar::default(),
             published_writeback_sequences: BTreeSet::new(),
             live_writeback_counted_sequences: BTreeSet::new(),

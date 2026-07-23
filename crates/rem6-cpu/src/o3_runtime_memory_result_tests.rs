@@ -1053,7 +1053,12 @@ fn record_fixed_fu_owner(
         None,
     );
     let head = O3LiveIssueHeadReservation::for_instruction(sequence, issue_tick, instruction);
-    assert!(runtime.bind_live_staged_issue_packet(Address::new(pc), decoded, &[fetch_request]));
+    assert!(runtime.bind_live_staged_issue_packet(
+        Address::new(pc),
+        decoded,
+        &[fetch_request],
+        issue_tick,
+    ));
     assert!(runtime
         .record_live_issue_head_execution(head, &[fetch_request], execution.clone())
         .unwrap());
@@ -1080,7 +1085,12 @@ fn record_speculative_owner(
         vec![RegisterWrite::new(reg(rd), value)],
         None,
     );
-    assert!(runtime.bind_live_staged_issue_packet(Address::new(pc), decoded, &[fetch_request]));
+    assert!(runtime.bind_live_staged_issue_packet(
+        Address::new(pc),
+        decoded,
+        &[fetch_request],
+        earliest_issue_tick,
+    ));
     assert!(runtime
         .record_live_speculative_execution(
             candidate,

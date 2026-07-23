@@ -112,6 +112,7 @@ fn detailed_live_same_link_control_uses_runtime_forwarded_target() {
             Address::new(0x9000),
             decoded(descendant),
             &[request(3)],
+            0,
         )
         .is_some());
     assert_eq!(

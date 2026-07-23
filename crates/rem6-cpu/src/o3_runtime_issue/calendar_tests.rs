@@ -362,6 +362,7 @@ fn stage_two_pending_loads(runtime: &mut O3RuntimeState, head_event: &RiscvCpuEx
             head_event.fetch().request_id(),
             pending,
             std::iter::empty::<(Address, RiscvInstruction)>(),
+            0,
         ),
         2
     );

@@ -16,6 +16,7 @@ impl O3RuntimeState {
         head_fetch: MemoryRequestId,
         pending: impl IntoIterator<Item = O3PendingDataAddressRequest>,
         suffix: impl IntoIterator<Item = (Address, RiscvInstruction)>,
+        admission_tick: u64,
     ) -> usize {
         if !self.pending_data_addresses.is_empty() {
             return 0;
@@ -32,9 +33,12 @@ impl O3RuntimeState {
             .saturating_sub(1 + pending.len());
         let suffix = suffix.into_iter().take(suffix_limit).collect::<Vec<_>>();
         let mut staged = self.clone();
-        let Some(staged_count) =
-            staged.try_stage_pending_data_address_window(head_fetch, pending, suffix)
-        else {
+        let Some(staged_count) = staged.try_stage_pending_data_address_window(
+            head_fetch,
+            pending,
+            suffix,
+            admission_tick,
+        ) else {
             return 0;
         };
         *self = staged;
@@ -46,6 +50,7 @@ impl O3RuntimeState {
         head_fetch: MemoryRequestId,
         pending: Vec<O3PendingDataAddressRequest>,
         suffix: Vec<(Address, RiscvInstruction)>,
+        admission_tick: u64,
     ) -> Option<usize> {
         let (head_destination, _) = self.pending_data_address_head_metadata(head_fetch)?;
         let pending_count = pending.len();
@@ -88,25 +93,10 @@ impl O3RuntimeState {
                 u32::from(pending_rd.index()),
                 physical_destination,
             );
-            if !self.bind_live_staged_issue_packet_at_sequence(
-                sequence,
-                pending.decoded,
-                &pending.consumed_requests,
-            ) {
-                return None;
-            }
-            self.snapshot
-                .load_store_queue
-                .push(O3LoadStoreQueueEntry::load(
-                    sequence,
-                    None,
-                    PENDING_DATA_ADDRESS_LSQ_BYTES,
-                ));
-            self.live_data_access_younger_sequences.insert(sequence);
             if !self.pending_data_addresses.try_push(O3PendingDataAddress {
                 sequence,
-                fetch: pending.fetch,
-                consumed_requests: pending.consumed_requests,
+                fetch: pending.fetch.clone(),
+                consumed_requests: pending.consumed_requests.clone(),
                 decoded: pending.decoded,
                 fetch_predecessor_request: pending.fetch_predecessor_request,
                 producer_register: pending.producer_register,
@@ -120,6 +110,22 @@ impl O3RuntimeState {
             }) {
                 return None;
             }
+            if !self.bind_live_staged_issue_packet_at_sequence(
+                sequence,
+                pending.decoded,
+                &pending.consumed_requests,
+                admission_tick,
+            ) {
+                return None;
+            }
+            self.snapshot
+                .load_store_queue
+                .push(O3LoadStoreQueueEntry::load(
+                    sequence,
+                    None,
+                    PENDING_DATA_ADDRESS_LSQ_BYTES,
+                ));
+            self.live_data_access_younger_sequences.insert(sequence);
             result_destinations.push(pending_rd);
             previous_consumed_request = Some(next_predecessor);
         }

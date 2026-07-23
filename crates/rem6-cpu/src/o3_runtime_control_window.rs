@@ -98,8 +98,11 @@ impl O3RuntimeState {
         execution: RiscvExecutionRecord,
     ) -> Result<bool, O3RuntimeError> {
         let issue_tick = candidate.issue_tick(issue_tick);
+        let sequence = candidate.sequence();
+        let pc = candidate.pc();
+        let issue_class = live_issue_trace_class(candidate.instruction());
         if !self
-            .live_staged_issue_packet(candidate.sequence())
+            .live_staged_issue_packet(sequence)
             .is_some_and(|packet| packet.matches_execution(&execution, consumed_requests))
             || !candidate.valid_recorded_execution(&execution)
         {
@@ -111,7 +114,7 @@ impl O3RuntimeState {
             ))
             .ok_or(O3RuntimeError::WritebackTickOverflow { tick: issue_tick })?;
         let (admitted_writeback_tick, writeback_slot) = self.reserve_fixed_fu_writeback(
-            candidate.sequence(),
+            sequence,
             raw_ready_tick,
             candidate.consumes_writeback_slot(),
         )?;
@@ -119,7 +122,7 @@ impl O3RuntimeState {
         self.live_speculative_executions
             .push(O3LiveSpeculativeExecution {
                 consumed_requests: consumed_requests.to_vec(),
-                sequence: candidate.sequence(),
+                sequence,
                 producer_sequences: candidate.producer_sequences().to_vec(),
                 issue_tick,
                 raw_ready_tick,
@@ -128,6 +131,15 @@ impl O3RuntimeState {
                 execution,
             });
         self.record_producer_forwarded_return_descendant();
+        if let Some(issue_class) = issue_class {
+            self.live_issue.remove_exact_at(
+                sequence,
+                O3LiveIssueTraceAction::Selected,
+                pc,
+                issue_class,
+                issue_tick,
+            );
+        }
         Ok(true)
     }
 

@@ -251,6 +251,7 @@ fn stage_future_pending_wake_with_head(runtime: &mut O3RuntimeState) -> RiscvCpu
             Address::new(pc),
             decoded(raw),
             &[request(sequence)],
+            0,
         ));
     }
     let head_execution = load_event(HEAD_PC, 10, 5, 2, 0x9000);

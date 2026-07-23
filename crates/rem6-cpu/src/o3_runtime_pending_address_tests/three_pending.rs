@@ -29,6 +29,7 @@ fn stage_three(fixture: &mut PendingAddressFixture, sources: [u8; 3]) -> usize {
         fixture.head_fetch,
         pending_three(sources),
         [],
+        0,
     )
 }
 

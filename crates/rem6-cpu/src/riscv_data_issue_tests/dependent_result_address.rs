@@ -83,6 +83,7 @@ impl PendingIssueFixture {
                         decode(add(8, 6, 7)).instruction()
                     ),
                 ],
+                ISSUE_TICK,
             ),
             3
         );

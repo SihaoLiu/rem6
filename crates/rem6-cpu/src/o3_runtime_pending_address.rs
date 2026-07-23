@@ -246,17 +246,27 @@ impl O3RuntimeState {
         {
             return Ok(false);
         }
+        let pc = pending.fetch.pc();
         let event =
             RiscvCpuExecutionEvent::new(pending.fetch, pending.decoded.instruction(), execution);
-        let Some(stored) = self.pending_data_addresses.find_sequence_mut(sequence) else {
-            return Ok(false);
-        };
-        if let Some(materialized) = &stored.materialized {
-            return Ok(stored.selected_issue_tick == Some(issue_tick) && materialized == &event);
+        {
+            let Some(stored) = self.pending_data_addresses.find_sequence_mut(sequence) else {
+                return Ok(false);
+            };
+            if let Some(materialized) = &stored.materialized {
+                return Ok(stored.selected_issue_tick == Some(issue_tick) && materialized == &event);
+            }
+            stored.requested_wake_tick = None;
+            stored.selected_issue_tick = Some(issue_tick);
+            stored.materialized = Some(event);
         }
-        stored.requested_wake_tick = None;
-        stored.selected_issue_tick = Some(issue_tick);
-        stored.materialized = Some(event);
+        self.live_issue.remove_exact_at(
+            sequence,
+            O3LiveIssueTraceAction::Selected,
+            pc,
+            O3LiveIssueTraceClass::MemoryAgu,
+            issue_tick,
+        );
         Ok(true)
     }
 

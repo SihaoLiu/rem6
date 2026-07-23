@@ -228,6 +228,7 @@ fn invalidated_descendant_reissue_counts_additional_authoritative_planner_activi
         Address::new(0x8008),
         decoded_instruction(child),
         &[request(31)],
+        42,
     ));
     runtime
         .schedule_live_speculative_issues(&RiscvHartState::new(0x8000), head, 42)

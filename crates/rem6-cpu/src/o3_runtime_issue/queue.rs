@@ -251,6 +251,10 @@ impl O3LiveSpeculativeIssueCandidate {
         self.scheduling.sequence
     }
 
+    pub(in crate::o3_runtime) const fn pc(&self) -> Address {
+        self.scheduling.pc
+    }
+
     pub(crate) fn producer_sequences(&self) -> &[u64] {
         &self.producer_sequences
     }
@@ -446,14 +450,13 @@ impl O3RuntimeState {
                 destination,
             }
         };
-        let control_sequence = self.pending_control_sequence_for(sequence);
         Some(O3LiveIssueSchedulingCandidate {
             sequence,
             pc,
             instruction,
             kind,
             op_class: live_issue_op_class(instruction),
-            control_dependency: control_sequence,
+            control_dependency: self.pending_control_sequence_for(sequence),
             data_producers: self.live_issue_source_producers(index, &sources),
         })
     }
@@ -553,6 +556,18 @@ pub(in crate::o3_runtime) fn live_issue_op_class(instruction: RiscvInstruction) 
     } else {
         O3IssueOpClass::IntAlu
     }
+}
+
+pub(in crate::o3_runtime) fn live_issue_trace_class(
+    instruction: RiscvInstruction,
+) -> Option<O3LiveIssueTraceClass> {
+    live_issue_instruction_is_supported(instruction).then_some(
+        match live_issue_op_class(instruction) {
+            O3IssueOpClass::Branch => O3LiveIssueTraceClass::Control,
+            O3IssueOpClass::IntMult => O3LiveIssueTraceClass::IntegerMulDiv,
+            _ => O3LiveIssueTraceClass::ScalarInteger,
+        },
+    )
 }
 
 fn live_issue_instruction_is_supported(instruction: RiscvInstruction) -> bool {

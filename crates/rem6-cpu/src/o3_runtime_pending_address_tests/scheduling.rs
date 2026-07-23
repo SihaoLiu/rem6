@@ -27,6 +27,7 @@ impl PendingAddressSchedulingFixture {
                 Address::new(pc),
                 decoded(raw),
                 &[request(sequence)],
+                0,
             ));
         }
         let head_execution = load_event(HEAD_PC, 10, 5, 2, 0x9000);

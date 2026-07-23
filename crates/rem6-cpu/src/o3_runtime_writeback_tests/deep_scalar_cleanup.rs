@@ -55,6 +55,7 @@ fn deep_runtime() -> (
             pc,
             decoded_addi(instruction),
             &[memory_request(100 + index as u64)],
+            31,
         ));
     }
     let head = runtime

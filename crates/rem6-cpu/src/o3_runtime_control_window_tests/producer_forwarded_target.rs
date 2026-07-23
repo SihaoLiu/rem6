@@ -173,7 +173,6 @@ fn live_same_link_control_exposes_exact_producer_forwarded_target() {
         runtime.record_producer_forwarded_control_target(forwarded, BranchSpeculationId::new(1),)
     );
     assert!(runtime.has_recorded_producer_forwarded_control_target(consumer_sequence));
-
     let original_ready_tick = forwarded.ready_tick();
     runtime
         .live_speculative_executions
@@ -185,13 +184,13 @@ fn live_same_link_control_exposes_exact_producer_forwarded_target() {
         .retained_producer_forwarded_control_target()
         .expect("scheduling-only replan must retain same-link target authority");
     assert_eq!(forwarded.ready_tick(), original_ready_tick + 2);
-
     assert_eq!(
         runtime.append_producer_forwarded_control_descendant(
             forwarded,
             Address::new(0x9000),
             decoded(addi(13, 4, 0)),
             &[request(98)],
+            0,
         ),
         None
     );
@@ -202,6 +201,7 @@ fn live_same_link_control_exposes_exact_producer_forwarded_target() {
             Address::new(0x9000),
             decoded(descendant),
             &[request(13)],
+            0,
         )
         .expect("same-link target descendant append");
     assert_eq!(

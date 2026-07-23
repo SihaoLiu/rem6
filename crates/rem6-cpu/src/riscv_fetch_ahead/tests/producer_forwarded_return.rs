@@ -45,6 +45,7 @@ pub(super) fn live_return_core(
             Address::new(0x8004),
             producer_decoded,
             &[request(1)],
+            20,
         ));
         assert!(state
             .o3_runtime
@@ -72,6 +73,7 @@ pub(super) fn live_return_core(
             Address::new(0x8008),
             call_decoded,
             &[request(2)],
+            21,
         ));
         assert!(state
             .o3_runtime
@@ -105,7 +107,6 @@ fn pending_data_gate_admits_producer_forwarded_call_target_return() {
         core.prepare_fetch_ahead_speculation(&call_decision)
             .unwrap(),
     );
-
     let return_decision = core
         .next_pending_data_fetch_ahead(true)
         .expect("producer-forwarded call target return decision");
@@ -131,7 +132,6 @@ fn producer_forwarded_return_apply_fails_closed_after_descendant_invalidation() 
     let prepared = core
         .prepare_fetch_ahead_speculation(&return_decision)
         .unwrap();
-
     {
         let mut state = core.state.lock().expect("riscv core lock");
         let parent_sequence = state

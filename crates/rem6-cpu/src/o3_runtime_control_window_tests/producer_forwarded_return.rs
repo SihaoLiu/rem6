@@ -96,6 +96,7 @@ fn producer_forwarded_linked_calls_append_target_returns() {
                 Address::new(0x9000),
                 decoded(return_jump),
                 &[request(13)],
+                0,
             )
             .expect("linked call target return append");
 
@@ -162,6 +163,7 @@ fn producer_forwarded_linked_call_rejects_nonordinary_target_controls() {
                 Address::new(0x9000),
                 decoded(instruction),
                 &[request(13)],
+                0,
             ),
             None,
             "unexpected producer-forwarded target control admission for {instruction:?}"
@@ -182,6 +184,7 @@ fn producer_forwarded_split_link_call_appends_return_after_data_head_retires() {
             Address::new(0x9000),
             decoded(return_jump),
             &[request(13)],
+            0,
         )
         .expect("recorded split-link call survives successful data-head retirement");
     assert_eq!(

@@ -96,6 +96,7 @@ impl O3RuntimeState {
         pc: Address,
         decoded: RiscvDecodedInstruction,
         consumed_requests: &[MemoryRequestId],
+        admission_tick: u64,
     ) -> bool {
         let Some(sequence) = self
             .snapshot
@@ -106,17 +107,28 @@ impl O3RuntimeState {
         else {
             return false;
         };
-        self.bind_live_staged_issue_packet_at_sequence(sequence, decoded, consumed_requests)
+        self.bind_live_staged_issue_packet_at_sequence(
+            sequence,
+            decoded,
+            consumed_requests,
+            admission_tick,
+        )
     }
     pub(in crate::o3_runtime) fn bind_live_staged_issue_packet_at_sequence(
         &mut self,
         sequence: u64,
         decoded: RiscvDecodedInstruction,
         consumed_requests: &[MemoryRequestId],
+        admission_tick: u64,
     ) -> bool {
-        self.live_staged_fetch_identities
+        let bound = self
+            .live_staged_fetch_identities
             .get_mut(&sequence)
-            .is_some_and(|identity| identity.bind_issue_packet(decoded, consumed_requests))
+            .is_some_and(|identity| identity.bind_issue_packet(decoded, consumed_requests));
+        if !bound {
+            return false;
+        }
+        self.enqueue_bound_live_issue_sequence_at(sequence, admission_tick)
     }
     pub(in crate::o3_runtime) fn live_staged_issue_packet(
         &self,

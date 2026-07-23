@@ -20,6 +20,9 @@ mod calendar;
 #[path = "o3_runtime_issue/queue_tests.rs"]
 mod queue;
 
+#[path = "o3_runtime_issue/state_tests.rs"]
+mod live_issue_state;
+
 #[test]
 fn scoped_issue_reserves_head_width() {
     let mut fixture = ScalarIssueFixture::new(1, ScalarIssueCase::CrossResource);
@@ -279,6 +282,7 @@ fn scoped_issue_isolates_cross_candidate_dependency_readiness() {
             Address::new(pc),
             decoded(instruction),
             &[request(request_sequence)],
+            20,
         ));
     }
     let head = O3LiveIssueHeadReservation::for_instruction(head_sequence, 20, call);
@@ -452,7 +456,7 @@ fn issue_arbitration_records_dependency_blocked_row_cycles() {
 fn issue_arbitration_reset_stats_clears_scheduler_counters() {
     let mut fixture = ScalarIssueFixture::new(1, ScalarIssueCase::CrossResource);
     fixture.schedule(20);
-    assert!(!fixture.runtime.live_issue_cycle_ticks.is_empty());
+    assert!(fixture.runtime.stats().issue_cycles() > 0);
 
     fixture.runtime.reset_stats();
 
@@ -462,7 +466,6 @@ fn issue_arbitration_reset_stats_clears_scheduler_counters() {
     assert_eq!(stats.resource_blocked_row_cycles(), 0);
     assert_eq!(stats.dependency_blocked_row_cycles(), 0);
     assert_eq!(stats.max_rows_per_cycle(), 0);
-    assert!(fixture.runtime.live_issue_cycle_ticks.is_empty());
 }
 
 #[test]
@@ -502,6 +505,7 @@ fn scoped_issue_tracks_long_fu_head_dependency() {
             Address::new(pc),
             decoded(instruction),
             &[request(request_sequence)],
+            14,
         ));
     }
 
@@ -637,6 +641,7 @@ fn scoped_issue_packet_rebinding_rejects_wrong_no_destination_control_at_return_
         Address::new(SECOND_PC),
         decoded(jal()),
         &[request(12)],
+        20,
     ));
     let packet = fixture
         .runtime
@@ -661,6 +666,7 @@ fn scoped_issue_packet_rebinding_keeps_bound_fetch_identity() {
         Address::new(SECOND_PC),
         decoded(jalr_return(1)),
         &[request(99)],
+        20,
     ));
     let packet = fixture
         .runtime
@@ -859,11 +865,16 @@ impl ScalarIssueFixture {
     }
 
     fn bind_row(&mut self, index: usize) {
+        self.bind_row_at(index, 20);
+    }
+
+    fn bind_row_at(&mut self, index: usize, admission_tick: u64) {
         let (pc, instruction, request_sequence) = self.rows[index];
         assert!(self.runtime.bind_live_staged_issue_packet(
             Address::new(pc),
             decoded(instruction),
             &[request(request_sequence)],
+            admission_tick,
         ));
     }
 
@@ -970,7 +981,7 @@ pub(super) fn bind_o3(
     decoded: RiscvDecodedInstruction,
     consumed_requests: &[MemoryRequestId],
 ) {
-    assert!(runtime.bind_live_staged_issue_packet(Address::new(pc), decoded, consumed_requests,));
+    assert!(runtime.bind_live_staged_issue_packet(Address::new(pc), decoded, consumed_requests, 0,));
 }
 
 fn raw(instruction: RiscvInstruction) -> u32 {
