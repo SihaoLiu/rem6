@@ -4126,9 +4126,10 @@ fn o3_live_issue_queue_owns_candidate_inventory() {
         "issue_identity.rs must define exactly one O3LiveStagedFetchIdentity"
     );
     assert_eq!(
-        identity_definitions[0]
-            .matches("issue_packet: Option<O3LiveIssuePacket>")
-            .count(),
+        production_definition_named_type_storage_count(
+            &identity_definitions[0],
+            "O3LiveIssuePacket",
+        ),
         1,
         "O3LiveStagedFetchIdentity must own exactly one bound issue-packet slot"
     );
@@ -4138,9 +4139,23 @@ fn o3_live_issue_queue_owns_candidate_inventory() {
             let count = production_struct_definitions(source)
                 .iter()
                 .map(|definition| {
-                    definition
-                        .matches("issue_packet: Option<O3LiveIssuePacket>")
-                        .count()
+                    let storage_count = production_definition_named_type_storage_count(
+                        definition,
+                        "O3LiveIssuePacket",
+                    );
+                    let canonical_queue_entry = relative
+                        == Path::new("src/o3_runtime_issue/queue.rs")
+                        && production_defines_exact_named_item(
+                            definition,
+                            "struct",
+                            "O3LiveIssueQueueEntry",
+                        )
+                        && storage_count == 1;
+                    if canonical_queue_entry {
+                        0
+                    } else {
+                        storage_count
+                    }
                 })
                 .sum::<usize>();
             (count > 0).then(|| (relative.to_path_buf(), count))
