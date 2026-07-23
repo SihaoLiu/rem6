@@ -34,6 +34,7 @@ const MAX_RISCV_FETCH_AHEAD_PREPARED_LINES: usize = 175;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CONTINUATION_LINES: usize = 240;
 const MAX_RISCV_FETCH_AHEAD_PREPARED_OWNER_LINES: usize = 390;
 const MAX_RISCV_DATA_ACCESS_RESULT_LINES: usize = 450;
+const MAX_RISCV_DATA_ACCESS_RESULT_TRANSLATION_LINES: usize = 250;
 const MAX_RISCV_DATA_ACCESS_RESULT_PAIR_POLICY_LINES: usize = 100;
 const MAX_RISCV_DATA_ACCESS_RESULT_EFFECT_POLICY_LINES: usize = 120;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_LINES: usize = 200;
@@ -2599,6 +2600,8 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root_path = crate_dir.join("src/riscv_fetch_ahead/detailed_o3.rs");
     let child_path = crate_dir.join("src/riscv_fetch_ahead/detailed_o3/data_access_result.rs");
+    let translation_path =
+        crate_dir.join("src/riscv_fetch_ahead/detailed_o3/data_access_result_translation.rs");
     let pair_policy_path =
         crate_dir.join("src/riscv_fetch_ahead/detailed_o3/data_access_result_pair_policy.rs");
     let effect_policy_path =
@@ -2620,6 +2623,12 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
     assert!(
         root.contains("#[path = \"detailed_o3/data_access_result.rs\"]\nmod data_access_result;"),
         "detailed_o3.rs must delegate result admission to the focused child"
+    );
+    assert!(
+        root.contains(
+            "#[path = \"detailed_o3/data_access_result_translation.rs\"]\nmod data_access_result_translation;"
+        ),
+        "detailed_o3.rs must delegate result translation probing to the focused child"
     );
     assert!(
         root.contains(
@@ -2650,7 +2659,13 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
         "data-access result fetch authority belongs in {}",
         child_path.display()
     );
+    assert!(
+        translation_path.is_file(),
+        "data-access result translation probing belongs in {}",
+        translation_path.display()
+    );
     let child = fs::read_to_string(&child_path).unwrap();
+    let translation = fs::read_to_string(&translation_path).unwrap();
     let pair_policy = fs::read_to_string(&pair_policy_path).unwrap();
     let effect_policy = fs::read_to_string(&effect_policy_path).unwrap();
     let dependent_address = fs::read_to_string(&dependent_address_path).unwrap();
@@ -2658,6 +2673,15 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
     assert!(
         child.lines().count() <= MAX_RISCV_DATA_ACCESS_RESULT_LINES,
         "data_access_result.rs exceeds {MAX_RISCV_DATA_ACCESS_RESULT_LINES} lines"
+    );
+    assert!(
+        translation.lines().count() <= MAX_RISCV_DATA_ACCESS_RESULT_TRANSLATION_LINES,
+        "data_access_result_translation.rs exceeds {MAX_RISCV_DATA_ACCESS_RESULT_TRANSLATION_LINES} lines"
+    );
+    assert!(
+        external_module_declaration_lines(&translation).is_empty()
+            && path_attribute_lines(&translation).is_empty(),
+        "data-access result translation probing must remain a leaf child"
     );
     assert!(
         pair_policy.lines().count() <= MAX_RISCV_DATA_ACCESS_RESULT_PAIR_POLICY_LINES,
@@ -2776,8 +2800,6 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
     for anchor in [
         "fn data_access_result_fetch_ahead_shape(",
         "pub(in crate::riscv_fetch_ahead) fn data_access_result_fetch_ahead_authorization(",
-        "pub(in crate::riscv_fetch_ahead) fn data_access_result_head_physical_probe(",
-        "fn data_access_result_head_probe(",
     ] {
         assert!(
             child.contains(anchor),
@@ -2786,6 +2808,43 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
         assert!(
             !root.contains(anchor),
             "detailed_o3.rs still owns `{anchor}`"
+        );
+    }
+    for anchor in [
+        "pub(in crate::riscv_fetch_ahead) enum DataAccessResultHeadPhysicalProbe",
+        "pub(in crate::riscv_fetch_ahead) fn data_access_result_head_physical_probe(",
+        "pub(super) struct DataAccessResultHeadProbe",
+        "pub(super) fn data_access_result_head_probe(",
+        "pub(super) enum DataAccessResultTranslationProbe",
+        "pub(super) fn data_access_result_translation_probe(",
+    ] {
+        assert!(
+            translation.contains(anchor),
+            "focused data-access result translation owner is missing `{anchor}`"
+        );
+        assert!(
+            !child.contains(anchor) && !root.contains(anchor),
+            "data-access result translation probe escaped its focused owner: `{anchor}`"
+        );
+    }
+    assert!(
+        root.contains(
+            "pub(super) use data_access_result_translation::{\n    data_access_result_head_physical_probe, DataAccessResultHeadPhysicalProbe,\n};"
+        ),
+        "detailed_o3.rs must re-export only the existing public physical probe"
+    );
+    for private_helper in [
+        "data_access_result_head_probe",
+        "data_access_result_translation_probe",
+        "DataAccessResultTranslationProbe",
+    ] {
+        assert!(
+            !root.contains(private_helper),
+            "detailed_o3.rs must not re-export private translation helper `{private_helper}`"
+        );
+        assert!(
+            child.contains(private_helper),
+            "data_access_result.rs must import private translation helper `{private_helper}`"
         );
     }
     assert_eq!(

@@ -41,11 +41,6 @@ mod stats_compat_ownership;
 #[path = "source_policy/writeback_ownership.rs"]
 mod writeback_ownership;
 
-#[test]
-fn checkpoint_output_summaries_derive_hierarchy_totals_from_projections() {
-    checkpoint_total_authority::checkpoint_output_summaries_derive_hierarchy_totals_from_projections();
-}
-
 const MAX_FACADE_LINES: usize = 1250;
 const MAX_RUN_FAILURE_DIAGNOSTICS_LINES: usize = 400;
 const MAX_CONFIG_ROOT_LINES: usize = 1700;

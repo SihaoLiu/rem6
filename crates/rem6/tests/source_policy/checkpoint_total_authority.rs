@@ -1,5 +1,6 @@
 use std::{fs, path::Path};
 
+#[test]
 pub(crate) fn checkpoint_output_summaries_derive_hierarchy_totals_from_projections() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let host_actions_path = crate_dir.join("src/host_actions.rs");

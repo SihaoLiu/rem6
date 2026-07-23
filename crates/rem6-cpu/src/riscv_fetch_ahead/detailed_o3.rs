@@ -27,14 +27,18 @@ mod data_access_result;
 mod data_access_result_effect_policy;
 #[path = "detailed_o3/data_access_result_pair_policy.rs"]
 mod data_access_result_pair_policy;
+#[path = "detailed_o3/data_access_result_translation.rs"]
+mod data_access_result_translation;
 #[path = "detailed_o3/dependent_result_address.rs"]
 mod dependent_result_address;
 #[path = "detailed_o3/retained_data_access_result.rs"]
 mod retained_data_access_result;
 
 pub(super) use data_access_result::{
-    data_access_result_fetch_ahead_authorization, data_access_result_head_physical_probe,
-    data_access_result_window_candidate, DataAccessResultHeadPhysicalProbe,
+    data_access_result_fetch_ahead_authorization, data_access_result_window_candidate,
+};
+pub(super) use data_access_result_translation::{
+    data_access_result_head_physical_probe, DataAccessResultHeadPhysicalProbe,
 };
 pub(super) use dependent_result_address::dependent_result_address_authorization;
 #[cfg(test)]
