@@ -328,7 +328,7 @@ Run:
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib o3_writeback_wake_ -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib live_issue_queue_packet_ -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --test source_policy o3_runtime_live_window -- --nocapture
-TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy cli_source_policy_driver_stays_focused -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy source_policy_driver_keeps_anchor_data_out_of_root -- --nocapture
 ```
 
 Expected: all selected tests PASS. The persistent-IQ focused-owner RED remains intentionally failing until Task 10 and is not included in this green set.
