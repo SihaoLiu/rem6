@@ -623,7 +623,28 @@ fn parallel_driver_issues_older_load_before_younger_live_gate_work() {
     let wake_tick = cpu
         .requested_o3_writeback_wake_tick(scheduler.now())
         .expect("completed scalar load should request an O3 writeback wake");
-    cpu.mark_o3_writeback_wake_fired(wake_tick);
+    let wake_cpu = cpu.clone();
+    let event = scheduler
+        .schedule_parallel_at(cpu.partition(), wake_tick, move |context| {
+            wake_cpu.mark_o3_writeback_wake_fired(context.now());
+        })
+        .unwrap();
+    cpu.mark_o3_writeback_wake_scheduled(
+        scheduler.instance_id(),
+        scheduler.pending_event_snapshot(event).unwrap(),
+    );
+    assert_eq!(cpu.owned_o3_writeback_wakes().len(), 1);
+    let wake_limit = wake_tick.checked_add(1).expect("O3 writeback wake limit");
+    for _ in 0..64 {
+        if cpu.owned_o3_writeback_wakes().is_empty() {
+            break;
+        }
+        scheduler
+            .run_next_epoch_parallel_recorded_until(wake_limit)
+            .unwrap()
+            .expect("pending O3 writeback wake scheduler event");
+    }
+    assert!(cpu.owned_o3_writeback_wakes().is_empty());
     assert!(cpu
         .record_ready_o3_data_access_event_with_trace(u64::MAX, false)
         .is_some());

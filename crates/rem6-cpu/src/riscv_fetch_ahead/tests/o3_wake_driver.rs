@@ -1,4 +1,5 @@
 use super::*;
+use rem6_kernel::PartitionedScheduler;
 
 pub(super) fn fire_requested_o3_writeback_wakes(core: &RiscvCore) -> Vec<u64> {
     let mut now = 0;
@@ -7,7 +8,20 @@ pub(super) fn fire_requested_o3_writeback_wakes(core: &RiscvCore) -> Vec<u64> {
         let Some(tick) = core.requested_o3_writeback_wake_tick(now) else {
             return fired;
         };
-        core.mark_o3_writeback_wake_fired(tick);
+        let mut scheduler = PartitionedScheduler::new(core.partition().index() + 1).unwrap();
+        let wake_core = core.clone();
+        let event = scheduler
+            .schedule_at(core.partition(), tick, move |context| {
+                wake_core.mark_o3_writeback_wake_fired(context.now());
+            })
+            .unwrap();
+        core.mark_o3_writeback_wake_scheduled(
+            scheduler.instance_id(),
+            scheduler.pending_event_snapshot(event).unwrap(),
+        );
+        assert_eq!(core.owned_o3_writeback_wakes().len(), 1);
+        scheduler.run_until_idle_conservative();
+        assert!(core.owned_o3_writeback_wakes().is_empty());
         now = tick;
         fired.push(tick);
     }

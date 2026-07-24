@@ -6234,6 +6234,55 @@ fn o3_writeback_wake_callback_services_live_issue_in_structural_order() {
 }
 
 #[test]
+fn task6_migrated_o3_wake_test_drivers_use_scheduled_callbacks() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for (path, function, schedule) in [
+        (
+            "src/riscv_fetch_ahead/tests/o3_wake_driver.rs",
+            "fire_requested_o3_writeback_wakes",
+            "schedule_at",
+        ),
+        (
+            "tests/riscv_cluster_data.rs",
+            "parallel_driver_issues_older_load_before_younger_live_gate_work",
+            "schedule_parallel_at",
+        ),
+        (
+            "tests/riscv_frontend.rs",
+            "riscv_core_driver_issues_older_load_before_younger_live_gate_work",
+            "schedule_at",
+        ),
+    ] {
+        let source = fs::read_to_string(crate_dir.join(path)).unwrap();
+        let definition = rust_function_definition(&source, function)
+            .unwrap_or_else(|| panic!("missing {path}::{function}"));
+        assert!(task6_scheduled_o3_wake_definition_holds(
+            &definition,
+            schedule
+        ));
+        let mutation = definition.replacen(
+            "mark_o3_writeback_wake_scheduled(",
+            "skip_o3_writeback_wake_registration(",
+            1,
+        );
+        assert!(!task6_scheduled_o3_wake_definition_holds(
+            &mutation, schedule
+        ));
+    }
+}
+
+fn task6_scheduled_o3_wake_definition_holds(definition: &str, schedule: &str) -> bool {
+    let compact = compact_rust_code(definition);
+    compact.contains("requested_o3_writeback_wake_tick(")
+        && compact.contains(&format!(".{schedule}("))
+        && compact.contains("pending_event_snapshot(")
+        && compact.contains("mark_o3_writeback_wake_scheduled(")
+        && compact.contains("owned_o3_writeback_wakes()")
+        && compact.contains(".mark_o3_writeback_wake_fired(context.now())")
+        && compact.matches("mark_o3_writeback_wake_fired(").count() == 1
+}
+
+#[test]
 fn o3_runtime_control_window_lives_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root = fs::read_to_string(crate_dir.join("src/o3_runtime.rs")).unwrap();
