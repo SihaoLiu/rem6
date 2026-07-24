@@ -4090,25 +4090,12 @@ fn o3_persistent_live_issue_state_owns_candidate_inventory() {
     assert!(!queue.contains("for (index, rob) in runtime.snapshot.reorder_buffer"));
     let queue_materialize = rust_function_definition(&queue, "materialize")
         .expect("missing persistent issue queue materialization path");
-    let compact_materialize = queue_materialize
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect::<String>();
     assert!(queue_materialize.contains("for &sequence in resident_sequences"));
     assert!(queue_materialize.contains("binary_search_by_key(&sequence"));
-    let rob_inventory = "runtime.snapshot.reorder_buffer";
-    for (access, _) in compact_materialize.match_indices(rob_inventory) {
-        let suffix = &compact_materialize[access + rob_inventory.len()..];
-        let indexed_row = suffix.strip_prefix('[').is_some_and(|suffix| {
-            suffix
-                .find(']')
-                .is_some_and(|end| !suffix[..end].contains(".."))
-        });
-        assert!(
-            suffix.starts_with(".binary_search_by_key(") || indexed_row,
-            "queue materialization must not scan or retain the full ROB inventory",
-        );
-    }
+    assert!(
+        materialize_reorder_buffer_accesses_are_point_lookups(&queue_materialize),
+        "queue materialization must not scan or retain the full ROB inventory",
+    );
     for transient in ["O3LiveIssueDependencyTable", "O3LiveIssueCalendar"] {
         assert!(
             production_struct_named_type_storage(&production_sources, transient).is_empty(),
@@ -7699,6 +7686,54 @@ fn rust_function_definition(source: &str, name: &str) -> Option<String> {
     None
 }
 
+fn materialize_reorder_buffer_accesses_are_point_lookups(source: &str) -> bool {
+    let code = rust_code_without_comments_and_literals(source);
+    let chars = code.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    let mut saw_reorder_buffer_field = false;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        if identifier == "reorder_buffer" && rust_identifier_is_field(&chars, index) {
+            saw_reorder_buffer_field = true;
+            if !reorder_buffer_field_access_is_point_lookup(&chars, end) {
+                return false;
+            }
+        }
+        index = end;
+    }
+    saw_reorder_buffer_field
+}
+
+fn rust_identifier_is_field(chars: &[char], identifier_start: usize) -> bool {
+    (0..identifier_start)
+        .rev()
+        .find_map(|index| (!chars[index].is_whitespace()).then_some(chars[index]))
+        == Some('.')
+}
+
+fn reorder_buffer_field_access_is_point_lookup(chars: &[char], field_end: usize) -> bool {
+    let access_start = skip_rust_whitespace(chars, field_end);
+    if chars.get(access_start) == Some(&'.') {
+        let method_start = skip_rust_whitespace(chars, access_start + 1);
+        let Some((method, method_end)) = rust_identifier_at(chars, method_start) else {
+            return false;
+        };
+        return method == "binary_search_by_key"
+            && chars.get(skip_rust_whitespace(chars, method_end)) == Some(&'(');
+    }
+    if chars.get(access_start) != Some(&'[') {
+        return false;
+    }
+    let Some(close) = matching_delimiter(chars, access_start, '[', ']') else {
+        return false;
+    };
+    let index = chars[access_start + 1..close].iter().collect::<String>();
+    !index.trim().is_empty() && !index.contains("..")
+}
+
 #[test]
 fn o3_store_forwarding_policy_lives_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -7982,6 +8017,33 @@ fn attributed_test() {}
         rust_test_function_definition_count(tests, "attributed_test"),
         1
     );
+}
+
+#[test]
+fn source_policy_helper_rejects_aliased_o3_rob_inventory_scans() {
+    let point_lookups = r#"
+        let index = snapshot
+            .reorder_buffer
+            .binary_search_by_key(&sequence, |entry| entry.sequence())?;
+        let rob = snapshot.reorder_buffer[index];
+    "#;
+    assert!(materialize_reorder_buffer_accesses_are_point_lookups(
+        point_lookups
+    ));
+
+    for mutation in [
+        "snapshot.reorder_buffer.iter().find(|rob| rob.is_live_staged())",
+        "for rob in &snapshot.reorder_buffer { inspect(rob); }",
+        "let inventory = &snapshot.reorder_buffer; inventory.iter()",
+        "let inventory = snapshot.reorder_buffer; inspect(inventory)",
+        "inspect(&snapshot.reorder_buffer[..])",
+        "inspect(&snapshot.reorder_buffer[first..last])",
+    ] {
+        assert!(
+            !materialize_reorder_buffer_accesses_are_point_lookups(mutation),
+            "accepted full ROB inventory mutation `{mutation}`",
+        );
+    }
 }
 
 #[test]
