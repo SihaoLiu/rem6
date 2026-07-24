@@ -48,6 +48,14 @@ const MIGRATED_SELECTORS: &[&str] = &[
     "o3_live_issue_",
 ];
 
+const BROAD_VERIFICATION_COMMANDS: &[&str] = &[
+    "TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib",
+    "TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --test source_policy",
+    "TMPDIR=$PWD/target/tmp cargo check -p rem6-cpu --all-targets",
+    "cargo fmt --all -- --check",
+    "git diff --check",
+];
+
 #[test]
 fn task6_plan_inventories_live_issue_test_and_policy_migration() {
     let plan = read_plan();
@@ -86,6 +94,15 @@ fn task6_plan_migration_contract_rejects_omissions() {
         let mutation = replace_in_verification(&canonical, selector, "omitted_selector");
         assert_rejected(
             &format!("verification omits {selector}"),
+            &canonical,
+            mutation,
+        );
+    }
+
+    for command in BROAD_VERIFICATION_COMMANDS {
+        let mutation = replace_verification_line(&canonical, command, "omitted broad command");
+        assert_rejected(
+            &format!("verification omits exact command {command}"),
             &canonical,
             mutation,
         );
@@ -143,6 +160,14 @@ fn replace_in_verification(source: &str, needle: &str, replacement: &str) -> Str
     mutated
 }
 
+fn replace_verification_line(source: &str, line: &str, replacement: &str) -> String {
+    replace_in_verification(
+        source,
+        &format!("\n{line}\n"),
+        &format!("\n{replacement}\n"),
+    )
+}
+
 fn task6_migration_contract_holds(plan: &str) -> bool {
     let Some(task6) = task6_section(plan) else {
         return false;
@@ -182,6 +207,13 @@ fn task6_migration_contract_holds(plan: &str) -> bool {
             .any(|line| line.contains("cargo test -p rem6-cpu") && line.contains(selector))
         {
             eprintln!("Task 6 verification misses {selector}");
+            valid = false;
+        }
+    }
+    for command in BROAD_VERIFICATION_COMMANDS {
+        let count = verification.lines().filter(|line| line == command).count();
+        if count != 1 {
+            eprintln!("Task 6 verification requires exactly one `{command}`, found {count}");
             valid = false;
         }
     }
