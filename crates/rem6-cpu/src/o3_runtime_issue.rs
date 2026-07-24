@@ -7,6 +7,9 @@ use crate::o3_pipeline::O3IssueOpClass;
 #[path = "o3_runtime_issue/dependency.rs"]
 mod dependency;
 
+#[path = "o3_runtime_issue/durable_cleanup.rs"]
+mod durable_cleanup;
+
 #[path = "o3_runtime_issue/calendar.rs"]
 pub(in crate::o3_runtime) mod calendar;
 #[path = "o3_runtime_issue/pending_address.rs"]
@@ -241,6 +244,7 @@ impl O3RuntimeState {
                 raw_ready_tick,
                 admitted_writeback_tick,
             );
+            self.complete_durable_live_issue_removal_at(head.issue_tick, &[head.sequence()]);
         }
         Ok(true)
     }

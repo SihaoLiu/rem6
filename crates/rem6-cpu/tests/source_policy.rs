@@ -1,10 +1,15 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "source_policy/live_issue_durable_cleanup.rs"]
+mod live_issue_durable_cleanup;
+
 const MAX_FACADE_LINES: usize = 1300;
 const MAX_O3_RUNTIME_DEEP_CLEANUP_TEST_LINES: usize = 350;
 const MAX_O3_RUNTIME_ISSUE_DEPENDENCY_LINES: usize = 500;
 const MAX_O3_RUNTIME_ISSUE_DEPENDENCY_TEST_LINES: usize = 500;
+const MAX_O3_RUNTIME_ISSUE_DURABLE_CLEANUP_LINES: usize = 80;
+const MAX_O3_RUNTIME_ISSUE_DURABLE_CLEANUP_TEST_LINES: usize = 220;
 const MAX_O3_RUNTIME_ISSUE_CALENDAR_LINES: usize = 450;
 const MAX_O3_RUNTIME_ISSUE_CALENDAR_TEST_LINES: usize = 450;
 const MAX_O3_RUNTIME_LIVE_ISSUE_IDENTITY_LINES: usize = 350;
@@ -101,6 +106,7 @@ const MAX_RISCV_TRANSLATED_RESULT_PAIR_ISSUE_REVIEW_LINES: usize = 160;
 const MAX_RISCV_FAILURE_DIAGNOSTIC_LINES: usize = 300;
 const MAX_RISCV_PRODUCER_FORWARDED_DESCENDANT_LINES: usize = 120;
 const MAX_SOURCE_LINES: usize = 1800;
+const MAX_SOURCE_POLICY_LIVE_ISSUE_DURABLE_CLEANUP_LINES: usize = 320;
 
 #[test]
 fn o3_persistent_iq_cpu_files_stay_focused() {
@@ -117,6 +123,14 @@ fn o3_persistent_iq_cpu_files_stay_focused() {
         (
             "src/o3_runtime_issue/state.rs",
             MAX_O3_RUNTIME_ISSUE_STATE_LINES,
+        ),
+        (
+            "src/o3_runtime_issue/durable_cleanup.rs",
+            MAX_O3_RUNTIME_ISSUE_DURABLE_CLEANUP_LINES,
+        ),
+        (
+            "src/o3_runtime_issue/durable_cleanup_tests.rs",
+            MAX_O3_RUNTIME_ISSUE_DURABLE_CLEANUP_TEST_LINES,
         ),
         (
             "src/o3_runtime_issue/state/decision.rs",
@@ -169,6 +183,10 @@ fn o3_persistent_iq_cpu_files_stay_focused() {
         (
             "src/o3_runtime_issue/transaction_tests/replan.rs",
             MAX_O3_RUNTIME_ISSUE_TRANSACTION_REPLAN_TEST_LINES,
+        ),
+        (
+            "tests/source_policy/live_issue_durable_cleanup.rs",
+            MAX_SOURCE_POLICY_LIVE_ISSUE_DURABLE_CLEANUP_LINES,
         ),
     ] {
         let path = crate_dir.join(relative);
@@ -9883,7 +9901,7 @@ fn o3_live_issue_delayed_stats_are_projected(
         && seal_current.contains("self.live_issue.seal_current_decision()")
         && !seal_current.contains("self.stats.record_issue")
         && service_source
-            .contains("remove_retained_blocked_sequences_at_or_after(now,&issued_sequences)")
+            .contains("complete_durable_live_issue_removal_at(now,&issued_sequences)")
 }
 
 #[test]
@@ -10422,7 +10440,7 @@ fn o3_live_issue_stats_policy_rejects_projection_and_rebase_mutations() {
         1,
     );
     let future_cleanup = service.replacen(
-        "self.live_issue\n            .remove_retained_blocked_sequences_at_or_after(now, &issued_sequences);",
+        "self.complete_durable_live_issue_removal_at(now, &issued_sequences);",
         "let _ = &issued_sequences;",
         1,
     );

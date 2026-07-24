@@ -156,8 +156,7 @@ impl O3RuntimeState {
             .iter()
             .map(O3ScopedReadyInstruction::sequence)
             .collect::<Vec<_>>();
-        self.live_issue
-            .remove_retained_blocked_sequences_at_or_after(now, &issued_sequences);
+        self.complete_durable_live_issue_removal_at(now, &issued_sequences);
         let max_rows_at_tick = reserved_width.saturating_add(issued_rows);
         let post = self.classify_live_issue_queue_after_service(now)?;
         if let Some(sequence) = post.replay_boundary {

@@ -136,6 +136,7 @@ impl O3RuntimeState {
                     raw_ready_tick,
                     admitted_writeback_tick,
                 );
+                self.complete_durable_live_issue_removal_at(issue_tick, &[sequence]);
             }
         }
         Ok(recorded)

@@ -211,6 +211,7 @@ impl O3RuntimeState {
                 O3LiveIssueTraceClass::MemoryAgu,
                 issue_tick,
             );
+            self.complete_durable_live_issue_removal_at(issue_tick, &[sequence]);
         }
         Ok(recorded)
     }

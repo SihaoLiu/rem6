@@ -192,7 +192,7 @@ impl O3LiveIssueState {
             return false;
         };
         self.resident_sequences.remove(index);
-        self.remove_blocked_sequence(sequence);
+        self.remove_active_blocked_sequence_at_or_after(tick, sequence);
         self.mark_mutated();
         self.update_occupancy();
         if self.resident_sequences.is_empty() {

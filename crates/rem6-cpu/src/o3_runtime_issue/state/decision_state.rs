@@ -93,8 +93,12 @@ impl O3LiveIssueState {
         self.decision_window.reset_baselines();
     }
 
-    pub(super) fn remove_blocked_sequence(&mut self, sequence: u64) {
-        if let Some(active) = self.active_tick.as_mut() {
+    pub(super) fn remove_active_blocked_sequence_at_or_after(&mut self, tick: u64, sequence: u64) {
+        if let Some(active) = self
+            .active_tick
+            .as_mut()
+            .filter(|active| active.tick() >= tick)
+        {
             active.remove_blocked(sequence);
         }
     }
@@ -115,11 +119,14 @@ impl O3LiveIssueState {
         self.decision_window.retain_blocked_before(boundary);
     }
 
-    pub(in crate::o3_runtime) fn remove_retained_blocked_sequences_at_or_after(
+    pub(in crate::o3_runtime) fn remove_durable_blocked_sequences_at_or_after(
         &mut self,
         tick: u64,
         sequences: &[u64],
     ) {
+        for sequence in sequences {
+            self.remove_active_blocked_sequence_at_or_after(tick, *sequence);
+        }
         self.decision_window
             .remove_blocked_at_or_after(tick, sequences);
     }

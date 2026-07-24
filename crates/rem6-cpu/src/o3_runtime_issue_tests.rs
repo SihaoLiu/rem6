@@ -14,6 +14,9 @@ use crate::{CpuFetchEvent, CpuFetchRecord, RiscvCpuExecutionEvent};
 #[path = "o3_runtime_issue_tests/dependency_scopes.rs"]
 mod dependency_scopes;
 
+#[path = "o3_runtime_issue/durable_cleanup_tests.rs"]
+mod durable_cleanup;
+
 #[path = "o3_runtime_issue/calendar_tests.rs"]
 mod calendar;
 
