@@ -91,7 +91,6 @@ impl O3RuntimeState {
             finalized.dependency_blocked_rows,
             finalized.max_rows_at_tick,
         );
-        self.live_issue.request_service_at(earliest_tick);
     }
 
     pub(crate) fn service_live_issue_scheduler_at(
@@ -416,6 +415,7 @@ impl O3RuntimeState {
         {
             return Ok(());
         }
+        self.live_issue.request_service_at(earliest_tick);
         let mut tick = earliest_tick;
         let mut outcome = self.service_live_issue_scheduler_at(hart, tick)?;
         loop {

@@ -58,6 +58,35 @@ fn live_issue_raw_removal_policy_rejects_new_callers_and_indirection() {
         &canonical,
         mutation,
     );
+
+    let mut mutation = canonical.clone();
+    mutation.files.push((
+        PathBuf::from("src/o3_runtime_issue/cleanup_tests.rs"),
+        "use super::*;\nfn hidden_raw_alias() { let remove = O3LiveIssueState::remove_exact_at; let _ = remove; }\n"
+            .to_owned(),
+    ));
+    mutation.files.sort_by(|left, right| left.0.cmp(&right.0));
+    assert_rejected(
+        "tests-suffixed production file adds raw removal",
+        &canonical,
+        mutation,
+    );
+
+    let mut mutation = canonical.clone();
+    mutation.replace_in(
+        "src/o3_runtime_issue/state.rs",
+        "#[cfg(test)]\n#[path = \"state/test_support_tests.rs\"]",
+        "#[path = \"state/test_support_tests.rs\"]",
+    );
+    assert_rejected("test support loses cfg gate", &canonical, mutation);
+
+    let mut mutation = canonical.clone();
+    mutation.replace_in(
+        "src/o3_runtime_issue/state/rollback.rs",
+        "#[cfg(test)]\n#[path = \"rollback_tests.rs\"]",
+        "#[path = \"rollback_tests.rs\"]",
+    );
+    assert_rejected("rollback tests lose cfg gate", &canonical, mutation);
 }
 
 #[derive(Clone)]
@@ -68,16 +97,15 @@ struct RawRemovalSources {
 impl RawRemovalSources {
     fn read() -> Self {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let files = rust_source_files(&root.join("src"))
+        let mut files = rust_source_files(&root.join("src"))
             .into_iter()
-            .filter_map(|path| {
+            .map(|path| {
                 let relative = path.strip_prefix(root).unwrap().to_path_buf();
-                (!is_test_only_rust_source(&relative)).then(|| {
-                    let source = fs::read_to_string(path).unwrap();
-                    (relative, production_rust_source(&source))
-                })
+                let source = fs::read_to_string(path).unwrap();
+                (relative, source)
             })
-            .collect();
+            .collect::<Vec<_>>();
+        files.sort_by(|left, right| left.0.cmp(&right.0));
         Self { files }
     }
 
@@ -115,6 +143,9 @@ fn raw_removal_policy_holds(sources: &RawRemovalSources) -> bool {
     let Some(state) = sources.source("src/o3_runtime_issue/state.rs") else {
         return false;
     };
+    let Some(rollback) = sources.source("src/o3_runtime_issue/state/rollback.rs") else {
+        return false;
+    };
     let Some(owner) = sources.source("src/o3_runtime_issue/durable_cleanup.rs") else {
         return false;
     };
@@ -138,7 +169,8 @@ fn raw_removal_policy_holds(sources: &RawRemovalSources) -> bool {
         .files
         .iter()
         .filter_map(|(path, source)| {
-            let chars = source.chars().collect::<Vec<_>>();
+            let code = rust_code_without_comments_and_literals(source);
+            let chars = code.chars().collect::<Vec<_>>();
             let exact = rust_identifier_count(&chars, "remove_exact_at");
             let selected = rust_identifier_count(&chars, "remove_selected_at");
             ((exact != 0) || (selected != 0)).then(|| (path.clone(), exact, selected))
@@ -150,13 +182,32 @@ fn raw_removal_policy_holds(sources: &RawRemovalSources) -> bool {
             1,
             1,
         ),
+        (
+            PathBuf::from("src/o3_runtime_issue/state/rollback_tests.rs"),
+            1,
+            1,
+        ),
+        (
+            PathBuf::from("src/o3_runtime_issue/state/test_support_tests.rs"),
+            1,
+            0,
+        ),
         (PathBuf::from("src/o3_runtime_issue/state.rs"), 2, 1),
         (PathBuf::from("src/o3_runtime_issue/transaction.rs"), 1, 1),
     ];
-    let compact_state = compact_rust_code(state);
-    let compact_owner = compact_rust_code(owner);
-
+    let compact_state = compact_rust_code(&production_rust_source(state));
+    let compact_owner = compact_rust_code(&production_rust_source(owner));
+    let compact_state_module = compact_rust_code(state);
+    let compact_rollback_module = compact_rust_code(rollback);
+    let transaction = production_rust_source(transaction);
+    let issue = production_rust_source(issue);
+    let control = production_rust_source(control);
+    let pending = production_rust_source(pending);
+    let service = production_rust_source(service);
     inventory == expected
+        && compact_state_module
+            .contains("#[cfg(test)]#[path=\"state/test_support_tests.rs\"]modtest_support;")
+        && compact_rollback_module.contains("#[cfg(test)]#[path=\"rollback_tests.rs\"]modtests;")
         && compact_state.contains("pub(super)fnremove_exact_at")
         && compact_state.contains("pub(super)fnremove_selected_at")
         && !compact_state.contains("pub(incrate::o3_runtime)fnremove_exact_at")

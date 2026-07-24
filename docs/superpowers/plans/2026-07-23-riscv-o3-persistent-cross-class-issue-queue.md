@@ -1984,9 +1984,13 @@ pub fn mark_o3_writeback_wake_fired(&self, now: Tick) {
 
 `service_live_issue_scheduler_at` is the sole scheduler-facing queue entry: it advances the real
 scheduler frontier through `enter_live_issue_scheduler_at(now)` and then services exactly `now`.
+This scheduler-facing contract does not create or advance a live-issue service request. Frontier
+entry and the wrapper preserve a later request when a shared O3 wake fires before it is due, and
+`service_live_issue_queue_at` keeps `begin_service_at(now)` as the sole due-request guard.
 The temporary compatibility driver may use this wrapper only for its real `earliest_tick`; any
 later compatibility lookahead continues through `service_live_issue_queue_at` directly and must
-not advance the real frontier.
+not advance the real frontier. Until Task 6 removes that driver, compatibility explicitly seeds
+`earliest_tick` with `request_service_at` immediately before calling the scheduler-facing wrapper.
 
 - [ ] **Step 4: Stop live-window callers from simulating future issue**
 
@@ -2033,6 +2037,10 @@ assert_eq!(desired.matches("live_issue_service_tick()").count(), 1);
 assert_eq!(wake.matches("desired_o3_writeback_wake(").count(), 2);
 assert!(writeback.contains("request_live_issue_after_writeback_change("));
 ```
+
+Extract `enter_live_issue_scheduler_at` and `service_live_issue_scheduler_at` structurally and
+assert that neither function contains `request_service_at`; the callback may consume only an
+already-due live-issue request.
 
 Only `mark_o3_writeback_wake_fired` calls `service_live_issue_scheduler_at` in production, and
 only `service_live_issue_scheduler_at` calls `service_live_issue_queue_at` directly after the

@@ -43,6 +43,38 @@ fn task6_scheduler_contract_policy_rejects_bypass_mutations() {
     );
 
     let mut mutation = canonical.clone();
+    mutation.service = mutation.service.replacen(
+        "let finalized = self.live_issue.enter_scheduler_at(earliest_tick);",
+        "self.live_issue.request_service_at(earliest_tick);\n        let finalized = self.live_issue.enter_scheduler_at(earliest_tick);",
+        1,
+    );
+    assert_rejected(
+        "frontier entry creates a service request",
+        &canonical,
+        mutation,
+    );
+
+    let mut mutation = canonical.clone();
+    mutation.service = mutation.service.replacen(
+        "self.enter_live_issue_scheduler_at(now);",
+        "self.live_issue.request_service_at(now);\n        self.enter_live_issue_scheduler_at(now);",
+        1,
+    );
+    assert_rejected(
+        "scheduler wrapper creates a service request",
+        &canonical,
+        mutation,
+    );
+
+    let mut mutation = canonical.clone();
+    mutation.service = mutation.service.replacen(
+        "self.live_issue.request_service_at(earliest_tick);\n        let mut tick = earliest_tick;",
+        "let mut tick = earliest_tick;",
+        1,
+    );
+    assert_rejected("compatibility seed removed", &canonical, mutation);
+
+    let mut mutation = canonical.clone();
     mutation.plan = mutation.plan.replace(
         "service_live_issue_scheduler_at(&hart, now)",
         "service_live_issue_queue_at(&hart, now)",
@@ -88,6 +120,11 @@ fn assert_rejected(
 }
 
 fn scheduler_contract_holds(sources: &SchedulerContractSources) -> bool {
+    let Some(frontier) =
+        rust_function_definition(&sources.service, "enter_live_issue_scheduler_at")
+    else {
+        return false;
+    };
     let Some(entry) = rust_function_definition(&sources.service, "service_live_issue_scheduler_at")
     else {
         return false;
@@ -97,10 +134,13 @@ fn scheduler_contract_holds(sources: &SchedulerContractSources) -> bool {
     else {
         return false;
     };
+    let frontier = compact_rust_code(&frontier);
     let entry = compact_rust_code(&entry);
     let compatibility = compact_rust_code(&compatibility);
     let enter = "self.enter_live_issue_scheduler_at(now);";
     let service = "self.service_live_issue_queue_at(hart,now)";
+    let seed = "self.live_issue.request_service_at(earliest_tick);";
+    let compatibility_entry = "letmutoutcome=self.service_live_issue_scheduler_at(hart,tick)?;";
     let task6 = sources
         .plan
         .split_once("### Task 6: Route All Queue Progress Through the O3 Wake")
@@ -108,26 +148,73 @@ fn scheduler_contract_holds(sources: &SchedulerContractSources) -> bool {
     let Some(task6) = task6 else {
         return false;
     };
+    let compact_task6 = compact_rust_code(task6);
 
-    entry.matches(enter).count() == 1
-        && entry.matches(service).count() == 1
-        && entry.find(enter) < entry.find(service)
-        && rust_anchor_occurs_at_brace_depth(&entry, enter, 1)
-        && rust_anchor_occurs_at_brace_depth(&entry, service, 1)
-        && compatibility
-            .contains("letmutoutcome=self.service_live_issue_scheduler_at(hart,tick)?;")
-        && compatibility
-            .contains("outcome=self.service_live_issue_queue_at(hart,tick)?;")
-        && compatibility
-            .matches("service_live_issue_scheduler_at(hart,tick)")
-            .count()
-            == 1
-        && task6.contains("service_live_issue_scheduler_at(&hart, now)")
-        && !task6.contains("state.o3_runtime.service_live_issue_queue_at(&hart, now)")
-        && task6.contains(
-            "Only `mark_o3_writeback_wake_fired` calls `service_live_issue_scheduler_at` in production",
-        )
-        && task6.contains(
-            "only `service_live_issue_scheduler_at` calls `service_live_issue_queue_at` directly",
-        )
+    let checks = [
+        ("one scheduler entry", entry.matches(enter).count() == 1),
+        ("one queue service", entry.matches(service).count() == 1),
+        ("entry before service", entry.find(enter) < entry.find(service)),
+        (
+            "entry brace depth",
+            rust_anchor_occurs_at_brace_depth(&entry, enter, 1),
+        ),
+        (
+            "service brace depth",
+            rust_anchor_occurs_at_brace_depth(&entry, service, 1),
+        ),
+        ("frontier does not request", !frontier.contains("request_service_at")),
+        ("wrapper does not request", !entry.contains("request_service_at")),
+        ("one compatibility seed", compatibility.matches(seed).count() == 1),
+        (
+            "seed before wrapper",
+            compatibility.find(seed) < compatibility.find(compatibility_entry),
+        ),
+        ("compatibility wrapper", compatibility.contains(compatibility_entry)),
+        (
+            "lookahead direct service",
+            compatibility.contains("outcome=self.service_live_issue_queue_at(hart,tick)?;"),
+        ),
+        (
+            "one compatibility wrapper",
+            compatibility
+                .matches("service_live_issue_scheduler_at(hart,tick)")
+                .count()
+                == 1,
+        ),
+        (
+            "Task 6 wrapper call",
+            task6.contains("service_live_issue_scheduler_at(&hart, now)"),
+        ),
+        (
+            "Task 6 no direct call",
+            !task6.contains("state.o3_runtime.service_live_issue_queue_at(&hart, now)"),
+        ),
+        (
+            "Task 6 sole callback",
+            task6.contains(
+                "Only `mark_o3_writeback_wake_fired` calls `service_live_issue_scheduler_at` in production",
+            ),
+        ),
+        (
+            "Task 6 sole direct owner",
+            task6.contains(
+                "only `service_live_issue_scheduler_at` calls `service_live_issue_queue_at` directly",
+            ),
+        ),
+        (
+            "Task 6 preserves requests",
+            compact_task6.contains("doesnotcreateoradvancealive-issueservicerequest"),
+        ),
+        (
+            "Task 6 policy forbids request mutation",
+            compact_task6.contains("assertthatneitherfunctioncontains`request_service_at`"),
+        ),
+    ];
+    for (description, passed) in checks {
+        if !passed {
+            eprintln!("failed scheduler-contract check: {description}");
+            return false;
+        }
+    }
+    true
 }

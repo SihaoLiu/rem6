@@ -30,6 +30,7 @@ const MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_TEST_LINES: usize = 180;
 const MAX_O3_RUNTIME_ISSUE_STATE_TEST_SUPPORT_LINES: usize = 80;
 const MAX_O3_RUNTIME_ISSUE_SERVICE_LINES: usize = 600;
 const MAX_O3_RUNTIME_ISSUE_SERVICE_TEST_LINES: usize = 500;
+const MAX_O3_RUNTIME_ISSUE_SERVICE_SCHEDULER_REQUEST_TEST_LINES: usize = 300;
 const MAX_O3_RUNTIME_ISSUE_TRANSACTION_LINES: usize = 450;
 const MAX_O3_RUNTIME_ISSUE_TRANSACTION_TEST_LINES: usize = 350;
 const MAX_O3_RUNTIME_ISSUE_TRANSACTION_REPLAN_TEST_LINES: usize = 260;
@@ -182,6 +183,10 @@ fn o3_persistent_iq_cpu_files_stay_focused() {
         (
             "src/o3_runtime_issue/service_tests.rs",
             MAX_O3_RUNTIME_ISSUE_SERVICE_TEST_LINES,
+        ),
+        (
+            "src/o3_runtime_issue/service_tests/scheduler_request.rs",
+            MAX_O3_RUNTIME_ISSUE_SERVICE_SCHEDULER_REQUEST_TEST_LINES,
         ),
         (
             "src/o3_runtime_issue/transaction.rs",
@@ -4866,6 +4871,8 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
     let issue_path = crate_dir.join("src/o3_runtime_issue.rs");
     let service_path = crate_dir.join("src/o3_runtime_issue/service.rs");
     let service_tests_path = crate_dir.join("src/o3_runtime_issue/service_tests.rs");
+    let service_scheduler_request_tests_path =
+        crate_dir.join("src/o3_runtime_issue/service_tests/scheduler_request.rs");
     let state_path = crate_dir.join("src/o3_runtime_issue/state.rs");
     let state_tests_path = crate_dir.join("src/o3_runtime_issue/state_tests.rs");
     let decision_path = crate_dir.join("src/o3_runtime_issue/state/decision.rs");
@@ -4884,7 +4891,10 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
     let issue = production_rust_source(&issue_source);
     let service_source = fs::read_to_string(&service_path).unwrap();
     let service = production_rust_source(&service_source);
-    let service_tests = fs::read_to_string(&service_tests_path).unwrap();
+    let service_tests_root = fs::read_to_string(&service_tests_path).unwrap();
+    let service_scheduler_request_tests =
+        fs::read_to_string(&service_scheduler_request_tests_path).unwrap();
+    let service_tests = format!("{service_tests_root}\n{service_scheduler_request_tests}");
     let state_source = fs::read_to_string(&state_path).unwrap();
     let state = production_rust_source(&state_source);
     let state_tests = fs::read_to_string(&state_tests_path).unwrap();
@@ -4902,6 +4912,10 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
 
     assert!(line_count(&service_path) <= MAX_O3_RUNTIME_ISSUE_SERVICE_LINES);
     assert!(line_count(&service_tests_path) <= MAX_O3_RUNTIME_ISSUE_SERVICE_TEST_LINES);
+    assert!(
+        line_count(&service_scheduler_request_tests_path)
+            <= MAX_O3_RUNTIME_ISSUE_SERVICE_SCHEDULER_REQUEST_TEST_LINES
+    );
     assert!(line_count(&state_path) <= MAX_O3_RUNTIME_ISSUE_STATE_LINES);
     assert!(line_count(&decision_path) <= MAX_O3_RUNTIME_ISSUE_STATE_DECISION_LINES);
     assert!(line_count(&decision_state_path) <= MAX_O3_RUNTIME_ISSUE_STATE_DECISION_STATE_LINES);
@@ -4927,6 +4941,14 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
             &issue_tests,
             "o3_runtime_issue/service_tests.rs",
             "service",
+        ),
+        1,
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &service_tests_root,
+            "service_tests/scheduler_request.rs",
+            "scheduler_request",
         ),
         1,
     );
@@ -5118,6 +5140,9 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
         "compatibility_scheduler_entry_issues_independent_work_before_retained_lookahead",
         "scheduler_entry_seals_future_active_decision_before_earlier_tick",
         "scheduler_facing_service_finalizes_prior_decisions_without_pruning_lookahead",
+        "scheduler_facing_same_tick_wake_preserves_future_request_and_observations",
+        "scheduler_facing_early_wake_advances_frontier_without_servicing_future_request",
+        "compatibility_seeds_and_services_earliest_tick",
         "stats_reset_clears_cycle_evidence_without_delaying_issue_timing",
         "live_issue_stats_same_tick_reentry_projects_once",
         "live_issue_stats_reset_rebases_unsealed_decision",
@@ -9550,8 +9575,12 @@ fn o3_live_issue_compatibility_driver_fails_closed(source: &str) -> bool {
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect::<String>();
-    compact.contains("letmuttick=earliest_tick;")
-        && compact.contains("letmutoutcome=self.service_live_issue_scheduler_at(hart,tick)?;")
+    let seed = "self.live_issue.request_service_at(earliest_tick);";
+    let entry = "letmutoutcome=self.service_live_issue_scheduler_at(hart,tick)?;";
+    compact.matches(seed).count() == 1
+        && compact.find(seed) < compact.find(entry)
+        && compact.contains("letmuttick=earliest_tick;")
+        && compact.contains(entry)
         && compact.contains("outcome=self.service_live_issue_queue_at(hart,tick)?;")
         && rust_method_call_positions(&compatibility, "service_live_issue_scheduler_at").len() == 1
         && rust_method_call_positions(&compatibility, "service_live_issue_queue_at").len() == 1
@@ -9677,8 +9706,9 @@ fn o3_live_issue_scheduler_entry_is_pruned(
     let decision_window = compact_rust_code(decision_window_source);
     let enter = "letfinalized=self.live_issue.enter_scheduler_at(earliest_tick);";
     let record = "self.stats.record_issue_decisions(finalized.issue_cycles,finalized.issued_rows,finalized.resource_blocked_rows,finalized.dependency_blocked_rows,finalized.max_rows_at_tick,);";
-    let request_earliest = "self.live_issue.request_service_at(earliest_tick);";
-    let entry_anchors = [enter, record, request_earliest];
+    let compatibility_seed = "self.live_issue.request_service_at(earliest_tick);";
+    let compatibility_entry = "self.service_live_issue_scheduler_at(hart,tick)?";
+    let entry_anchors = [enter, record];
     let entry_positions = entry_anchors
         .iter()
         .map(|anchor| {
@@ -9691,12 +9721,18 @@ fn o3_live_issue_scheduler_entry_is_pruned(
     let checks = [
         (
             "compatibility entry",
-            compatibility.contains("self.service_live_issue_scheduler_at(hart,tick)?"),
+            compatibility.contains(compatibility_entry),
+        ),
+        (
+            "compatibility request ownership",
+            compatibility.matches(compatibility_seed).count() == 1
+                && compatibility.find(compatibility_seed) < compatibility.find(compatibility_entry),
         ),
         (
             "scheduler service entry",
             scheduler_service.contains("self.enter_live_issue_scheduler_at(now);")
-                && scheduler_service.contains("self.service_live_issue_queue_at(hart,now)"),
+                && scheduler_service.contains("self.service_live_issue_queue_at(hart,now)")
+                && !scheduler_service.contains("request_service_at"),
         ),
         (
             "lookahead keeps real frontier",
@@ -9721,6 +9757,10 @@ fn o3_live_issue_scheduler_entry_is_pruned(
             "entry order",
             entry_positions
                 .is_some_and(|positions| positions.windows(2).all(|pair| pair[0] < pair[1])),
+        ),
+        (
+            "frontier does not request service",
+            !runtime_entry.contains("request_service_at"),
         ),
         (
             "request minimum",
@@ -10234,9 +10274,14 @@ fn o3_live_issue_service_compatibility_policy_rejects_silent_result_mutations() 
     let service = fs::read_to_string(crate_dir.join("src/o3_runtime_issue/service.rs")).unwrap();
     assert!(o3_live_issue_compatibility_driver_fails_closed(&service));
 
+    let seed = "self.live_issue.request_service_at(earliest_tick);";
     let entry = "let mut outcome = self.service_live_issue_scheduler_at(hart, tick)?;";
     let lookahead = "outcome = self.service_live_issue_queue_at(hart, tick)?;";
     for (description, mutation) in [
+        (
+            "compatibility seed dropped",
+            service.replacen(seed, "let _ = earliest_tick;", 1),
+        ),
         (
             "scheduler entry wrapper bypassed",
             service.replacen(
@@ -10299,6 +10344,39 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
     ));
 
     let mutations = [
+        (
+            "frontier entry creates a service request",
+            service.replacen(
+                "let finalized = self.live_issue.enter_scheduler_at(earliest_tick);",
+                "self.live_issue.request_service_at(earliest_tick);\n        let finalized = self.live_issue.enter_scheduler_at(earliest_tick);",
+                1,
+            ),
+            state.clone(),
+            decision_state.clone(),
+            decision_window.clone(),
+        ),
+        (
+            "scheduler wrapper creates a service request",
+            service.replacen(
+                "self.enter_live_issue_scheduler_at(now);",
+                "self.live_issue.request_service_at(now);\n        self.enter_live_issue_scheduler_at(now);",
+                1,
+            ),
+            state.clone(),
+            decision_state.clone(),
+            decision_window.clone(),
+        ),
+        (
+            "compatibility request seed removed",
+            service.replacen(
+                "self.live_issue.request_service_at(earliest_tick);",
+                "let _ = earliest_tick;",
+                1,
+            ),
+            state.clone(),
+            decision_state.clone(),
+            decision_window.clone(),
+        ),
         (
             "compatibility starts after earliest tick",
             service.replacen(
