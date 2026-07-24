@@ -1,3 +1,4 @@
+use super::super::o3_runtime_issue_tests::service_live_issue_queue_until_boundary_for_test;
 use super::*;
 
 use std::sync::{
@@ -279,8 +280,7 @@ fn stage_future_pending_wake_with_head(runtime: &mut O3RuntimeState) -> RiscvCpu
         .expect("canonical pending-address head reservation");
     let mut hart = RiscvHartState::new(HEAD_PC);
     hart.write(reg(5), 0xdead_beef);
-    runtime
-        .schedule_live_speculative_issues(&hart, head, HEAD_WRITEBACK_TICK)
+    service_live_issue_queue_until_boundary_for_test(runtime, &hart, head, HEAD_WRITEBACK_TICK)
         .unwrap();
     assert_eq!(
         runtime.pending_data_address_wake_tick(),

@@ -24,7 +24,7 @@ fn stage_o3_producer_forwarded_control_descendant_inner(
     fetch_events: &[CpuFetchEvent],
     completed_request: Option<MemoryRequestId>,
 ) -> bool {
-    let Some((authority, head)) = state
+    let Some((authority, _head)) = state
         .o3_runtime
         .producer_forwarded_descendant_issue_context()
     else {
@@ -85,7 +85,6 @@ fn stage_o3_producer_forwarded_control_descendant_inner(
     }
     schedule_o3_live_speculative_younger_executions(
         state,
-        head,
         std::slice::from_ref(&descendant),
         issue_tick,
     )

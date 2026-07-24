@@ -1,3 +1,4 @@
+use super::super::o3_runtime_issue_tests::service_live_issue_queue_until_boundary_for_test;
 use super::*;
 
 use crate::o3_runtime::o3_runtime_issue::queue::{O3LiveIssueQueue, O3LiveIssueQueueCapture};
@@ -73,8 +74,12 @@ impl PendingAddressSchedulingFixture {
     }
 
     fn schedule(&mut self, tick: u64) -> Result<(), O3RuntimeError> {
-        self.runtime
-            .schedule_live_speculative_issues(&self.hart, self.head, tick)
+        service_live_issue_queue_until_boundary_for_test(
+            &mut self.runtime,
+            &self.hart,
+            self.head,
+            tick,
+        )
     }
 
     fn scalar_issue_tick(&self) -> Option<u64> {

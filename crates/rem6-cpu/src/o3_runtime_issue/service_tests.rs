@@ -2,8 +2,13 @@ use super::*;
 use crate::o3_runtime::o3_runtime_issue::calendar::O3LiveIssueCalendar;
 use crate::o3_runtime::o3_runtime_pending_address_tests::multiple::ready_two_pending_issue;
 
+#[cfg(test)]
+#[path = "service_tests/legacy_driver.rs"]
+mod legacy_driver;
 #[path = "service_tests/scheduler_request.rs"]
 mod scheduler_request;
+#[cfg(test)]
+pub(in crate::o3_runtime) use legacy_driver::service_live_issue_queue_until_boundary_for_test;
 
 const REPLAY_SERVICE_TICK: u64 = 41;
 
@@ -141,23 +146,7 @@ fn service_live_issue_queue_at_translates_no_wake_to_runtime_error() {
 }
 
 #[test]
-fn schedule_live_speculative_issues_translates_no_wake_and_preserves_diagnostics() {
-    let mut fixture = ScalarIssueFixture::new_unbound(2, ScalarIssueCase::SameWindowLinkReturn);
-    fixture.bind_row(1);
-    let sequence = fixture.sequence(SECOND_PC);
-
-    assert_eq!(
-        fixture
-            .runtime
-            .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20,),
-        Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence }),
-    );
-    assert_eq!(fixture.runtime.live_issue.resident_sequences(), &[sequence]);
-    assert_eq!(fixture.runtime.live_issue_service_tick(), None);
-}
-
-#[test]
-fn two_pending_replay_reclassifies_older_resident_and_preserves_compatibility_wake() {
+fn two_pending_replay_reclassifies_older_resident_and_preserves_test_driver_wake() {
     let (mut direct, hart, _, survivor, replay) = replay_survivor_fixture();
     let outcome = direct
         .service_live_issue_queue_at(&hart, REPLAY_SERVICE_TICK)
@@ -175,9 +164,13 @@ fn two_pending_replay_reclassifies_older_resident_and_preserves_compatibility_wa
     assert_eq!(direct.stats().issued_rows(), 0);
 
     let (mut compatibility, hart, head, survivor, replay) = replay_survivor_fixture();
-    compatibility
-        .schedule_live_speculative_issues(&hart, head, REPLAY_SERVICE_TICK)
-        .unwrap();
+    service_live_issue_queue_until_boundary_for_test(
+        &mut compatibility,
+        &hart,
+        head,
+        REPLAY_SERVICE_TICK,
+    )
+    .unwrap();
     assert_eq!(compatibility.live_issue.resident_sequences(), [survivor]);
     assert_eq!(
         compatibility.live_issue_service_tick(),

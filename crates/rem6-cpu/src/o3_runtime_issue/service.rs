@@ -21,15 +21,18 @@ impl O3LiveIssueServiceOutcome {
         self.issued_rows
     }
 
+    #[cfg(test)]
     pub(in crate::o3_runtime) const fn next_service_tick(self) -> Option<u64> {
         self.next_service_tick
     }
 
+    #[cfg(test)]
     pub(in crate::o3_runtime) const fn replay_boundary(self) -> Option<u64> {
         self.replay_boundary
     }
 
-    const fn waits_for_pending_dependency(self) -> bool {
+    #[cfg(test)]
+    pub(in crate::o3_runtime) const fn waits_for_pending_dependency(self) -> bool {
         self.waits_for_pending_dependency
     }
 }
@@ -62,14 +65,17 @@ impl O3RuntimeState {
         self.live_issue.requested_service_tick()
     }
 
+    #[cfg(test)]
     pub(crate) fn live_issue_is_quiescent(&self) -> bool {
         self.live_issue.is_quiescent()
     }
 
+    #[cfg(test)]
     pub fn live_issue_telemetry(&self) -> O3LiveIssueTelemetry {
         self.live_issue.telemetry()
     }
 
+    #[cfg(test)]
     pub fn live_issue_trace_records(&self) -> &[O3LiveIssueTraceRecord] {
         self.live_issue.trace_records()
     }
@@ -78,6 +84,7 @@ impl O3RuntimeState {
         self.live_issue.seal_decision_before(tick);
     }
 
+    #[cfg(test)]
     pub(crate) fn seal_live_issue_decision(&mut self) {
         self.live_issue.seal_current_decision();
     }
@@ -398,45 +405,5 @@ impl O3RuntimeState {
             });
         }
         Ok(O3PreparedLiveIssueBatch::Prepared(prepared))
-    }
-
-    pub(crate) fn schedule_live_speculative_issues(
-        &mut self,
-        hart: &RiscvHartState,
-        head: O3LiveIssueHeadReservation,
-        earliest_tick: u64,
-    ) -> Result<(), O3RuntimeError> {
-        if !self
-            .snapshot
-            .reorder_buffer
-            .iter()
-            .any(|entry| entry.is_live_staged() && entry.sequence() == head.sequence())
-            && !self.pending_data_address_has_producer_sequence(head.sequence())
-        {
-            return Ok(());
-        }
-        self.live_issue.request_service_at(earliest_tick);
-        let mut tick = earliest_tick;
-        let mut outcome = self.service_live_issue_scheduler_at(hart, tick)?;
-        loop {
-            if outcome.replay_boundary().is_some() {
-                break;
-            }
-            let Some(next_tick) = outcome.next_service_tick() else {
-                break;
-            };
-            if outcome.waits_for_pending_dependency() && next_tick > earliest_tick {
-                break;
-            }
-            if self.pending_data_address_wake_tick() == Some(next_tick) {
-                break;
-            }
-            tick = next_tick;
-            outcome = self.service_live_issue_queue_at(hart, tick)?;
-        }
-        if self.live_issue_is_quiescent() {
-            self.seal_live_issue_decision();
-        }
-        Ok(())
     }
 }

@@ -1,5 +1,6 @@
 use rem6_isa_riscv::{RiscvDecodedInstruction, RiscvHartState};
 
+use super::super::o3_runtime_issue_tests::service_live_issue_queue_until_boundary_for_test;
 use super::*;
 
 fn i_type(imm: i64, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -61,9 +62,13 @@ fn deep_runtime() -> (
     let head = runtime
         .live_data_access_head_reservation(load.fetch().request_id())
         .unwrap();
-    runtime
-        .schedule_live_speculative_issues(&RiscvHartState::new(0x8000), head, 31)
-        .unwrap();
+    service_live_issue_queue_until_boundary_for_test(
+        &mut runtime,
+        &RiscvHartState::new(0x8000),
+        head,
+        31,
+    )
+    .unwrap();
     assert_eq!(runtime.live_speculative_executions.len(), 7);
     assert!(!runtime.writeback_reservations().is_empty());
     (runtime, load, committed_rename_map)

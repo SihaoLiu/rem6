@@ -356,7 +356,7 @@ fn riscv_data_issue_lifecycle_tests_live_in_focused_child() {
         "fn retry_response_discards_pending_o3_trace_data_access_outcome()",
         "fn control_boundary_after_stats_reset_discards_pending_o3_data_access_outcome()",
         "fn detailed_scalar_load_submission_stages_live_o3_rob_and_lsq_rows()",
-        "fn assert_mode_disable_preserves_dependent_scalar_load_younger_wakeup_timing(",
+        "fn assert_mode_disable_uses_completed_fetch_timing_for_dependent_scalar_load_younger(",
     ] {
         assert!(
             child.contains(anchor),
@@ -927,7 +927,7 @@ fn riscv_detailed_o3_linked_control_tests_have_focused_owner() {
     let linked_code = rust_code_without_comments_and_literals(&linked);
     let response_code = rust_code_without_comments_and_literals(&response);
     for function in [
-        "producer_forwarded_target_response_stages_descendant_without_later_drive_turn",
+        "producer_forwarded_target_response_issues_descendant_after_o3_wake",
         "producer_forwarded_target_response_respects_frontend_gates_and_exact_completion",
     ] {
         assert!(
@@ -1639,7 +1639,6 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     assert!(!production_code.contains("producer_fetch"));
     for helper in [
         "issue_matches",
-        "record_pending_data_address_materialization",
         "record_pending_data_address_materialization_without_issue_removal",
     ] {
         assert!(
@@ -1650,6 +1649,13 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
             assert!(!production_defines_exact_function(source, helper));
         }
     }
+    assert!(
+        !production_defines_exact_function(
+            &pending_code,
+            "record_pending_data_address_materialization"
+        ),
+        "pending-address immediate-removal wrapper must stay test-only"
+    );
     let materialization = rust_function_definition(
         &pending_code,
         "record_pending_data_address_materialization_without_issue_removal",
@@ -1671,8 +1677,9 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
             && !materialization.contains("pending_data_addresses.first_mut()")
     );
     let materialization_wrapper =
-        rust_function_definition(&pending_code, "record_pending_data_address_materialization")
-            .unwrap();
+        rust_function_definition(&pending, "record_pending_data_address_materialization").unwrap();
+    assert!(pending
+        .contains("#[cfg(test)]\n    pub(super) fn record_pending_data_address_materialization("));
     assert!(materialization_wrapper
         .contains("record_pending_data_address_materialization_without_issue_removal"));
     assert!(materialization_wrapper.contains("self.remove_durable_live_issue_at("));
@@ -1707,7 +1714,6 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "pending_data_address_producer_ready_tick",
         "pending_data_address_committed_producer_ready_tick",
         "pending_data_address_sequence_for_replay",
-        "pending_data_address_has_producer_sequence",
         "pending_data_address_wake_seed",
         "pending_data_address_wake_tick",
         "record_pending_data_address_resource_blocked",
@@ -1848,6 +1854,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     for anchor in [
         "earliest_unpublished_memory_result_writeback_tick()",
         "pending_data_address_wake_tick()",
+        "live_issue_service_tick()",
         "pending_ready_tick()",
         "owned_scheduler_wakes()",
         "producer_forwarded_control_target()",
@@ -1858,6 +1865,15 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
             "shared desired-wake owner is missing source `{anchor}`"
         );
     }
+    assert_eq!(
+        desired_wake.matches("live_issue_service_tick()").count(),
+        1,
+        "shared desired-wake owner must calculate the live-issue service source exactly once"
+    );
+    assert!(
+        desired_wake.contains(".live_issue_service_tick()\n        .map(|tick| tick.max(now))"),
+        "live-issue wake source must clamp stale requests to the current callback tick"
+    );
     let desired_sources_start = desired_wake
         .find("let desired_tick = [")
         .expect("shared desired-wake owner must build the desired-tick source list");
@@ -1876,6 +1892,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     for source in [
         "memory_result",
         "pending_address",
+        "live_issue",
         "restored_live_gate",
         "forwarded_control",
         "translated_result_pair",
@@ -2428,6 +2445,8 @@ fn task8_dependent_result_address_production_ownership_is_final() {
         fs::read_to_string(crate_dir.join(runtime_owner_path)).expect("runtime root source");
     let issue_root_module_source =
         fs::read_to_string(crate_dir.join(issue_root_path)).expect("issue root source");
+    let pending_owner_source =
+        fs::read_to_string(crate_dir.join(pending_owner_path)).expect("pending owner source");
     let runtime_owner = source(runtime_owner_path);
     let calendar_owner = source(calendar_owner_path);
     let pending_owner = source(pending_owner_path);
@@ -2753,7 +2772,7 @@ fn task8_dependent_result_address_production_ownership_is_final() {
 
     for helper in [
         "issue_matches",
-        "record_pending_data_address_materialization",
+        "record_pending_data_address_materialization_without_issue_removal",
     ] {
         assert_eq!(
             owners_of(helper),
@@ -2762,6 +2781,17 @@ fn task8_dependent_result_address_production_ownership_is_final() {
         );
         assert_eq!(rust_function_definition_count(pending_owner, helper), 1);
     }
+    assert_eq!(
+        owners_of("record_pending_data_address_materialization"),
+        Vec::<String>::new(),
+        "pending-address immediate-removal wrapper must stay out of production"
+    );
+    assert!(
+        pending_owner_source.contains(
+            "#[cfg(test)]\n    pub(super) fn record_pending_data_address_materialization("
+        ),
+        "pending-address immediate-removal wrapper must stay cfg-test in the row owner"
+    );
 
     for helper in [
         "pending_data_address_count",
@@ -2797,7 +2827,6 @@ fn task8_dependent_result_address_production_ownership_is_final() {
         "pending_data_address_producer_ready_tick",
         "pending_data_address_committed_producer_ready_tick",
         "pending_data_address_sequence_for_replay",
-        "pending_data_address_has_producer_sequence",
         "pending_data_address_wake_seed",
         "pending_data_address_wake_tick",
         "record_pending_data_address_resource_blocked",
@@ -3964,7 +3993,8 @@ fn o3_persistent_live_issue_state_owns_membership() {
     let issue_source = fs::read_to_string(&issue_path).unwrap();
     let issue_tests_source = fs::read_to_string(&issue_tests_path).unwrap();
     let state_source = production_rust_source(&fs::read_to_string(&state_path).unwrap());
-    let state_rollback = production_rust_source(&fs::read_to_string(&state_rollback_path).unwrap());
+    let state_rollback_source = fs::read_to_string(&state_rollback_path).unwrap();
+    let state_rollback = production_rust_source(&state_rollback_source);
     let checkpoint = production_rust_source(&fs::read_to_string(checkpoint_path).unwrap());
 
     assert!(
@@ -3981,12 +4011,7 @@ fn o3_persistent_live_issue_state_owns_membership() {
         path_owned_module_declaration_count(&issue_source, "o3_runtime_issue/state.rs", "state",),
         1,
     );
-    for method in [
-        "begin_transaction",
-        "end_transaction",
-        "transaction_active",
-        "is_quiescent",
-    ] {
+    for method in ["begin_transaction", "end_transaction", "transaction_active"] {
         assert_eq!(
             rust_function_definition_count(&state_source, method),
             0,
@@ -3997,6 +4022,12 @@ fn o3_persistent_live_issue_state_owns_membership() {
             "rollback transaction method `{method}` must preserve internal visibility",
         );
     }
+    assert!(
+        !production_function_is_visible(&state_rollback, "is_quiescent"),
+        "rollback quiescence helper must stay test-only"
+    );
+    assert!(state_rollback_source
+        .contains("#[cfg(test)]\n    pub(in crate::o3_runtime) fn is_quiescent("));
     assert_eq!(
         path_owned_module_declaration_count(
             &issue_tests_source,
@@ -4445,10 +4476,14 @@ fn o3_persistent_live_issue_state_owns_candidate_inventory() {
     }
     assert_eq!(
         retire_schedule
-            .matches(".schedule_live_speculative_issues(&hart, head, issue_tick)")
+            .matches("refresh_o3_writeback_wake(issue_tick)")
             .count(),
         1,
-        "retire-window live issue path must delegate directly without a request adapter"
+        "retire-window live issue path must refresh the O3 wake after binding packets"
+    );
+    assert!(
+        !retire_schedule.contains("schedule_live_speculative_issues"),
+        "retire-window live issue path must not run the removed compatibility driver"
     );
     let identity_definitions = production_struct_definitions(&issue_identity)
         .into_iter()
@@ -4570,7 +4605,8 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
     let transaction_tests = fs::read_to_string(&transaction_tests_path).unwrap();
     let transaction_replan_tests = fs::read_to_string(&transaction_replan_tests_path).unwrap();
     let issue_tests_source = fs::read_to_string(&issue_tests_path).unwrap();
-    let control = production_rust_source(&fs::read_to_string(&control_path).unwrap());
+    let control_source = fs::read_to_string(&control_path).unwrap();
+    let control = production_rust_source(&control_source);
     let writeback = production_rust_source(&fs::read_to_string(&writeback_path).unwrap());
     let error_source = fs::read_to_string(&error_path).unwrap();
     let error = production_rust_source(&error_source);
@@ -4826,7 +4862,14 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
     assert!(in_place.contains("(reservation.sequence(), reservation)"));
     assert!(in_place.contains("record_live_speculative_execution_with_reservation"));
 
-    let wrapper = rust_function_definition(&control, "record_live_speculative_execution").unwrap();
+    assert!(
+        !production_defines_exact_function(&control, "record_live_speculative_execution"),
+        "immediate fixed-FU live execution wrapper must stay test-only"
+    );
+    assert!(control_source
+        .contains("#[cfg(test)]\n    pub(crate) fn record_live_speculative_execution("));
+    let wrapper =
+        rust_function_definition(&control_source, "record_live_speculative_execution").unwrap();
     let reserved = rust_function_definition(
         &control,
         "record_live_speculative_execution_with_reservation",
@@ -5002,11 +5045,9 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
         "finish_live_issue_service_at",
         "classify_live_issue_queue_after_service",
         "prepare_live_issue_batch",
-        "schedule_live_speculative_issues",
         "enter_live_issue_scheduler_at",
         "service_live_issue_scheduler_at",
         "seal_live_issue_decision_before",
-        "seal_live_issue_decision",
     ] {
         assert!(
             production_defines_exact_function(&service, owner),
@@ -5017,6 +5058,10 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
             "issue facade retains service function `{owner}`",
         );
     }
+    assert!(
+        !production_defines_exact_function(&service, "schedule_live_speculative_issues"),
+        "service owner must not retain the removed compatibility driver"
+    );
     assert!(o3_live_issue_service_is_exactly_one_tick(&service));
     assert!(o3_live_issue_replay_finalization_is_shared(&service));
     assert!(o3_live_issue_scheduler_entry_is_pruned(
@@ -5036,38 +5081,19 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
     ));
     assert!(!calendar.contains("O3LiveIssueTickDecision"));
 
-    let compatibility = rust_function_definition(&service, "schedule_live_speculative_issues")
-        .expect("missing temporary compatibility driver");
-    assert_eq!(
-        rust_method_call_positions(&compatibility, "service_live_issue_queue_at").len(),
-        1,
+    assert!(
+        rust_function_definition(&service, "schedule_live_speculative_issues").is_none(),
+        "production service must not retain the temporary compatibility driver"
     );
     assert_eq!(
-        rust_method_call_positions(&compatibility, "service_live_issue_scheduler_at").len(),
+        rust_method_call_positions(&service, "service_live_issue_queue_at").len(),
         1,
+        "scheduler wrapper must be the sole production direct-service caller"
     );
-    assert!(o3_live_issue_compatibility_driver_fails_closed(&service));
-    for forbidden in [
-        "O3LiveIssueQueue::materialize",
-        "O3LiveIssueDependencyTable::new",
-        "O3LiveIssueCalendar::capture",
-        ".plan_at(",
-        "prepare_live_issue_batch",
-        "O3LiveIssueTransaction::record",
-    ] {
-        assert!(
-            !compatibility.contains(forbidden),
-            "compatibility driver retains planning authority `{forbidden}`",
-        );
-    }
-    assert!(compatibility
-        .contains("let mut outcome = self.service_live_issue_scheduler_at(hart, tick)?;"));
-    assert!(compatibility.contains("outcome = self.service_live_issue_queue_at(hart, tick)?;"));
-    assert!(compatibility
-        .contains("outcome.waits_for_pending_dependency() && next_tick > earliest_tick"));
-    assert!(compatibility.contains("self.pending_data_address_wake_tick() == Some(next_tick)"));
-    assert!(compatibility.contains("if self.live_issue_is_quiescent()"));
-    assert!(compatibility.contains("self.seal_live_issue_decision();"));
+    assert!(
+        service.contains("pub(crate) fn service_live_issue_scheduler_at("),
+        "production service must retain the scheduler-facing wrapper"
+    );
 
     let classify = rust_function_definition(&service, "classify_live_issue_queue_after_service")
         .expect("missing post-service classifier");
@@ -5140,16 +5166,15 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
         "service_live_issue_queue_at_requests_earliest_dependency_ready_tick",
         "service_live_issue_queue_at_allows_capacity_remaining_same_tick_reentry",
         "service_live_issue_queue_at_translates_no_wake_to_runtime_error",
-        "schedule_live_speculative_issues_translates_no_wake_and_preserves_diagnostics",
-        "two_pending_replay_reclassifies_older_resident_and_preserves_compatibility_wake",
+        "two_pending_replay_reclassifies_older_resident_and_preserves_test_driver_wake",
         "preplan_replay_with_empty_survivors_records_no_issue_decision",
         "postplan_replay_with_empty_survivors_preserves_arbitration_max_rows",
-        "compatibility_scheduler_entry_issues_independent_work_before_retained_lookahead",
+        "scheduler_facing_explicit_turns_issue_independent_work_before_retained_lookahead",
         "scheduler_entry_seals_future_active_decision_before_earlier_tick",
         "scheduler_facing_service_finalizes_prior_decisions_without_pruning_lookahead",
         "scheduler_facing_same_tick_wake_preserves_future_request_and_observations",
         "scheduler_facing_early_wake_advances_frontier_without_servicing_future_request",
-        "compatibility_seeds_and_services_earliest_tick",
+        "scheduler_facing_explicit_turns_service_returned_future_request",
         "stats_reset_clears_cycle_evidence_without_delaying_issue_timing",
         "live_issue_stats_same_tick_reentry_projects_once",
         "live_issue_stats_reset_rebases_unsealed_decision",
@@ -5458,7 +5483,7 @@ fn o3_runtime_issue_lives_in_focused_module() {
         assert!(!service.contains(anchor), "service duplicates `{anchor}`");
     }
     for anchor in [
-        "pub(crate) fn schedule_live_speculative_issues(",
+        "pub(crate) fn service_live_issue_scheduler_at(",
         "pub(crate) fn service_live_issue_queue_at(",
         "fn classify_live_issue_queue_after_service(",
         "fn prepare_live_issue_batch(",
@@ -5473,14 +5498,17 @@ fn o3_runtime_issue_lives_in_focused_module() {
         assert!(!issue.contains(anchor), "issue facade retains `{anchor}`");
     }
     assert!(
+        !service.contains("schedule_live_speculative_issues"),
+        "service owner must not retain the removed compatibility driver"
+    );
+    assert!(
         !issue.contains("O3ScopedIssueScheduler::new(")
             && !service.contains("O3ScopedIssueScheduler::new("),
         "focused issue owners must delegate scoped arbitration to calendar.rs"
     );
-    assert!(
-        live_retire.contains(".schedule_live_speculative_issues("),
-        "src/riscv_live_retire_window.rs must delegate live younger issue scheduling"
-    );
+    assert!(live_retire.contains(".bind_live_staged_issue_packet("));
+    assert!(live_retire.contains("refresh_o3_writeback_wake(issue_tick)"));
+    assert!(!live_retire.contains(".schedule_live_speculative_issues("));
     assert!(
         !live_retire.contains("O3ScopedIssueScheduler"),
         "src/riscv_live_retire_window.rs must not construct the scoped issue scheduler"
@@ -6110,6 +6138,99 @@ fn o3_writeback_transfer_planning_stays_in_generic_pipeline_module() {
             "src/o3_pipeline.rs must remain generic rather than owning RISC-V runtime authority `{runtime_authority}`"
         );
     }
+}
+
+#[test]
+fn o3_writeback_wake_paths_share_live_issue_desired_tick() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let wake = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/riscv_o3_writeback_wake.rs")).unwrap(),
+    );
+    let desired = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/riscv_o3_writeback_wake/desired.rs")).unwrap(),
+    );
+
+    let desired_owner = rust_function_definition(&desired, "desired_o3_writeback_wake")
+        .expect("desired.rs must own desired_o3_writeback_wake");
+    assert_eq!(
+        desired_owner.matches("live_issue_service_tick()").count(),
+        1,
+        "shared desired-wake owner must read the live-issue service source exactly once"
+    );
+    assert!(
+        desired_owner.contains(".live_issue_service_tick()\n        .map(|tick| tick.max(now))"),
+        "live-issue desired wake must clamp stale-past requests to now"
+    );
+    for list_anchor in ["let desired_tick = [", "let allow_current = ["] {
+        let start = desired_owner
+            .find(list_anchor)
+            .unwrap_or_else(|| panic!("missing desired-wake list `{list_anchor}`"));
+        let end = start
+            + desired_owner[start..]
+                .find(']')
+                .unwrap_or_else(|| panic!("missing end of desired-wake list `{list_anchor}`"));
+        let list = &desired_owner[start..end];
+        assert!(
+            list.contains("live_issue"),
+            "desired-wake list `{list_anchor}` must include the live-issue source"
+        );
+    }
+
+    let requested = rust_function_definition(&wake, "requested_o3_writeback_wake_tick")
+        .expect("requested wake path must exist");
+    let refresh = rust_function_definition(&wake, "refresh_o3_writeback_wake")
+        .expect("refresh wake path must exist");
+    for (name, definition) in [
+        ("requested_o3_writeback_wake_tick", requested),
+        ("refresh_o3_writeback_wake", refresh),
+    ] {
+        assert_eq!(
+            rust_method_call_positions(&definition, "desired_o3_writeback_wake").len(),
+            1,
+            "{name} must delegate once to shared desired-wake helper"
+        );
+        assert!(
+            !definition.contains("live_issue_service_tick()"),
+            "{name} must not duplicate live-issue desired-wake calculation"
+        );
+    }
+}
+
+#[test]
+fn o3_writeback_wake_callback_services_live_issue_in_structural_order() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let wake = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/riscv_o3_writeback_wake.rs")).unwrap(),
+    );
+    let fired = rust_function_definition(&wake, "mark_o3_writeback_wake_fired")
+        .expect("O3 writeback wake fired callback must exist");
+    let compact = compact_rust_code(&fired);
+    let anchors = [
+        "letfetch_events=self.core.fetch_events();",
+        "letmutstate=self.state.lock().expect();",
+        "state.o3_runtime.prune_writeback_calendar_before(now);",
+        "state.o3_writeback_wake.mark_fired(now);",
+        "state.wake_ready_o3_data_access_younger_window(now,&fetch_events);",
+        "lethart=state.hart.clone();",
+        "state.o3_runtime.service_live_issue_scheduler_at(&hart,now)",
+        "state.refresh_o3_writeback_wake(now);",
+    ];
+    let positions = anchors
+        .iter()
+        .map(|anchor| {
+            compact
+                .find(anchor)
+                .unwrap_or_else(|| panic!("fired callback is missing ordered anchor `{anchor}`"))
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "O3 writeback fired callback must order mark_fired, pending-address wake, live-issue service, then refresh"
+    );
+    assert!(
+        compact.contains("get_or_insert(RiscvCpuError::O3Runtime(error))"),
+        "fired callback must preserve the first live-issue scheduler error as an O3 runtime error"
+    );
 }
 
 #[test]
@@ -9524,8 +9645,8 @@ fn o3_live_issue_service_is_exactly_one_tick(source: &str) -> bool {
     .into_iter()
     .all(|anchor| rust_anchor_occurs_at_brace_depth(&service, anchor, 1));
     let protected_identifier_counts = [
-        ("service_live_issue_queue_at", 3),
-        ("service_live_issue_scheduler_at", 2),
+        ("service_live_issue_queue_at", 2),
+        ("service_live_issue_scheduler_at", 1),
         ("enter_live_issue_scheduler_at", 2),
         ("plan_at", 2),
         ("prepare_live_issue_batch", 2),
@@ -9555,8 +9676,8 @@ fn o3_live_issue_service_is_exactly_one_tick(source: &str) -> bool {
         && rust_method_call_positions(&service, "service_live_issue_queue_at").is_empty()
         && rust_method_call_positions(&production, "plan_at").len() == 2
         && compact_production.matches(".plan_at(now,").count() == 2
-        && rust_method_call_positions(&production, "service_live_issue_queue_at").len() == 2
-        && rust_method_call_positions(&production, "service_live_issue_scheduler_at").len() == 1
+        && rust_method_call_positions(&production, "service_live_issue_queue_at").len() == 1
+        && rust_method_call_positions(&production, "service_live_issue_scheduler_at").is_empty()
         && rust_method_call_positions(&production, "prepare_live_issue_batch").len() == 1
         && rust_method_call_positions(&production, "finish_live_issue_replay_at").len() == 4
         && rust_method_call_positions(&production, "finish_live_issue_service_at").len() == 2
@@ -9569,41 +9690,6 @@ fn o3_live_issue_service_is_exactly_one_tick(source: &str) -> bool {
             .matches("O3LiveIssueTransaction::record")
             .count()
             == 1
-}
-
-fn o3_live_issue_compatibility_driver_fails_closed(source: &str) -> bool {
-    let production = production_rust_source(source);
-    let Some(compatibility) =
-        rust_function_definition(&production, "schedule_live_speculative_issues")
-    else {
-        return false;
-    };
-    let compact = compatibility
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect::<String>();
-    let seed = "self.live_issue.request_service_at(earliest_tick);";
-    let entry = "letmutoutcome=self.service_live_issue_scheduler_at(hart,tick)?;";
-    compact.matches(seed).count() == 1
-        && compact.find(seed) < compact.find(entry)
-        && compact.contains("letmuttick=earliest_tick;")
-        && compact.contains(entry)
-        && compact.contains("outcome=self.service_live_issue_queue_at(hart,tick)?;")
-        && rust_method_call_positions(&compatibility, "service_live_issue_scheduler_at").len() == 1
-        && rust_method_call_positions(&compatibility, "service_live_issue_queue_at").len() == 1
-        && !compatibility.contains("enter_live_issue_scheduler_at")
-        && ![
-            "matchself.service_live_issue_queue_at",
-            "unwrap_or(",
-            "unwrap_or_default(",
-            "unwrap_or_else(",
-            ".ok()",
-            "ifletOk(",
-        ]
-        .into_iter()
-        .any(|mutation| compact.contains(mutation))
-        && compact.contains("outcome.waits_for_pending_dependency()&&next_tick>earliest_tick")
-        && compact.contains("ifself.live_issue_is_quiescent(){self.seal_live_issue_decision();}")
 }
 
 fn o3_live_issue_replay_finalization_is_shared(source: &str) -> bool {
@@ -9673,11 +9759,6 @@ fn o3_live_issue_scheduler_entry_is_pruned(
     decision_state_source: &str,
     decision_window_source: &str,
 ) -> bool {
-    let Some(compatibility) =
-        rust_function_definition(service_source, "schedule_live_speculative_issues")
-    else {
-        return false;
-    };
     let Some(runtime_entry) =
         rust_function_definition(service_source, "enter_live_issue_scheduler_at")
     else {
@@ -9701,7 +9782,6 @@ fn o3_live_issue_scheduler_entry_is_pruned(
     let Some(finalize) = rust_function_definition(decision_window_source, "finalize_before") else {
         return false;
     };
-    let compatibility = compact_rust_code(&compatibility);
     let runtime_entry = compact_rust_code(&runtime_entry);
     let scheduler_service = compact_rust_code(&scheduler_service);
     let request = compact_rust_code(&request);
@@ -9713,8 +9793,6 @@ fn o3_live_issue_scheduler_entry_is_pruned(
     let decision_window = compact_rust_code(decision_window_source);
     let enter = "letfinalized=self.live_issue.enter_scheduler_at(earliest_tick);";
     let record = "self.stats.record_issue_decisions(finalized.issue_cycles,finalized.issued_rows,finalized.resource_blocked_rows,finalized.dependency_blocked_rows,finalized.max_rows_at_tick,);";
-    let compatibility_seed = "self.live_issue.request_service_at(earliest_tick);";
-    let compatibility_entry = "self.service_live_issue_scheduler_at(hart,tick)?";
     let entry_anchors = [enter, record];
     let entry_positions = entry_anchors
         .iter()
@@ -9726,32 +9804,13 @@ fn o3_live_issue_scheduler_entry_is_pruned(
         .collect::<Option<Vec<_>>>();
 
     let checks = [
-        (
-            "compatibility entry",
-            compatibility.contains(compatibility_entry),
-        ),
-        (
-            "compatibility request ownership",
-            compatibility.matches(compatibility_seed).count() == 1
-                && compatibility.find(compatibility_seed) < compatibility.find(compatibility_entry),
-        ),
+        ("no compatibility driver", !service_source.contains("schedule_live_speculative_issues")),
         (
             "scheduler service entry",
             scheduler_service.contains("self.enter_live_issue_scheduler_at(now);")
                 && scheduler_service.contains("self.service_live_issue_queue_at(hart,now)")
                 && !scheduler_service.contains("request_service_at"),
         ),
-        (
-            "lookahead keeps real frontier",
-            compatibility.contains("outcome=self.service_live_issue_queue_at(hart,tick)?;")
-                && compatibility
-                    .matches("service_live_issue_scheduler_at(hart,tick)")
-                    .count()
-                    == 1,
-        ),
-        ("compatibility tick", compatibility.contains("letmuttick=earliest_tick;")),
-        ("no compatibility start", !compatibility.contains("start_tick")),
-        ("no compatibility floor", !compatibility.contains("service_floor_tick")),
         (
             "entry visibility",
             production_function_is_visible(service_source, "enter_live_issue_scheduler_at"),
@@ -9911,10 +9970,6 @@ fn o3_live_issue_delayed_stats_are_projected(
     else {
         return false;
     };
-    let Some(seal_current) = rust_function_definition(service_source, "seal_live_issue_decision")
-    else {
-        return false;
-    };
     let stats = compact(&stats);
     let record = compact(&record);
     let project = compact(&project);
@@ -9934,7 +9989,6 @@ fn o3_live_issue_delayed_stats_are_projected(
     let remove_future = compact(&remove_future);
     let state_reset = compact(&state_reset);
     let seal_before = compact(&seal_before);
-    let seal_current = compact(&seal_current);
     let service_source = compact(service_source);
     let state_source = compact(state_source);
     let decision_window_source = compact(decision_window_source);
@@ -9997,8 +10051,6 @@ fn o3_live_issue_delayed_stats_are_projected(
         )
         && seal_before.contains("self.live_issue.seal_decision_before(tick)")
         && !seal_before.contains("self.stats.record_issue")
-        && seal_current.contains("self.live_issue.seal_current_decision()")
-        && !seal_current.contains("self.stats.record_issue")
         && service_source
             .contains("complete_committed_live_issue_removals_at(now,&issued_sequences)")
 }
@@ -10276,64 +10328,6 @@ fn o3_live_issue_replay_policy_rejects_unclassified_survivor_mutations() {
 }
 
 #[test]
-fn o3_live_issue_service_compatibility_policy_rejects_silent_result_mutations() {
-    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let service = fs::read_to_string(crate_dir.join("src/o3_runtime_issue/service.rs")).unwrap();
-    assert!(o3_live_issue_compatibility_driver_fails_closed(&service));
-
-    let seed = "self.live_issue.request_service_at(earliest_tick);";
-    let entry = "let mut outcome = self.service_live_issue_scheduler_at(hart, tick)?;";
-    let lookahead = "outcome = self.service_live_issue_queue_at(hart, tick)?;";
-    for (description, mutation) in [
-        (
-            "compatibility seed dropped",
-            service.replacen(seed, "let _ = earliest_tick;", 1),
-        ),
-        (
-            "scheduler entry wrapper bypassed",
-            service.replacen(
-                entry,
-                "self.enter_live_issue_scheduler_at(tick);\n        let mut outcome = self.service_live_issue_queue_at(hart, tick)?;",
-                1,
-            ),
-        ),
-        (
-            "defaulted error",
-            service.replacen(
-                entry,
-                "let mut outcome = self.service_live_issue_scheduler_at(hart, tick).unwrap_or_default();",
-                1,
-            ),
-        ),
-        (
-            "discarded error",
-            service.replacen(
-                entry,
-                "let mut outcome = self.service_live_issue_scheduler_at(hart, tick).ok().unwrap_or_default();",
-                1,
-            ),
-        ),
-        (
-            "silent lookahead break",
-            service.replacen(
-                lookahead,
-                "outcome = match self.service_live_issue_queue_at(hart, tick) { Ok(outcome) => outcome, Err(_) => break };",
-                1,
-            ),
-        ),
-    ] {
-        assert_ne!(
-            mutation, service,
-            "compatibility mutation did not apply: {description}"
-        );
-        assert!(
-            !o3_live_issue_compatibility_driver_fails_closed(&mutation),
-            "accepted weakened compatibility result mutation: {description}",
-        );
-    }
-}
-
-#[test]
 fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let service = fs::read_to_string(crate_dir.join("src/o3_runtime_issue/service.rs")).unwrap();
@@ -10367,28 +10361,6 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
             service.replacen(
                 "self.enter_live_issue_scheduler_at(now);",
                 "self.live_issue.request_service_at(now);\n        self.enter_live_issue_scheduler_at(now);",
-                1,
-            ),
-            state.clone(),
-            decision_state.clone(),
-            decision_window.clone(),
-        ),
-        (
-            "compatibility request seed removed",
-            service.replacen(
-                "self.live_issue.request_service_at(earliest_tick);",
-                "let _ = earliest_tick;",
-                1,
-            ),
-            state.clone(),
-            decision_state.clone(),
-            decision_window.clone(),
-        ),
-        (
-            "compatibility starts after earliest tick",
-            service.replacen(
-                "let mut tick = earliest_tick;",
-                "let mut tick = earliest_tick.saturating_add(1);",
                 1,
             ),
             state.clone(),

@@ -79,14 +79,22 @@ fn scheduler_facing_early_wake_advances_frontier_without_servicing_future_reques
 }
 
 #[test]
-fn compatibility_seeds_and_services_earliest_tick() {
+fn scheduler_facing_explicit_turns_service_returned_future_request() {
     let mut fixture = dependency_lookahead_fixture();
     fixture.runtime.live_issue.clear_requested_service_tick();
     let telemetry = fixture.runtime.live_issue_telemetry();
 
+    fixture.runtime.live_issue.request_service_at(20);
+    let first = fixture
+        .runtime
+        .service_live_issue_scheduler_at(&fixture.hart, 20)
+        .unwrap();
+    assert_eq!(first.next_service_tick(), Some(30));
+    assert_eq!(fixture.runtime.live_issue_service_tick(), Some(30));
+
     fixture
         .runtime
-        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20)
+        .service_live_issue_scheduler_at(&fixture.hart, 30)
         .unwrap();
 
     assert_eq!(fixture.issue_tick(SECOND_PC), 30);
@@ -105,39 +113,43 @@ fn compatibility_seeds_and_services_earliest_tick() {
 }
 
 #[test]
-fn compatibility_scheduler_entry_issues_independent_work_before_retained_lookahead() {
+fn scheduler_facing_explicit_turns_issue_independent_work_before_retained_lookahead() {
     let mut fixture = dependency_lookahead_fixture();
+    fixture.runtime.live_issue.request_service_at(20);
     fixture
         .runtime
-        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20)
+        .service_live_issue_scheduler_at(&fixture.hart, 20)
         .unwrap();
-    assert_eq!(fixture.issue_tick(SECOND_PC), 30);
     let before = fixture.runtime.stats();
-    assert_eq!(before.issue_cycles(), 2);
-    assert_eq!(before.issued_rows(), 1);
-    assert_eq!(
-        fixture.runtime.live_issue.counted_cycle_ticks_for_test(),
-        [20, 30],
-    );
+    assert_eq!(before.issue_cycles(), 1);
+    assert_eq!(before.issued_rows(), 0);
+    assert_eq!(fixture.runtime.live_issue_service_tick(), Some(30));
 
     fixture.bind_row_at(2, 21);
     assert_eq!(fixture.runtime.live_issue_service_tick(), Some(21));
     fixture
         .runtime
-        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 21)
+        .service_live_issue_scheduler_at(&fixture.hart, 21)
         .unwrap();
     assert_eq!(fixture.issue_tick(THIRD_PC), 21);
     let after = fixture.runtime.stats();
     assert_eq!(after.issue_cycles(), before.issue_cycles() + 1);
     assert_eq!(after.issued_rows(), before.issued_rows() + 1);
+    assert_eq!(fixture.runtime.live_issue_service_tick(), Some(30));
     assert_eq!(
         fixture.runtime.live_issue.counted_cycle_ticks_for_test(),
-        [21, 30],
+        [21],
     );
     assert_eq!(
         fixture.runtime.live_issue.scheduler_entry_tick_for_test(),
         Some(21),
     );
+
+    fixture
+        .runtime
+        .service_live_issue_scheduler_at(&fixture.hart, 30)
+        .unwrap();
+    assert_eq!(fixture.issue_tick(SECOND_PC), 30);
 }
 
 #[test]
@@ -200,11 +212,12 @@ fn scheduler_facing_service_finalizes_prior_decisions_without_pruning_lookahead(
 #[test]
 fn stats_reset_clears_cycle_evidence_without_delaying_issue_timing() {
     let mut fixture = dependency_lookahead_fixture();
+    fixture.runtime.live_issue.request_service_at(20);
     fixture
         .runtime
-        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20)
+        .service_live_issue_scheduler_at(&fixture.hart, 20)
         .unwrap();
-    assert_eq!(fixture.issue_tick(SECOND_PC), 30);
+    assert_eq!(fixture.runtime.live_issue_service_tick(), Some(30));
 
     fixture.runtime.reset_stats();
     assert_eq!(fixture.runtime.stats().issue_cycles(), 0);
@@ -218,10 +231,19 @@ fn stats_reset_clears_cycle_evidence_without_delaying_issue_timing() {
     assert_eq!(fixture.runtime.live_issue_service_tick(), Some(21));
     fixture
         .runtime
-        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 21)
+        .service_live_issue_scheduler_at(&fixture.hart, 21)
         .unwrap();
     assert_eq!(fixture.issue_tick(THIRD_PC), 21);
     let after = fixture.runtime.stats();
     assert_eq!(after.issue_cycles(), 1);
     assert_eq!(after.issued_rows(), 1);
+    assert_eq!(fixture.runtime.live_issue_service_tick(), Some(30));
+
+    fixture
+        .runtime
+        .service_live_issue_scheduler_at(&fixture.hart, 30)
+        .unwrap();
+    assert_eq!(fixture.issue_tick(SECOND_PC), 30);
+    assert_eq!(fixture.runtime.stats().issue_cycles(), 2);
+    assert_eq!(fixture.runtime.stats().issued_rows(), 2);
 }

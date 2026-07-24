@@ -109,11 +109,12 @@ pub(super) fn record_call_and_scalar(core: &RiscvCore) {
         .next_fetch_ahead_before_retire()
         .expect("runtime-forwarded same-link call decision");
     assert_eq!(call_decision.pc(), Address::new(0x9000));
-    core.record_prepared_fetch_ahead_speculation(
+    record_prepared_fetch_ahead_speculation_and_fire_o3_wakes(
+        core,
         core.prepare_fetch_ahead_speculation(&call_decision)
             .unwrap(),
     );
-    if let Some(decision) = core.next_pending_data_fetch_ahead(true) {
+    if let Some(decision) = next_pending_data_fetch_ahead_after_o3_wake(core, true) {
         assert_eq!(decision.pc(), Address::new(0x9004));
         assert!(decision.branch_speculation().is_none());
     }
@@ -133,13 +134,12 @@ pub(super) fn retire_data_head(core: &RiscvCore, retire_tick: u64) {
 fn live_data_head_allows_scalar_sequential_fetch_but_not_return_row() {
     let core = scalar_return_core(2, false, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
-    core.record_prepared_fetch_ahead_speculation(
+    record_prepared_fetch_ahead_speculation_and_fire_o3_wakes(
+        &core,
         core.prepare_fetch_ahead_speculation(&call_decision)
             .unwrap(),
     );
-
-    let decision = core
-        .next_fetch_ahead_before_retire()
+    let decision = next_fetch_ahead_before_retire_after_o3_wake(&core)
         .expect("live-head scalar sequential fetch decision");
     assert_eq!(decision.pc(), Address::new(0x9004));
     assert!(decision.branch_speculation().is_none());
@@ -155,13 +155,12 @@ fn live_data_head_allows_scalar_sequential_fetch_but_not_return_row() {
 fn pending_data_gate_allows_typed_scalar_sequential_fetch() {
     let core = scalar_return_core(2, false, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
-    core.record_prepared_fetch_ahead_speculation(
+    record_prepared_fetch_ahead_speculation_and_fire_o3_wakes(
+        &core,
         core.prepare_fetch_ahead_speculation(&call_decision)
             .unwrap(),
     );
-
-    let decision = core
-        .next_pending_data_fetch_ahead(true)
+    let decision = next_pending_data_fetch_ahead_after_o3_wake(&core, true)
         .expect("pending-data typed scalar continuation");
     assert_eq!(decision.pc(), Address::new(0x9004));
     assert!(decision.branch_speculation().is_none());
@@ -171,11 +170,12 @@ fn pending_data_gate_allows_typed_scalar_sequential_fetch() {
 fn scalar_continuation_preparation_holds_lineage_while_fetch_is_pending() {
     let core = scalar_return_core(2, false, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
-    core.record_prepared_fetch_ahead_speculation(
+    record_prepared_fetch_ahead_speculation_and_fire_o3_wakes(
+        &core,
         core.prepare_fetch_ahead_speculation(&call_decision)
             .unwrap(),
     );
-    let continuation = core.next_pending_data_fetch_ahead(true).unwrap();
+    let continuation = next_pending_data_fetch_ahead_after_o3_wake(&core, true).unwrap();
     let prepared = core
         .prepare_fetch_ahead_speculation(&continuation)
         .unwrap()
@@ -211,11 +211,12 @@ fn scalar_continuation_preparation_holds_lineage_while_fetch_is_pending() {
 fn committed_scalar_continuation_retains_exact_return_authority() {
     let core = scalar_return_core(2, false, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
-    core.record_prepared_fetch_ahead_speculation(
+    record_prepared_fetch_ahead_speculation_and_fire_o3_wakes(
+        &core,
         core.prepare_fetch_ahead_speculation(&call_decision)
             .unwrap(),
     );
-    let continuation = core.next_pending_data_fetch_ahead(true).unwrap();
+    let continuation = next_pending_data_fetch_ahead_after_o3_wake(&core, true).unwrap();
     core.record_prepared_fetch_ahead_speculation(
         core.prepare_fetch_ahead_speculation(&continuation).unwrap(),
     );
@@ -267,7 +268,8 @@ fn committed_scalar_continuation_retains_exact_return_authority() {
 fn committed_call_seed_reconstructs_unstaged_scalar_return_authority() {
     let core = scalar_return_core(2, true, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
-    core.record_prepared_fetch_ahead_speculation(
+    record_prepared_fetch_ahead_speculation_and_fire_o3_wakes(
+        &core,
         core.prepare_fetch_ahead_speculation(&call_decision)
             .unwrap(),
     );
@@ -300,7 +302,8 @@ fn committed_call_seed_reconstructs_unstaged_scalar_return_authority() {
 fn committed_call_seed_reconstructs_already_executed_scalar_return_authority() {
     let core = scalar_return_core(2, true, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
-    core.record_prepared_fetch_ahead_speculation(
+    record_prepared_fetch_ahead_speculation_and_fire_o3_wakes(
+        &core,
         core.prepare_fetch_ahead_speculation(&call_decision)
             .unwrap(),
     );
@@ -341,7 +344,7 @@ fn full_lookahead_at_call_recording_retains_later_scalar_return_authority() {
             .branch_speculation_kinds
             .insert(1, BranchTargetKind::DirectConditional);
     }
-    core.record_prepared_fetch_ahead_speculation(prepared);
+    record_prepared_fetch_ahead_speculation_and_fire_o3_wakes(&core, prepared);
     {
         let mut state = core.state.lock().expect("riscv core lock");
         assert_eq!(state.branch_speculations.len(), 2);
@@ -365,11 +368,12 @@ fn full_lookahead_at_call_recording_retains_later_scalar_return_authority() {
 fn prepared_scalar_continuation_survives_parent_commit_before_apply() {
     let core = scalar_return_core(2, false, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
-    core.record_prepared_fetch_ahead_speculation(
+    record_prepared_fetch_ahead_speculation_and_fire_o3_wakes(
+        &core,
         core.prepare_fetch_ahead_speculation(&call_decision)
             .unwrap(),
     );
-    let continuation = core.next_pending_data_fetch_ahead(true).unwrap();
+    let continuation = next_pending_data_fetch_ahead_after_o3_wake(&core, true).unwrap();
     let prepared = core.prepare_fetch_ahead_speculation(&continuation).unwrap();
     {
         let mut state = core.state.lock().expect("riscv core lock");
@@ -412,11 +416,12 @@ fn prepared_scalar_continuation_survives_parent_commit_before_apply() {
 fn scalar_stage_retains_authority_before_continuation_decision_is_prepared() {
     let core = scalar_return_core(2, false, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
-    core.record_prepared_fetch_ahead_speculation(
+    record_prepared_fetch_ahead_speculation_and_fire_o3_wakes(
+        &core,
         core.prepare_fetch_ahead_speculation(&call_decision)
             .unwrap(),
     );
-    let continuation = core.next_fetch_ahead_before_retire().unwrap();
+    let continuation = next_fetch_ahead_before_retire_after_o3_wake(&core).unwrap();
     assert_eq!(continuation.pc(), Address::new(0x9004));
     {
         let mut state = core.state.lock().expect("riscv core lock");
@@ -460,8 +465,7 @@ fn retired_data_head_opens_scalar_sequential_fetch() {
     record_call_and_scalar(&core);
     retire_data_head(&core, 30);
 
-    let decision = core
-        .next_pending_data_fetch_ahead(false)
+    let decision = next_pending_data_fetch_ahead_after_o3_wake(&core, false)
         .expect("scalar sequential fetch decision");
     assert_eq!(decision.pc(), Address::new(0x9004));
     assert!(decision.branch_speculation().is_none());
@@ -474,7 +478,7 @@ fn scalar_return_issue_waits_for_data_head_retirement_tick() {
     let core = scalar_return_core(2, true, 1, 1);
     record_call_and_scalar(&core);
     retire_data_head(&core, 90);
-    assert!(core.next_pending_data_fetch_ahead(false).is_some());
+    assert!(next_pending_data_fetch_ahead_after_o3_wake(&core, false).is_some());
     assert!(core
         .state
         .lock()
@@ -490,7 +494,10 @@ fn branch_lookahead_one_does_not_stage_scalar_sequential_return() {
     record_call_and_scalar(&core);
     retire_data_head(&core, 30);
 
-    assert_eq!(core.next_pending_data_fetch_ahead(false), None);
+    assert_eq!(
+        next_pending_data_fetch_ahead_after_o3_wake(&core, false),
+        None
+    );
 
     let state = core.state.lock().expect("riscv core lock");
     assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 3);
@@ -511,8 +518,10 @@ fn stale_ras_does_not_stage_scalar_sequential_return() {
             .return_address_stack
             .push_speculative(Address::new(0xa000));
     }
-
-    assert_eq!(core.next_pending_data_fetch_ahead(false), None);
+    assert_eq!(
+        next_pending_data_fetch_ahead_after_o3_wake(&core, false),
+        None
+    );
 
     let state = core.state.lock().expect("riscv core lock");
     assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 3);
@@ -563,7 +572,7 @@ fn scalar_return_apply_fails_closed_after_scalar_lineage_changes() {
     let core = scalar_return_core(2, true, 1, 1);
     record_call_and_scalar(&core);
     retire_data_head(&core, 30);
-    let return_decision = core.next_pending_data_fetch_ahead(false).unwrap();
+    let return_decision = next_pending_data_fetch_ahead_after_o3_wake(&core, false).unwrap();
     let prepared = core
         .prepare_fetch_ahead_speculation(&return_decision)
         .unwrap();

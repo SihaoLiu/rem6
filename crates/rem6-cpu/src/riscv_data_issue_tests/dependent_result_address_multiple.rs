@@ -183,7 +183,7 @@ impl TwoPendingIssueFixture {
         assert!(state.o3_runtime.pending_data_address_wake_tick().is_none());
     }
 
-    fn schedule_second_pending_address_wake(&mut self) {
+    fn schedule_requested_o3_wake_with_second_pending_address_wake(&mut self) {
         let mut state = self.core.state.lock().expect("riscv core lock");
         state
             .o3_runtime
@@ -193,9 +193,10 @@ impl TwoPendingIssueFixture {
             );
         drop(state);
         let requested = self.core.requested_o3_writeback_wake_tick(SUBMIT_TICK);
+        let requested_tick = requested.expect("O3 wake request");
         let event = self
             .scheduler
-            .schedule_at(PartitionId::new(0), PENDING_WAKE_TICK, |_| {})
+            .schedule_at(PartitionId::new(0), requested_tick, |_| {})
             .unwrap();
         self.core.mark_o3_writeback_wake_scheduled(
             self.scheduler.instance_id(),
@@ -203,7 +204,7 @@ impl TwoPendingIssueFixture {
         );
         assert_eq!(
             (requested, self.core.owned_o3_writeback_wakes().len()),
-            (Some(PENDING_WAKE_TICK), 1)
+            (Some(SUBMIT_TICK), 1)
         );
     }
 
@@ -406,7 +407,7 @@ fn two_pending_bind_second_preserves_first_live_access() {
 #[test]
 fn two_pending_first_pre_submit_replay_discards_second_and_suffix() {
     let mut fixture = TwoPendingIssueFixture::siblings([0x9000, 0x9008], [true, false]);
-    fixture.schedule_second_pending_address_wake();
+    fixture.schedule_requested_o3_wake_with_second_pending_address_wake();
     fixture
         .core
         .add_pma_uncacheable_range(RiscvPmaRange::new(0x9000, 0x9008).unwrap())
@@ -418,7 +419,7 @@ fn two_pending_first_pre_submit_replay_discards_second_and_suffix() {
 #[test]
 fn two_pending_dropped_parallel_prepare_clears_scheduled_pending_wake() {
     let mut fixture = TwoPendingIssueFixture::siblings([0x9000, 0x9008], [true, false]);
-    fixture.schedule_second_pending_address_wake();
+    fixture.schedule_requested_o3_wake_with_second_pending_address_wake();
     let prepared = fixture
         .core
         .prepare_data_parallel_access(

@@ -458,7 +458,15 @@ impl O3RuntimeState {
             &self.published_writeback_sequences,
             &self.live_data_accesses,
         )?;
+        let live_issue_tick = reservations
+            .iter()
+            .map(|reservation| reservation.admitted_tick())
+            .min();
         transaction.commit(self);
+        if let Some(tick) = live_issue_tick {
+            self.live_issue
+                .request_live_issue_after_writeback_change(tick);
+        }
         Ok(reservations)
     }
 

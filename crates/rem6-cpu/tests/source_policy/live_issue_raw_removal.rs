@@ -199,6 +199,8 @@ fn raw_removal_policy_holds(sources: &RawRemovalSources) -> bool {
     let compact_owner = compact_rust_code(&production_rust_source(owner));
     let compact_state_module = compact_rust_code(state);
     let compact_rollback_module = compact_rust_code(rollback);
+    let compact_control_module = compact_rust_code(control);
+    let compact_pending_module = compact_rust_code(pending);
     let transaction = production_rust_source(transaction);
     let issue = production_rust_source(issue);
     let control = production_rust_source(control);
@@ -221,9 +223,15 @@ fn raw_removal_policy_holds(sources: &RawRemovalSources) -> bool {
         && !transaction.contains("complete_committed_live_issue_removals_at")
         && issue.contains("remove_durable_live_issue_at(")
         && !issue.contains(".remove_selected_at(")
-        && control.contains("remove_durable_live_issue_at(")
+        && compact_control_module
+            .contains("#[cfg(test)]pub(crate)fnrecord_live_speculative_execution")
+        && compact_control_module.contains("self.remove_durable_live_issue_at(")
+        && !control.contains("remove_durable_live_issue_at(")
         && !control.contains(".remove_selected_at(")
-        && pending.contains("remove_durable_live_issue_at(")
+        && compact_pending_module
+            .contains("#[cfg(test)]pub(super)fnrecord_pending_data_address_materialization")
+        && compact_pending_module.contains("self.remove_durable_live_issue_at(")
+        && !pending.contains("remove_durable_live_issue_at(")
         && !pending.contains(".remove_exact_at(")
         && service.contains("complete_committed_live_issue_removals_at(")
         && !service.contains(".remove_exact_at(")

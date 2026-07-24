@@ -188,6 +188,7 @@ impl O3RuntimeState {
         pending.materialized = Some(execution);
     }
 
+    #[cfg(test)]
     pub(super) fn record_pending_data_address_materialization(
         &mut self,
         candidate: O3LiveSpeculativeIssueCandidate,

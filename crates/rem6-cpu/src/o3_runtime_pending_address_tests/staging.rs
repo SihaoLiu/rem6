@@ -83,10 +83,13 @@ fn pending_address_window_stages_two_scalar_suffix_rows() {
     assert_eq!(state.o3_runtime.live_data_access_younger_sequences.len(), 3);
     assert!(integer_mapping(&state.o3_runtime, 7).is_some());
     assert!(integer_mapping(&state.o3_runtime, 8).is_some());
-    assert!(state.o3_runtime.stats().dependency_blocked_row_cycles() > 0);
+    assert_eq!(state.o3_runtime.live_issue_service_tick(), Some(10));
+    assert_eq!(state.o3_runtime.stats().dependency_blocked_row_cycles(), 0);
     assert!(!state
         .memory_result_window_authorizations
         .contains_key(&request(11)));
+    drop(state);
+    assert_eq!(core.requested_o3_writeback_wake_tick(10), Some(10));
 }
 
 #[test]

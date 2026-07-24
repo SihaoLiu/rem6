@@ -255,7 +255,6 @@ fn completed_scalar_load_blocks_younger_execution_until_o3_event_is_consumed() {
     );
     core.set_detailed_live_retire_gate_enabled(true);
     core.write_register(reg(2), 0x9000);
-
     let load = i_type(0, 2, 0b010, 5, 0x03);
     core.issue_next_fetch(
         &mut scheduler,
@@ -330,16 +329,16 @@ fn completed_scalar_load_blocks_younger_execution_until_o3_event_is_consumed() {
 }
 
 #[test]
-fn mode_disable_after_scalar_load_issue_preserves_dependent_younger_wakeup_timing() {
-    assert_mode_disable_preserves_dependent_scalar_load_younger_wakeup_timing(false);
+fn mode_disable_after_scalar_load_issue_uses_completed_fetch_timing_for_dependent_younger() {
+    assert_mode_disable_uses_completed_fetch_timing_for_dependent_scalar_load_younger(false);
 }
 
 #[test]
-fn mode_disable_before_scalar_load_issue_preserves_dependent_younger_wakeup_timing() {
-    assert_mode_disable_preserves_dependent_scalar_load_younger_wakeup_timing(true);
+fn mode_disable_before_scalar_load_issue_uses_completed_fetch_timing_for_dependent_younger() {
+    assert_mode_disable_uses_completed_fetch_timing_for_dependent_scalar_load_younger(true);
 }
 
-fn assert_mode_disable_preserves_dependent_scalar_load_younger_wakeup_timing(
+fn assert_mode_disable_uses_completed_fetch_timing_for_dependent_scalar_load_younger(
     disable_before_issue: bool,
 ) {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
@@ -349,7 +348,6 @@ fn assert_mode_disable_preserves_dependent_scalar_load_younger_wakeup_timing(
     );
     core.set_detailed_live_retire_gate_enabled(true);
     core.write_register(reg(2), 0x9000);
-
     let load = i_type(0, 2, 0b010, 5, 0x03);
     core.issue_next_fetch(
         &mut scheduler,
@@ -366,7 +364,6 @@ fn assert_mode_disable_preserves_dependent_scalar_load_younger_wakeup_timing(
     scheduler.run_until_idle_conservative();
     let executed = core.execute_next_completed_fetch().unwrap().unwrap();
     assert_eq!(executed.fetch_pc(), Address::new(0x8000));
-
     let dependent = i_type(7, 5, 0b000, 6, 0x13);
     core.issue_next_fetch(
         &mut scheduler,
@@ -384,7 +381,6 @@ fn assert_mode_disable_preserves_dependent_scalar_load_younger_wakeup_timing(
     )
     .unwrap();
     scheduler.run_until_idle_conservative();
-
     if disable_before_issue {
         core.set_detailed_live_retire_gate_enabled(false);
     }
@@ -409,7 +405,6 @@ fn assert_mode_disable_preserves_dependent_scalar_load_younger_wakeup_timing(
         .last()
         .expect("completed load response")
         .tick();
-
     assert!(core
         .drive_next_action(
             &mut scheduler,
@@ -429,7 +424,6 @@ fn assert_mode_disable_preserves_dependent_scalar_load_younger_wakeup_timing(
     assert_eq!(younger.fetch_pc(), Address::new(0x8004));
     assert_eq!(core.read_register(reg(6)), 0x31);
     core.record_o3_retired_instruction_with_trace(&younger, true);
-
     let trace = core.o3_runtime_trace_records();
     let load = trace
         .iter()
@@ -439,7 +433,18 @@ fn assert_mode_disable_preserves_dependent_scalar_load_younger_wakeup_timing(
         .iter()
         .find(|event| event.pc() == Address::new(0x8004))
         .expect("dependent younger O3 trace event");
-    assert_eq!(younger.issue_tick(), response_tick + 1);
-    assert_eq!(younger.issue_tick(), load.writeback_tick());
-    assert_eq!(younger.writeback_tick(), load.writeback_tick() + 1);
+    let dependent_fetch_tick = core
+        .core
+        .fetch_events()
+        .into_iter()
+        .find(|event| {
+            event.kind() == crate::CpuFetchEventKind::Completed
+                && event.pc() == Address::new(0x8004)
+        })
+        .expect("completed dependent younger fetch")
+        .tick();
+    assert_eq!(load.writeback_tick(), response_tick + 1);
+    assert_eq!(younger.issue_tick(), dependent_fetch_tick);
+    assert!(younger.issue_tick() < load.writeback_tick());
+    assert_eq!(younger.writeback_tick(), younger.issue_tick());
 }

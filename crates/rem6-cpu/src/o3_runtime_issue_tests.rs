@@ -25,6 +25,7 @@ mod queue;
 
 #[path = "o3_runtime_issue/service_tests.rs"]
 mod service;
+pub(in crate::o3_runtime) use service::service_live_issue_queue_until_boundary_for_test;
 
 #[path = "o3_runtime_issue/state_tests.rs"]
 mod live_issue_state;
@@ -305,9 +306,7 @@ fn scoped_issue_isolates_cross_candidate_dependency_readiness() {
     assert!(runtime
         .record_live_issue_head_execution(head, &[request(10)], head_execution)
         .unwrap());
-    runtime
-        .schedule_live_speculative_issues(&hart, head, 20)
-        .unwrap();
+    service_live_issue_queue_until_boundary_for_test(&mut runtime, &hart, head, 20).unwrap();
 
     let call_execution = runtime
         .live_speculative_executions
@@ -518,9 +517,7 @@ fn scoped_issue_tracks_long_fu_head_dependency() {
         ));
     }
 
-    runtime
-        .schedule_live_speculative_issues(&hart, head, 14)
-        .unwrap();
+    service_live_issue_queue_until_boundary_for_test(&mut runtime, &hart, head, 14).unwrap();
 
     assert_eq!(runtime.live_speculative_executions[0].issue_tick, 12);
     assert_eq!(
@@ -604,9 +601,12 @@ fn scoped_issue_partial_reentry_keeps_previously_bound_rows_visible() {
     fixture.bind_row(2);
     let unresolved = fixture.sequence(THIRD_PC);
     assert_eq!(
-        fixture
-            .runtime
-            .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20,),
+        service_live_issue_queue_until_boundary_for_test(
+            &mut fixture.runtime,
+            &fixture.hart,
+            fixture.head,
+            20,
+        ),
         Err(O3RuntimeError::InvalidLiveIssueQueueEntry {
             sequence: unresolved,
         }),
@@ -635,9 +635,12 @@ fn scoped_issue_partial_reentry_keeps_unknown_return_owner_unresolved() {
     fixture.bind_row(2);
     let unresolved = fixture.sequence(THIRD_PC);
     assert_eq!(
-        fixture
-            .runtime
-            .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20,),
+        service_live_issue_queue_until_boundary_for_test(
+            &mut fixture.runtime,
+            &fixture.hart,
+            fixture.head,
+            20,
+        ),
         Err(O3RuntimeError::InvalidLiveIssueQueueEntry {
             sequence: unresolved,
         }),
@@ -912,9 +915,13 @@ impl ScalarIssueFixture {
     }
 
     fn schedule(&mut self, earliest_tick: u64) {
-        self.runtime
-            .schedule_live_speculative_issues(&self.hart, self.head, earliest_tick)
-            .unwrap();
+        service_live_issue_queue_until_boundary_for_test(
+            &mut self.runtime,
+            &self.hart,
+            self.head,
+            earliest_tick,
+        )
+        .unwrap();
     }
 
     fn queue(&self) -> O3LiveIssueQueue {

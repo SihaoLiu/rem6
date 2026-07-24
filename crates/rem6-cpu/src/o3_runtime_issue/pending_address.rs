@@ -76,7 +76,11 @@ impl O3RuntimeState {
             .map(O3PendingDataAddress::sequence)
     }
 
-    pub(super) fn pending_data_address_has_producer_sequence(&self, sequence: u64) -> bool {
+    #[cfg(test)]
+    pub(in crate::o3_runtime) fn pending_data_address_has_producer_sequence(
+        &self,
+        sequence: u64,
+    ) -> bool {
         self.pending_data_addresses
             .iter()
             .any(|pending| pending.producer_sequence == sequence)

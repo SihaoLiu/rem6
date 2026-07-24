@@ -1539,11 +1539,12 @@ fn riscv_core_driver_issues_older_load_before_younger_live_gate_work() {
             .expect("pending scalar-load response scheduler event");
     }
     assert_eq!(core.read_register(reg(5)), 0);
-    let admitted_tick = core
+    let wake_tick = core
         .requested_o3_writeback_wake_tick(scheduler.now())
         .expect("completed scalar load should request an O3 writeback wake");
+    core.mark_o3_writeback_wake_fired(wake_tick);
     assert!(core
-        .record_ready_o3_data_access_event_with_trace(admitted_tick, false)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, false)
         .is_some());
     assert_eq!(core.read_register(reg(5)), 41);
 

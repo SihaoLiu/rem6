@@ -103,12 +103,12 @@ fn pending_data_gate_admits_producer_forwarded_call_target_return() {
         .next_fetch_ahead_before_retire()
         .expect("runtime-forwarded same-link call decision");
     assert_eq!(call_decision.pc(), Address::new(0x9000));
-    core.record_prepared_fetch_ahead_speculation(
+    record_prepared_fetch_ahead_speculation_and_fire_o3_wakes(
+        &core,
         core.prepare_fetch_ahead_speculation(&call_decision)
             .unwrap(),
     );
-    let return_decision = core
-        .next_pending_data_fetch_ahead(true)
+    let return_decision = next_pending_data_fetch_ahead_after_o3_wake(&core, true)
         .expect("producer-forwarded call target return decision");
     assert_eq!(return_decision.pc(), Address::new(0x800c));
     let speculation = return_decision.branch_speculation().unwrap();
@@ -119,16 +119,16 @@ fn pending_data_gate_admits_producer_forwarded_call_target_return() {
         PredictedControlTargetAuthority::ProducerForwardedReturn(_)
     ));
 }
-
 #[test]
 fn producer_forwarded_return_apply_fails_closed_after_descendant_invalidation() {
     let core = live_return_core(2, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
-    core.record_prepared_fetch_ahead_speculation(
+    record_prepared_fetch_ahead_speculation_and_fire_o3_wakes(
+        &core,
         core.prepare_fetch_ahead_speculation(&call_decision)
             .unwrap(),
     );
-    let return_decision = core.next_pending_data_fetch_ahead(true).unwrap();
+    let return_decision = next_pending_data_fetch_ahead_after_o3_wake(&core, true).unwrap();
     let prepared = core
         .prepare_fetch_ahead_speculation(&return_decision)
         .unwrap();
@@ -145,23 +145,22 @@ fn producer_forwarded_return_apply_fails_closed_after_descendant_invalidation() 
             .discard_live_control_descendants_from_at(parent_sequence, 30);
     }
     core.record_prepared_fetch_ahead_speculation(prepared);
-
     let state = core.state.lock().expect("riscv core lock");
     assert_eq!(state.branch_speculations.len(), 1);
     assert_eq!(state.branch_speculation_kinds.len(), 1);
     assert_eq!(state.return_address_stack.pending_operation_count(), 1);
     assert_eq!(state.return_address_stack_operations.len(), 1);
 }
-
 #[test]
 fn producer_forwarded_return_apply_fails_closed_after_ras_lineage_changes() {
     let core = live_return_core(2, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
-    core.record_prepared_fetch_ahead_speculation(
+    record_prepared_fetch_ahead_speculation_and_fire_o3_wakes(
+        &core,
         core.prepare_fetch_ahead_speculation(&call_decision)
             .unwrap(),
     );
-    let return_decision = core.next_pending_data_fetch_ahead(true).unwrap();
+    let return_decision = next_pending_data_fetch_ahead_after_o3_wake(&core, true).unwrap();
     let prepared = core
         .prepare_fetch_ahead_speculation(&return_decision)
         .unwrap();
@@ -171,26 +170,25 @@ fn producer_forwarded_return_apply_fails_closed_after_ras_lineage_changes() {
             .return_address_stack
             .push_speculative(Address::new(0xa000));
     }
-
     core.record_prepared_fetch_ahead_speculation(prepared);
-
     let state = core.state.lock().expect("riscv core lock");
     assert_eq!(state.branch_speculations.len(), 1);
     assert_eq!(state.return_address_stack.pending_operation_count(), 2);
     assert_eq!(state.return_address_stack_operations.len(), 1);
 }
-
 #[test]
 fn branch_lookahead_one_does_not_stage_producer_forwarded_return() {
     let core = live_return_core(1, 1, 1);
     let call_decision = core.next_fetch_ahead_before_retire().unwrap();
-    core.record_prepared_fetch_ahead_speculation(
+    record_prepared_fetch_ahead_speculation_and_fire_o3_wakes(
+        &core,
         core.prepare_fetch_ahead_speculation(&call_decision)
             .unwrap(),
     );
-
-    assert_eq!(core.next_pending_data_fetch_ahead(true), None);
-
+    assert_eq!(
+        next_pending_data_fetch_ahead_after_o3_wake(&core, true),
+        None
+    );
     let state = core.state.lock().expect("riscv core lock");
     assert_eq!(state.o3_runtime.snapshot().reorder_buffer().len(), 3);
     assert_eq!(

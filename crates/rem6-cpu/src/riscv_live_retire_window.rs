@@ -729,7 +729,7 @@ fn stage_o3_live_retire_window(
     if younger.is_empty() || !state.live_retire_gate.detailed_policy_enabled() {
         return Ok(Some(admitted_tick));
     }
-    schedule_o3_live_speculative_younger_executions(state, head, &younger, earliest_tick)?;
+    schedule_o3_live_speculative_younger_executions(state, &younger, earliest_tick)?;
     Ok(Some(admitted_tick))
 }
 
@@ -775,15 +775,8 @@ pub(crate) fn stage_o3_data_access_younger_window(
             .iter()
             .map(|younger| (younger.pc, younger.decoded.instruction())),
     );
-    let Some(head) = state
-        .o3_runtime
-        .live_data_access_head_reservation(execution.fetch().request_id())
-    else {
-        return;
-    };
     schedule_o3_live_speculative_younger_executions(
         state,
-        head,
         &younger[..staged_rows.min(younger.len())],
         issue_tick,
     )
@@ -794,7 +787,7 @@ pub(crate) fn stage_o3_producer_forwarded_scalar_return_descendant(
     state: &mut RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
 ) -> bool {
-    let Some((scalar_chain, head, retirement_tick)) = state
+    let Some((scalar_chain, _head, retirement_tick)) = state
         .o3_runtime
         .producer_forwarded_scalar_return_issue_context()
     else {
@@ -847,7 +840,6 @@ pub(crate) fn stage_o3_producer_forwarded_scalar_return_descendant(
     }
     schedule_o3_live_speculative_younger_executions(
         state,
-        head,
         std::slice::from_ref(&returned),
         issue_tick,
     )
@@ -862,7 +854,7 @@ pub(crate) fn wake_o3_data_access_younger_window(
     fetch_events: &[CpuFetchEvent],
 ) {
     let pending_window = state.o3_runtime.has_pending_data_address();
-    let (tail_request, younger_pcs, head) =
+    let (tail_request, younger_pcs, _head) =
         if let Some(seed) = state.o3_runtime.pending_data_address_wake_seed() {
             (
                 seed.fetch_predecessor_request(),
@@ -903,7 +895,7 @@ pub(crate) fn wake_o3_data_access_younger_window(
         current_request = instruction.last_consumed_request();
         younger.push(instruction);
     }
-    schedule_o3_live_speculative_younger_executions(state, head, &younger, issue_tick)
+    schedule_o3_live_speculative_younger_executions(state, &younger, issue_tick)
         .expect("live data-access wake writeback reservation");
 }
 
@@ -930,7 +922,6 @@ fn accepted_scalar_integer_younger_window(
 
 fn schedule_o3_live_speculative_younger_executions(
     state: &mut RiscvCoreState,
-    head: O3LiveIssueHeadReservation,
     younger: &[RiscvCompletedFetchInstruction],
     issue_tick: u64,
 ) -> Result<bool, RiscvCpuError> {
@@ -948,11 +939,7 @@ fn schedule_o3_live_speculative_younger_executions(
             return Ok(false);
         }
     }
-    let hart = state.hart.clone();
-    state
-        .o3_runtime
-        .schedule_live_speculative_issues(&hart, head, issue_tick)
-        .map_err(RiscvCpuError::O3Runtime)?;
+    state.refresh_o3_writeback_wake(issue_tick);
     Ok(true)
 }
 

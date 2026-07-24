@@ -23,13 +23,13 @@ fn pending_data_gate_admits_same_and_split_link_direct_returns() {
             parent.link_destination(),
             Some(Register::new(link_destination).unwrap())
         );
-        core.record_prepared_fetch_ahead_speculation(
+        record_prepared_fetch_ahead_speculation_and_fire_o3_wakes(
+            &core,
             core.prepare_fetch_ahead_speculation(&call_decision)
                 .unwrap(),
         );
 
-        let return_decision = core
-            .next_pending_data_fetch_ahead(true)
+        let return_decision = next_pending_data_fetch_ahead_after_o3_wake(&core, true)
             .expect("producer-forwarded direct-return decision");
         assert_eq!(return_decision.pc(), Address::new(0x800c));
         let return_speculation = return_decision.branch_speculation().unwrap();

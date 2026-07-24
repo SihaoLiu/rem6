@@ -4,6 +4,9 @@ const PLAN_PATH: &str =
     "../../docs/superpowers/plans/2026-07-23-riscv-o3-persistent-cross-class-issue-queue.md";
 
 const MIGRATION_PATHS: &[&str] = &[
+    "crates/rem6-cpu/src/riscv_live_retire_window/dependent_result_address.rs",
+    "crates/rem6-cpu/src/riscv_live_retire_window/producer_forwarded_descendant.rs",
+    "crates/rem6-cpu/src/o3_runtime_issue/pending_address.rs",
     "crates/rem6-cpu/src/o3_runtime_issue_tests.rs",
     "crates/rem6-cpu/src/o3_runtime_issue/service_tests.rs",
     "crates/rem6-cpu/src/o3_runtime_issue/service_tests/scheduler_request.rs",
@@ -11,11 +14,26 @@ const MIGRATION_PATHS: &[&str] = &[
     "crates/rem6-cpu/src/o3_runtime_pending_address_tests/lifecycle.rs",
     "crates/rem6-cpu/src/o3_runtime_pending_address_tests/multiple.rs",
     "crates/rem6-cpu/src/o3_runtime_pending_address_tests/scheduling.rs",
+    "crates/rem6-cpu/src/o3_runtime_pending_address_tests/staging.rs",
     "crates/rem6-cpu/src/o3_runtime_pending_address_tests/three_pending.rs",
     "crates/rem6-cpu/src/o3_runtime_memory_result_tests.rs",
     "crates/rem6-cpu/src/o3_runtime_memory_result_tests/replan.rs",
     "crates/rem6-cpu/src/o3_runtime_writeback_tests/deep_scalar_cleanup.rs",
+    "crates/rem6-cpu/src/o3_runtime_control_window.rs",
+    "crates/rem6-cpu/src/riscv_data_issue_tests/dependent_result_address_multiple.rs",
+    "crates/rem6-cpu/src/riscv_data_issue_tests/lifecycle.rs",
+    "crates/rem6-cpu/src/riscv_fetch_ahead/tests.rs",
+    "crates/rem6-cpu/src/riscv_fetch_ahead/tests/o3_wake_driver.rs",
+    "crates/rem6-cpu/src/riscv_fetch_ahead/tests/detailed_o3_control/linked_control/fetch_response.rs",
+    "crates/rem6-cpu/src/riscv_fetch_ahead/tests/producer_forwarded_chain_validation.rs",
+    "crates/rem6-cpu/src/riscv_fetch_ahead/tests/producer_forwarded_return.rs",
+    "crates/rem6-cpu/src/riscv_fetch_ahead/tests/producer_forwarded_return_link_shapes.rs",
+    "crates/rem6-cpu/src/riscv_fetch_ahead/tests/producer_forwarded_scalar_return.rs",
+    "crates/rem6-cpu/src/riscv_fetch_ahead/tests/producer_forwarded_scalar_return_link_shapes.rs",
+    "crates/rem6-cpu/tests/riscv_cluster_data.rs",
+    "crates/rem6-cpu/tests/riscv_frontend.rs",
     "crates/rem6-cpu/tests/source_policy.rs",
+    "crates/rem6-cpu/tests/source_policy/live_issue_raw_removal.rs",
     "crates/rem6-cpu/tests/source_policy/live_issue_scheduler_contract.rs",
 ];
 
@@ -46,14 +64,17 @@ const MIGRATED_SELECTORS: &[&str] = &[
     "deep_scalar_cleanup",
     "task6_issue_migration",
     "o3_live_issue_",
+    "parallel_driver_",
+    "riscv_core_driver_",
 ];
 
 const BROAD_VERIFICATION_COMMANDS: &[&str] = &[
     "TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib",
     "TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --test source_policy",
+    "TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --all-targets",
     "TMPDIR=$PWD/target/tmp cargo check -p rem6-cpu --all-targets",
-    "cargo fmt --all -- --check",
-    "git diff --check",
+    "TMPDIR=$PWD/target/tmp cargo fmt --all -- --check",
+    "git diff --check 7d6a591b..HEAD",
 ];
 
 #[test]

@@ -1,3 +1,4 @@
+use super::super::o3_runtime_issue_tests::service_live_issue_queue_until_boundary_for_test;
 use super::*;
 
 #[test]
@@ -126,9 +127,13 @@ fn memory_result_replanning_invalidates_fu_conflict_chain_for_authoritative_reis
     let head = runtime
         .live_data_access_head_reservation(older.fetch().request_id())
         .expect("memory head remains available for authoritative reissue");
-    runtime
-        .schedule_live_speculative_issues(&RiscvHartState::new(0x8000), head, 43)
-        .unwrap();
+    service_live_issue_queue_until_boundary_for_test(
+        &mut runtime,
+        &RiscvHartState::new(0x8000),
+        head,
+        43,
+    )
+    .unwrap();
 
     assert_speculative_owner(
         &runtime,
@@ -230,9 +235,13 @@ fn invalidated_descendant_reissue_counts_additional_authoritative_planner_activi
         &[request(31)],
         42,
     ));
-    runtime
-        .schedule_live_speculative_issues(&RiscvHartState::new(0x8000), head, 42)
-        .unwrap();
+    service_live_issue_queue_until_boundary_for_test(
+        &mut runtime,
+        &RiscvHartState::new(0x8000),
+        head,
+        42,
+    )
+    .unwrap();
     assert_eq!(runtime.stats().issue_cycles(), 2);
     assert_eq!(runtime.stats().issued_rows(), 1);
     assert_eq!(runtime.stats().resource_blocked_row_cycles(), 1);
@@ -250,9 +259,13 @@ fn invalidated_descendant_reissue_counts_additional_authoritative_planner_activi
         .unwrap());
     assert!(runtime.writeback_reservation(child_sequence).is_none());
 
-    runtime
-        .schedule_live_speculative_issues(&RiscvHartState::new(0x8000), head, 43)
-        .unwrap();
+    service_live_issue_queue_until_boundary_for_test(
+        &mut runtime,
+        &RiscvHartState::new(0x8000),
+        head,
+        43,
+    )
+    .unwrap();
 
     assert_eq!(runtime.stats().issue_cycles(), 2);
     assert_eq!(runtime.stats().issued_rows(), 2);

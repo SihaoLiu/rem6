@@ -32,6 +32,7 @@ mod dependent_result_address;
 mod dependent_result_address_three_pending;
 mod dependent_result_address_two_pending;
 mod detailed_o3_control;
+mod o3_wake_driver;
 mod producer_forwarded_chain_validation;
 mod producer_forwarded_control_validation;
 mod producer_forwarded_return;
@@ -42,6 +43,12 @@ mod ras_required_validation;
 mod selected;
 mod speculative_history;
 mod translated_result_pair;
+
+use o3_wake_driver::{
+    fire_requested_o3_writeback_wakes, next_fetch_ahead_before_retire_after_o3_wake,
+    next_pending_data_fetch_ahead_after_o3_wake,
+    record_prepared_fetch_ahead_speculation_and_fire_o3_wakes,
+};
 
 fn endpoint(name: &str) -> TransportEndpointId {
     TransportEndpointId::new(name).unwrap()

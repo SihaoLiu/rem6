@@ -1,3 +1,4 @@
+use super::super::o3_runtime_issue_tests::service_live_issue_queue_until_boundary_for_test;
 use super::*;
 
 use rem6_isa_riscv::RiscvHartState;
@@ -136,9 +137,7 @@ fn schedule(
     head: O3LiveIssueHeadReservation,
     tick: u64,
 ) {
-    fixture
-        .runtime
-        .schedule_live_speculative_issues(hart, head, tick)
+    service_live_issue_queue_until_boundary_for_test(&mut fixture.runtime, hart, head, tick)
         .unwrap();
 }
 

@@ -1801,10 +1801,15 @@ Expected: all selected tests PASS. Existing top-level behavior remains green thr
 - Modify: `crates/rem6-cpu/src/riscv_o3_writeback_wake/desired.rs`
 - Modify: `crates/rem6-cpu/src/riscv_o3_writeback_wake.rs:145-290`
 - Modify: `crates/rem6-cpu/src/riscv_live_retire_window.rs:680-735,880-955`
+- Modify: `crates/rem6-cpu/src/riscv_live_retire_window/dependent_result_address.rs`
+- Modify: `crates/rem6-cpu/src/riscv_live_retire_window/producer_forwarded_descendant.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_writeback.rs:440-480`
+- Modify: `crates/rem6-cpu/src/o3_runtime_issue/pending_address.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_issue/state.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_issue/state/rollback.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_issue.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_issue/service.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_pending_address.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_issue_tests.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_issue/service_tests.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_issue/service_tests/scheduler_request.rs`
@@ -1812,12 +1817,30 @@ Expected: all selected tests PASS. Existing top-level behavior remains green thr
 - Modify: `crates/rem6-cpu/src/o3_runtime_pending_address_tests/lifecycle.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_pending_address_tests/multiple.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_pending_address_tests/scheduling.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_pending_address_tests/staging.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_pending_address_tests/three_pending.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_memory_result_tests.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_memory_result_tests/replan.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_writeback_tests.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_writeback_tests/deep_scalar_cleanup.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_control_window.rs`
+- Modify: `crates/rem6-cpu/src/riscv_data_issue_tests/dependent_result_address_multiple.rs`
+- Modify: `crates/rem6-cpu/src/riscv_data_issue_tests/lifecycle.rs`
+- Modify: `crates/rem6-cpu/src/riscv_fetch_ahead/tests.rs`
+- Create: `crates/rem6-cpu/src/riscv_fetch_ahead/tests/o3_wake_driver.rs`
+- Modify: `crates/rem6-cpu/src/riscv_fetch_ahead/tests/detailed_o3_control/linked_control/fetch_response.rs`
+- Modify: `crates/rem6-cpu/src/riscv_fetch_ahead/tests/producer_forwarded_chain_validation.rs`
+- Modify: `crates/rem6-cpu/src/riscv_fetch_ahead/tests/producer_forwarded_return.rs`
+- Modify: `crates/rem6-cpu/src/riscv_fetch_ahead/tests/producer_forwarded_return_link_shapes.rs`
+- Modify: `crates/rem6-cpu/src/riscv_fetch_ahead/tests/producer_forwarded_scalar_return.rs`
+- Modify: `crates/rem6-cpu/src/riscv_fetch_ahead/tests/producer_forwarded_scalar_return_link_shapes.rs`
+- Modify: `crates/rem6-cpu/tests/riscv_cluster_data.rs`
+- Modify: `crates/rem6-cpu/tests/riscv_frontend.rs`
 - Modify: `crates/rem6-cpu/tests/source_policy.rs`
+- Modify: `crates/rem6-cpu/tests/source_policy/live_issue_raw_removal.rs`
 - Modify: `crates/rem6-cpu/tests/source_policy/live_issue_scheduler_contract.rs`
+- Modify: `crates/rem6-cpu/tests/source_policy/task6_issue_migration.rs`
+- Modify: `docs/superpowers/plans/2026-07-23-riscv-o3-persistent-cross-class-issue-queue.md`
 
 - [ ] **Step 1: Write wake aggregation and fired-order RED tests**
 
@@ -2108,12 +2131,15 @@ TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib riscv_live_retire_window -- 
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --test source_policy o3_writeback_wake_paths_share_live_issue_desired_tick -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --test source_policy task6_issue_migration -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --test source_policy o3_live_issue_ -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --test riscv_cluster_data parallel_driver_ -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --test riscv_frontend riscv_core_driver_ -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --test source_policy
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --all-targets
 TMPDIR=$PWD/target/tmp cargo check -p rem6-cpu --all-targets
-cargo fmt --all -- --check
-git diff --check
-git add crates/rem6-cpu/src/riscv_o3_writeback_wake.rs crates/rem6-cpu/src/riscv_o3_writeback_wake/desired.rs crates/rem6-cpu/src/riscv_live_retire_window.rs crates/rem6-cpu/src/o3_runtime_writeback.rs crates/rem6-cpu/src/o3_runtime_issue/state.rs crates/rem6-cpu/src/o3_runtime_issue.rs crates/rem6-cpu/src/o3_runtime_issue/service.rs crates/rem6-cpu/src/o3_runtime_issue_tests.rs crates/rem6-cpu/src/o3_runtime_issue/service_tests.rs crates/rem6-cpu/src/o3_runtime_issue/service_tests/scheduler_request.rs crates/rem6-cpu/src/o3_runtime_issue/service_tests/legacy_driver.rs crates/rem6-cpu/src/o3_runtime_pending_address_tests/lifecycle.rs crates/rem6-cpu/src/o3_runtime_pending_address_tests/multiple.rs crates/rem6-cpu/src/o3_runtime_pending_address_tests/scheduling.rs crates/rem6-cpu/src/o3_runtime_pending_address_tests/three_pending.rs crates/rem6-cpu/src/o3_runtime_memory_result_tests.rs crates/rem6-cpu/src/o3_runtime_memory_result_tests/replan.rs crates/rem6-cpu/src/o3_runtime_writeback_tests/deep_scalar_cleanup.rs crates/rem6-cpu/tests/source_policy.rs crates/rem6-cpu/tests/source_policy/live_issue_scheduler_contract.rs
+TMPDIR=$PWD/target/tmp cargo fmt --all -- --check
+git diff --check 7d6a591b..HEAD
+git add crates/rem6-cpu/src/riscv_o3_writeback_wake.rs crates/rem6-cpu/src/riscv_o3_writeback_wake/desired.rs crates/rem6-cpu/src/riscv_live_retire_window.rs crates/rem6-cpu/src/riscv_live_retire_window/dependent_result_address.rs crates/rem6-cpu/src/riscv_live_retire_window/producer_forwarded_descendant.rs crates/rem6-cpu/src/o3_runtime_writeback.rs crates/rem6-cpu/src/o3_runtime_issue/pending_address.rs crates/rem6-cpu/src/o3_runtime_issue/state.rs crates/rem6-cpu/src/o3_runtime_issue/state/rollback.rs crates/rem6-cpu/src/o3_runtime_issue.rs crates/rem6-cpu/src/o3_runtime_issue/service.rs crates/rem6-cpu/src/o3_runtime_pending_address.rs crates/rem6-cpu/src/o3_runtime_issue_tests.rs crates/rem6-cpu/src/o3_runtime_issue/service_tests.rs crates/rem6-cpu/src/o3_runtime_issue/service_tests/scheduler_request.rs crates/rem6-cpu/src/o3_runtime_issue/service_tests/legacy_driver.rs crates/rem6-cpu/src/o3_runtime_pending_address_tests/lifecycle.rs crates/rem6-cpu/src/o3_runtime_pending_address_tests/multiple.rs crates/rem6-cpu/src/o3_runtime_pending_address_tests/scheduling.rs crates/rem6-cpu/src/o3_runtime_pending_address_tests/staging.rs crates/rem6-cpu/src/o3_runtime_pending_address_tests/three_pending.rs crates/rem6-cpu/src/o3_runtime_memory_result_tests.rs crates/rem6-cpu/src/o3_runtime_memory_result_tests/replan.rs crates/rem6-cpu/src/o3_runtime_writeback_tests.rs crates/rem6-cpu/src/o3_runtime_writeback_tests/deep_scalar_cleanup.rs crates/rem6-cpu/src/o3_runtime_control_window.rs crates/rem6-cpu/src/riscv_data_issue_tests/dependent_result_address_multiple.rs crates/rem6-cpu/src/riscv_data_issue_tests/lifecycle.rs crates/rem6-cpu/src/riscv_fetch_ahead/tests.rs crates/rem6-cpu/src/riscv_fetch_ahead/tests/o3_wake_driver.rs crates/rem6-cpu/src/riscv_fetch_ahead/tests/detailed_o3_control/linked_control/fetch_response.rs crates/rem6-cpu/src/riscv_fetch_ahead/tests/producer_forwarded_chain_validation.rs crates/rem6-cpu/src/riscv_fetch_ahead/tests/producer_forwarded_return.rs crates/rem6-cpu/src/riscv_fetch_ahead/tests/producer_forwarded_return_link_shapes.rs crates/rem6-cpu/src/riscv_fetch_ahead/tests/producer_forwarded_scalar_return.rs crates/rem6-cpu/src/riscv_fetch_ahead/tests/producer_forwarded_scalar_return_link_shapes.rs crates/rem6-cpu/tests/riscv_cluster_data.rs crates/rem6-cpu/tests/riscv_frontend.rs crates/rem6-cpu/tests/source_policy.rs crates/rem6-cpu/tests/source_policy/live_issue_raw_removal.rs crates/rem6-cpu/tests/source_policy/live_issue_scheduler_contract.rs crates/rem6-cpu/tests/source_policy/task6_issue_migration.rs docs/superpowers/plans/2026-07-23-riscv-o3-persistent-cross-class-issue-queue.md
 TMPDIR=$PWD/target/tmp git commit -m "feat: drive O3 issue through scheduler wake"
 ```
 

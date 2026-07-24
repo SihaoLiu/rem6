@@ -10,8 +10,7 @@ fn retired_data_head_admits_same_and_split_link_scalar_return_predictions() {
         record_call_and_scalar(&core);
         retire_data_head(&core, 30);
 
-        let decision = core
-            .next_pending_data_fetch_ahead(false)
+        let decision = next_pending_data_fetch_ahead_after_o3_wake(&core, false)
             .expect("linked-call scalar-return decision");
         assert_eq!(decision.pc(), Address::new(0x800c));
         let speculation = decision.branch_speculation().unwrap();

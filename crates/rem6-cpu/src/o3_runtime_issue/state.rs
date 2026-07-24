@@ -1,7 +1,6 @@
-use std::{
-    collections::BTreeMap,
-    ops::{Deref, DerefMut},
-};
+#[cfg(test)]
+use std::collections::BTreeMap;
+use std::ops::{Deref, DerefMut};
 
 use rem6_memory::Address;
 
@@ -236,6 +235,7 @@ impl O3LiveIssueState {
         removed
     }
 
+    #[cfg(test)]
     pub(in crate::o3_runtime) fn remove_suffix_at(
         &mut self,
         boundary: u64,
@@ -295,6 +295,16 @@ impl O3LiveIssueState {
         }
     }
 
+    pub(in crate::o3_runtime) fn request_live_issue_after_writeback_change(&mut self, tick: u64) {
+        if self.resident_sequences.is_empty() {
+            return;
+        }
+        self.mark_mutated();
+        if !self.transaction_active() {
+            self.request_service_at(tick);
+        }
+    }
+
     pub(in crate::o3_runtime) const fn requested_service_tick(&self) -> Option<u64> {
         self.requested_service_tick
     }
@@ -325,10 +335,12 @@ impl O3LiveIssueState {
         self.mutation_generation = self.mutation_generation.wrapping_add(1);
     }
 
+    #[cfg(test)]
     pub(in crate::o3_runtime) const fn telemetry(&self) -> O3LiveIssueTelemetry {
         self.telemetry
     }
 
+    #[cfg(test)]
     pub(in crate::o3_runtime) fn trace_records(&self) -> &[O3LiveIssueTraceRecord] {
         &self.trace_records
     }

@@ -91,6 +91,7 @@ impl O3RuntimeState {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn record_live_speculative_execution(
         &mut self,
         candidate: O3LiveSpeculativeIssueCandidate,

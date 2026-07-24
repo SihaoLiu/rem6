@@ -1,3 +1,4 @@
+use super::super::o3_runtime_issue_tests::service_live_issue_queue_until_boundary_for_test;
 use super::*;
 use crate::o3_runtime::o3_runtime_issue::queue::{O3LiveIssueQueue, O3LiveIssueQueueCapture};
 use crate::o3_runtime::o3_runtime_pending_address_set::O3_PENDING_DATA_ADDRESS_CAPACITY;
@@ -25,9 +26,7 @@ fn schedule(
     head: O3LiveIssueHeadReservation,
     tick: u64,
 ) {
-    runtime
-        .schedule_live_speculative_issues(hart, head, tick)
-        .unwrap();
+    service_live_issue_queue_until_boundary_for_test(runtime, hart, head, tick).unwrap();
 }
 fn assert_two_pending_allocation(runtime: &O3RuntimeState) {
     let snapshot = runtime.snapshot();

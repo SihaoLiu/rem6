@@ -105,6 +105,32 @@ fn o3_writeback_width_defaults_to_one_and_rejects_out_of_range_updates() {
 }
 
 #[test]
+fn writeback_replan_moves_live_issue_wake_earlier() {
+    let mut runtime = O3RuntimeState::default();
+    assert!(runtime.set_writeback_width(1));
+    runtime
+        .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(20, 80)])
+        .unwrap();
+    let instruction = addi(6, 0, 1);
+    assert!(runtime
+        .stage_live_retire_window(Address::new(0x8100), instruction, 0, [])
+        .is_some());
+    assert!(runtime.bind_live_staged_issue_packet(
+        Address::new(0x8100),
+        decoded(instruction),
+        &[memory_request(100)],
+        90,
+    ));
+    assert_eq!(runtime.live_issue_service_tick(), Some(90));
+
+    runtime
+        .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(21, 42)])
+        .unwrap();
+
+    assert_eq!(runtime.live_issue_service_tick(), Some(42));
+}
+
+#[test]
 fn writeback_width_one_reserves_oldest_same_cycle_row_first() {
     let mut runtime = O3RuntimeState::default();
     assert!(runtime.set_writeback_width(1));

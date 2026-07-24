@@ -620,11 +620,12 @@ fn parallel_driver_issues_older_load_before_younger_live_gate_work() {
             .expect("pending scalar-load response scheduler event");
     }
     assert_eq!(cpu.read_register(reg(5)), 0);
-    let admitted_tick = cpu
+    let wake_tick = cpu
         .requested_o3_writeback_wake_tick(scheduler.now())
         .expect("completed scalar load should request an O3 writeback wake");
+    cpu.mark_o3_writeback_wake_fired(wake_tick);
     assert!(cpu
-        .record_ready_o3_data_access_event_with_trace(admitted_tick, false)
+        .record_ready_o3_data_access_event_with_trace(u64::MAX, false)
         .is_some());
     assert_eq!(cpu.read_register(reg(5)), 41);
 

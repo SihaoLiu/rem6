@@ -20,12 +20,6 @@ pub(super) fn stage_dependent_result_address_window(
     ) else {
         return false;
     };
-    let Some(head_reservation) = state
-        .o3_runtime
-        .live_data_access_head_reservation(head.fetch().request_id())
-    else {
-        return false;
-    };
     let mut predecessor = head_completed.last_consumed_request();
     let mut next_pc = sequential_pc(&head_completed);
     let pending_capacity = O3_PENDING_DATA_ADDRESS_CAPACITY;
@@ -93,12 +87,8 @@ pub(super) fn stage_dependent_result_address_window(
     }
 
     scheduled.extend(suffix);
-    let schedule_result = schedule_o3_live_speculative_younger_executions(
-        state,
-        head_reservation,
-        &scheduled,
-        issue_tick,
-    );
+    let schedule_result =
+        schedule_o3_live_speculative_younger_executions(state, &scheduled, issue_tick);
     match schedule_result {
         Ok(true) => {
             for request in dependent_requests {

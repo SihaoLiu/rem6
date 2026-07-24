@@ -1,3 +1,4 @@
+use super::o3_runtime_issue_tests::service_live_issue_queue_until_boundary_for_test;
 use super::o3_runtime_memory::*;
 use super::*;
 
@@ -528,9 +529,13 @@ fn memory_result_replanning_invalidates_dependent_chain_until_authoritative_reis
     let head = runtime
         .live_data_access_head_reservation(older.fetch().request_id())
         .expect("memory head remains available for descendant reissue");
-    runtime
-        .schedule_live_speculative_issues(&RiscvHartState::new(0x8000), head, 43)
-        .unwrap();
+    service_live_issue_queue_until_boundary_for_test(
+        &mut runtime,
+        &RiscvHartState::new(0x8000),
+        head,
+        43,
+    )
+    .unwrap();
 
     assert_eq!(
         calendar_rows_with_raw(&runtime),
@@ -654,9 +659,13 @@ fn memory_result_replanning_reverses_provisional_deferred_stats() {
     let head = runtime
         .live_data_access_head_reservation(older.fetch().request_id())
         .expect("memory head remains available for dependent reissue");
-    runtime
-        .schedule_live_speculative_issues(&RiscvHartState::new(0x8000), head, 43)
-        .unwrap();
+    service_live_issue_queue_until_boundary_for_test(
+        &mut runtime,
+        &RiscvHartState::new(0x8000),
+        head,
+        43,
+    )
+    .unwrap();
 
     assert_speculative_owner(
         &runtime,

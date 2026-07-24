@@ -194,8 +194,14 @@ impl RiscvCore {
             .is_some_and(|tick| tick <= now)
         {
             state.wake_ready_o3_data_access_younger_window(now, &fetch_events);
-            state.refresh_o3_writeback_wake(now);
         }
+        let hart = state.hart.clone();
+        if let Err(error) = state.o3_runtime.service_live_issue_scheduler_at(&hart, now) {
+            state
+                .pending_callback_error
+                .get_or_insert(RiscvCpuError::O3Runtime(error));
+        }
+        state.refresh_o3_writeback_wake(now);
     }
 
     pub fn owned_o3_writeback_wakes(&self) -> Vec<(SchedulerInstanceId, PendingEventSnapshot)> {
@@ -443,6 +449,32 @@ mod tests {
         assert_eq!(core.requested_o3_writeback_wake_tick(31), None);
     }
 
+    #[test]
+    fn o3_writeback_wake_requested_tick_includes_live_issue_service_tick() {
+        let core = core_with_live_issue_request(24);
+
+        assert_eq!(core.requested_o3_writeback_wake_tick(10), Some(24));
+    }
+
+    #[test]
+    fn o3_writeback_wake_requested_tick_includes_due_live_issue_service_tick() {
+        let core = core_with_live_issue_request(15);
+
+        assert_eq!(core.requested_o3_writeback_wake_tick(20), Some(20));
+    }
+
+    #[test]
+    fn o3_writeback_wake_refresh_and_requested_share_live_issue_minimum() {
+        let core = core_with_live_issue_request(15);
+        let requested = core.requested_o3_writeback_wake_tick(20);
+
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.refresh_o3_writeback_wake(20);
+
+        assert_eq!(requested, Some(20));
+        assert_eq!(state.o3_writeback_wake.desired_tick, requested);
+    }
+
     fn core() -> RiscvCore {
         RiscvCore::new(
             CpuCore::new(
@@ -461,6 +493,25 @@ mod tests {
             )
             .unwrap(),
         )
+    }
+
+    fn core_with_live_issue_request(tick: u64) -> RiscvCore {
+        let core = core();
+        let mut state = core.state.lock().expect("riscv core lock");
+        let instruction = addi_instruction(13, 0, 1);
+        assert!(state
+            .o3_runtime
+            .stage_live_retire_window(Address::new(0x8100), instruction, 0, [])
+            .is_some());
+        assert!(state.o3_runtime.bind_live_staged_issue_packet(
+            Address::new(0x8100),
+            decoded(instruction),
+            &[memory_request(100)],
+            tick,
+        ));
+        assert_eq!(state.o3_runtime.live_issue_service_tick(), Some(tick));
+        drop(state);
+        core
     }
 
     fn core_with_completed_scalar_loads() -> RiscvCore {
@@ -545,6 +596,27 @@ mod tests {
 
     fn register(index: u8) -> Register {
         Register::new(index).unwrap()
+    }
+
+    fn addi_instruction(rd: u8, rs1: u8, immediate: i64) -> RiscvInstruction {
+        RiscvInstruction::Addi {
+            rd: register(rd),
+            rs1: register(rs1),
+            imm: Immediate::new(immediate),
+        }
+    }
+
+    fn decoded(instruction: RiscvInstruction) -> rem6_isa_riscv::RiscvDecodedInstruction {
+        let RiscvInstruction::Addi { rd, rs1, imm } = instruction else {
+            panic!("unsupported decoded test instruction: {instruction:?}")
+        };
+        RiscvInstruction::decode_with_length(
+            (((imm.value() as u32) & 0xfff) << 20)
+                | (u32::from(rs1.index()) << 15)
+                | (u32::from(rd.index()) << 7)
+                | 0x13,
+        )
+        .unwrap()
     }
 
     fn wake(

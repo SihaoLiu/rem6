@@ -6,7 +6,7 @@ use rem6_memory::MemoryResponse;
 use rem6_transport::{MemoryRoute, MemoryTrace, MemoryTransport, TargetOutcome};
 
 #[test]
-fn producer_forwarded_target_response_stages_descendant_without_later_drive_turn() {
+fn producer_forwarded_target_response_issues_descendant_after_o3_wake() {
     let (core, _) = live_same_link_core(false);
     let decision = core
         .next_fetch_ahead_before_retire()
@@ -65,6 +65,7 @@ fn producer_forwarded_target_response_stages_descendant_without_later_drive_turn
         })
         .expect("completed target fetch")
         .tick();
+    assert!(fire_requested_o3_writeback_wakes(&core).contains(&response_tick));
     let snapshot = core.o3_runtime_snapshot();
     let target = snapshot
         .reorder_buffer()
