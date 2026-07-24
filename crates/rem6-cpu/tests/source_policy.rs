@@ -4981,6 +4981,7 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
         "preplan_replay_with_empty_survivors_records_no_issue_decision",
         "postplan_replay_with_empty_survivors_preserves_arbitration_max_rows",
         "compatibility_service_floor_preserves_newer_projection_and_clamps_regression",
+        "stats_reset_preserves_sealed_service_floor_and_counts_new_activity",
         "live_issue_stats_same_tick_reentry_projects_once",
         "live_issue_stats_reset_rebases_unsealed_decision",
     ] {
@@ -9343,9 +9344,12 @@ fn o3_live_issue_service_is_exactly_one_tick(source: &str) -> bool {
     ]
     .into_iter()
     .all(|(identifier, count)| rust_identifier_count(&production_chars, identifier) == count);
+    let begin_guard =
+        "if!self.live_issue.begin_service_at(now){returnOk(O3LiveIssueServiceOutcome::default());}";
     positions.is_some_and(|positions| positions.windows(2).all(|pair| pair[0] < pair[1]))
         && core_depths_are_stable
         && protected_identifier_counts
+        && compact.matches(begin_guard).count() == 1
         && rust_identifier_count(&service_chars, "return") == 7
         && compact
             .matches("returnOk(O3LiveIssueServiceOutcome::default());")
@@ -9455,15 +9459,18 @@ fn o3_live_issue_replay_finalization_is_shared(source: &str) -> bool {
         && service_compact.contains(
             "returnself.finish_live_issue_replay_at(now,sequence,&[],0,false,0);",
         )
+        && service_compact.contains("letreserved_width=plan.reserved_width();")
         && service_compact
-            .contains("letmax_rows_at_tick=plan.reserved_width().saturating_add(plan.issued().len());")
-        && service_compact.matches("true,max_rows_at_tick").count() == 4
+            .contains("letmax_rows_at_tick=reserved_width.saturating_add(issued_rows);")
+        && service_compact.matches("true,reserved_width").count() == 2
+        && service_compact.matches("true,max_rows_at_tick").count() == 2
         && replay_compact.contains("arbitrated:bool")
         && replay_compact.contains(
             "self.finish_live_issue_service_at(now,issued_sequences,issued_rows,Some(sequence),arbitrated,max_rows_at_tick,post",
         )
         && finish_compact.contains("ifarbitrated||post.observed_decision{")
         && classify_compact.contains("observed_decision:true")
+        && classify_compact.contains("max_rows_at_tick:post_plan.reserved_width(),")
 }
 
 fn o3_live_issue_service_floor_is_monotonic(
@@ -9493,8 +9500,12 @@ fn o3_live_issue_service_floor_is_monotonic(
     let consume = "self.requested_service_tick=None;";
 
     floor.contains("letactive_tick=self.active_tick.as_ref().map(|active|active.tick);")
-        && floor.contains("match(active_tick,self.last_counted_cycle_tick)")
-        && floor.contains("Some(active.max(counted))")
+        && floor.contains(
+            "letlast_service_tick=self.last_service_generation.map(|(tick,_)|tick);",
+        )
+        && floor.contains("match(active_tick,last_service_tick)")
+        && floor.contains("Some(active.max(serviced))")
+        && !floor.contains("last_counted_cycle_tick")
         && request.contains(
             "self.service_floor_tick().map_or(requested,|floor|requested.max(floor))",
         )
@@ -9758,6 +9769,14 @@ fn o3_live_issue_service_policy_rejects_later_tick_mutations() {
             ),
         ),
         (
+            "weakened begin-service guard",
+            service.replacen(
+                "if !self.live_issue.begin_service_at(now) {",
+                "if true || !self.live_issue.begin_service_at(now) {",
+                1,
+            ),
+        ),
+        (
             "extra transaction recording",
             service.replacen(
                 "match O3LiveIssueTransaction::record(self, rows) {",
@@ -9826,10 +9845,26 @@ fn o3_live_issue_replay_policy_rejects_unclassified_survivor_mutations() {
             ),
         ),
         (
-            "plan maximum discarded",
+            "recorded rows discarded from maximum",
             service.replacen(
-                "let max_rows_at_tick = plan.reserved_width().saturating_add(plan.issued().len());",
-                "let max_rows_at_tick = 0;",
+                "let max_rows_at_tick = reserved_width.saturating_add(issued_rows);",
+                "let max_rows_at_tick = reserved_width;",
+                1,
+            ),
+        ),
+        (
+            "selected rows overcount replay maximum",
+            service.replacen(
+                "let reserved_width = plan.reserved_width();",
+                "let reserved_width = plan.reserved_width().saturating_add(plan.issued().len());",
+                1,
+            ),
+        ),
+        (
+            "post-cleanup selected rows overcount maximum",
+            service.replacen(
+                "max_rows_at_tick: post_plan.reserved_width(),",
+                "max_rows_at_tick: post_plan\n                .reserved_width()\n                .saturating_add(post_plan.issued().len()),",
                 1,
             ),
         ),
@@ -9925,7 +9960,17 @@ fn o3_live_issue_service_floor_policy_rejects_regressions() {
             "active tick omitted from floor",
             service.clone(),
             state.clone(),
-            decision.replacen("Some(active.max(counted))", "Some(counted)", 1),
+            decision.replacen("Some(active.max(serviced))", "Some(serviced)", 1),
+        ),
+        (
+            "resettable stats marker used as floor",
+            service.clone(),
+            state.clone(),
+            decision.replacen(
+                "let last_service_tick = self.last_service_generation.map(|(tick, _)| tick);",
+                "let last_service_tick = self.last_counted_cycle_tick;",
+                1,
+            ),
         ),
         (
             "request floor clamp removed",

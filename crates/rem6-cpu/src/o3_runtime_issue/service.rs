@@ -123,17 +123,13 @@ impl O3RuntimeState {
         let dependencies = O3LiveIssueDependencyTable::new(self, queue.entries())?;
         let calendar = O3LiveIssueCalendar::capture(self);
         let plan = calendar.plan_at(now, &dependencies, queue.entries())?;
-        let issued_sequences = plan
-            .issued()
-            .iter()
-            .map(O3ScopedReadyInstruction::sequence)
-            .collect::<Vec<_>>();
-        let max_rows_at_tick = plan.reserved_width().saturating_add(plan.issued().len());
+        let reserved_width = plan.reserved_width();
         let prepared = self.prepare_live_issue_batch(hart, &queue, plan.issued(), now)?;
         let issued_rows = match prepared {
             O3PreparedLiveIssueBatch::Prepared(rows) => {
+                let recorded_rows = rows.len();
                 match O3LiveIssueTransaction::record(self, rows) {
-                    Ok(O3LiveIssueBatchOutcome::Recorded) => plan.issued().len(),
+                    Ok(O3LiveIssueBatchOutcome::Recorded) => recorded_rows,
                     Ok(O3LiveIssueBatchOutcome::ReplayPending(sequence)) => {
                         return self.finish_live_issue_replay_at(
                             now,
@@ -141,7 +137,7 @@ impl O3RuntimeState {
                             &[],
                             0,
                             true,
-                            max_rows_at_tick,
+                            reserved_width,
                         );
                     }
                     Err(O3LiveIssueTransactionError::Runtime(error)) => return Err(error),
@@ -157,10 +153,16 @@ impl O3RuntimeState {
                     &[],
                     0,
                     true,
-                    max_rows_at_tick,
+                    reserved_width,
                 );
             }
         };
+        let issued_sequences = plan
+            .issued()
+            .iter()
+            .map(O3ScopedReadyInstruction::sequence)
+            .collect::<Vec<_>>();
+        let max_rows_at_tick = reserved_width.saturating_add(issued_rows);
         let post = self.classify_live_issue_queue_after_service(now)?;
         if let Some(sequence) = post.replay_boundary {
             return self.finish_live_issue_replay_at(
@@ -324,9 +326,7 @@ impl O3RuntimeState {
                 .iter()
                 .map(O3ScopedReadyInstruction::sequence)
                 .collect(),
-            max_rows_at_tick: post_plan
-                .reserved_width()
-                .saturating_add(post_plan.issued().len()),
+            max_rows_at_tick: post_plan.reserved_width(),
             next_service_tick,
             replay_boundary: None,
             no_wake_sequence,
