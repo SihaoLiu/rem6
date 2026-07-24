@@ -91,6 +91,22 @@ fn service_live_issue_queue_at_reports_private_no_wake_invariant() {
 }
 
 #[test]
+fn schedule_live_speculative_issues_translates_no_wake_and_preserves_diagnostics() {
+    let mut fixture = ScalarIssueFixture::new_unbound(2, ScalarIssueCase::SameWindowLinkReturn);
+    fixture.bind_row(1);
+    let sequence = fixture.sequence(SECOND_PC);
+
+    assert_eq!(
+        fixture
+            .runtime
+            .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20,),
+        Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence }),
+    );
+    assert_eq!(fixture.runtime.live_issue.resident_sequences(), &[sequence]);
+    assert_eq!(fixture.runtime.live_issue_service_tick(), None);
+}
+
+#[test]
 fn live_issue_stats_same_tick_reentry_projects_once() {
     let mut fixture = ScalarIssueFixture::new(4, ScalarIssueCase::SameTickAluDependency);
     fixture

@@ -4864,6 +4864,7 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
         rust_method_call_positions(&compatibility, "service_live_issue_queue_at").len(),
         1,
     );
+    assert!(o3_live_issue_compatibility_driver_fails_closed(&service));
     for forbidden in [
         "O3LiveIssueQueue::materialize",
         "O3LiveIssueDependencyTable::new",
@@ -4877,10 +4878,11 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
             "compatibility driver retains planning authority `{forbidden}`",
         );
     }
-    assert!(compatibility.contains("Err(O3LiveIssueServiceError::NoWake { .. }) => break"));
     assert!(
         compatibility.contains("Err(O3LiveIssueServiceError::Runtime(error)) => return Err(error)")
     );
+    assert!(compatibility
+        .contains("outcome.waits_for_pending_dependency() && next_tick > earliest_tick"));
     assert!(compatibility.contains("self.pending_data_address_wake_tick() == Some(next_tick)"));
 
     let classify = rust_function_definition(&service, "classify_live_issue_queue_after_service")
@@ -4895,6 +4897,13 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
     }
     assert!(classify.contains("no_wake_sequence"));
     assert!(classify.contains("self.live_issue.resident_sequences()[0]"));
+    let compact_classify = classify
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    assert!(
+        compact_classify.contains("next_service_tick.is_none()&&!waits_for_external_dependency")
+    );
     let one_tick = rust_function_definition(&service, "service_live_issue_queue_at").unwrap();
     let observe = one_tick.find("self.live_issue.observe_sequences(").unwrap();
     let no_wake = one_tick
@@ -4936,6 +4945,7 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
         "service_live_issue_queue_at_requests_earliest_dependency_ready_tick",
         "service_live_issue_queue_at_allows_capacity_remaining_same_tick_reentry",
         "service_live_issue_queue_at_reports_private_no_wake_invariant",
+        "schedule_live_speculative_issues_translates_no_wake_and_preserves_diagnostics",
         "live_issue_stats_same_tick_reentry_projects_once",
         "live_issue_stats_reset_rebases_unsealed_decision",
     ] {
@@ -9228,6 +9238,22 @@ fn o3_live_issue_service_is_exactly_one_tick(source: &str) -> bool {
         && rust_method_call_positions(&service, "service_live_issue_queue_at").is_empty()
 }
 
+fn o3_live_issue_compatibility_driver_fails_closed(source: &str) -> bool {
+    let production = production_rust_source(source);
+    let Some(compatibility) =
+        rust_function_definition(&production, "schedule_live_speculative_issues")
+    else {
+        return false;
+    };
+    let compact = compatibility
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    compact.contains(
+        "Err(O3LiveIssueServiceError::NoWake{sequence})=>{returnErr(O3RuntimeError::InvalidLiveIssueQueueEntry{sequence});}",
+    )
+}
+
 fn o3_live_issue_delayed_stats_are_projected(
     service_source: &str,
     state_source: &str,
@@ -9404,6 +9430,49 @@ fn o3_live_issue_service_policy_rejects_later_tick_mutations() {
         assert!(
             !o3_live_issue_service_is_exactly_one_tick(&mutation),
             "accepted later-tick or weakened service mutation",
+        );
+    }
+}
+
+#[test]
+fn o3_live_issue_service_compatibility_policy_rejects_silent_no_wake_mutations() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let service = fs::read_to_string(crate_dir.join("src/o3_runtime_issue/service.rs")).unwrap();
+    assert!(o3_live_issue_compatibility_driver_fails_closed(&service));
+
+    for (description, mutation) in [
+        (
+            "silent break",
+            service.replacen(
+                "return Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence });",
+                "break;",
+                1,
+            ),
+        ),
+        (
+            "silent success",
+            service.replacen(
+                "return Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence });",
+                "return Ok(());",
+                1,
+            ),
+        ),
+        (
+            "ignored sequence",
+            service.replacen(
+                "Err(O3LiveIssueServiceError::NoWake { sequence }) => {",
+                "Err(O3LiveIssueServiceError::NoWake { .. }) => {",
+                1,
+            ),
+        ),
+    ] {
+        assert_ne!(
+            mutation, service,
+            "compatibility mutation did not apply: {description}"
+        );
+        assert!(
+            !o3_live_issue_compatibility_driver_fails_closed(&mutation),
+            "accepted weakened no-wake compatibility mutation: {description}",
         );
     }
 }

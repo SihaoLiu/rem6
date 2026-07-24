@@ -599,7 +599,15 @@ fn scoped_issue_partial_reentry_keeps_previously_bound_rows_visible() {
     assert_eq!(fixture.executions_at(THIRD_PC), 0);
 
     fixture.bind_row(2);
-    fixture.schedule(20);
+    let unresolved = fixture.sequence(THIRD_PC);
+    assert_eq!(
+        fixture
+            .runtime
+            .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20,),
+        Err(O3RuntimeError::InvalidLiveIssueQueueEntry {
+            sequence: unresolved,
+        }),
+    );
     assert_eq!(fixture.executions_at(BRANCH_PC), 1);
     assert_eq!(fixture.executions_at(SECOND_PC), 0);
     assert_eq!(fixture.executions_at(THIRD_PC), 0);
@@ -622,7 +630,15 @@ fn scoped_issue_partial_reentry_keeps_unknown_return_owner_unresolved() {
     fixture.bind_row(0);
     fixture.schedule(20);
     fixture.bind_row(2);
-    fixture.schedule(20);
+    let unresolved = fixture.sequence(THIRD_PC);
+    assert_eq!(
+        fixture
+            .runtime
+            .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20,),
+        Err(O3RuntimeError::InvalidLiveIssueQueueEntry {
+            sequence: unresolved,
+        }),
+    );
 
     assert_eq!(fixture.executions_at(BRANCH_PC), 1);
     assert_eq!(fixture.executions_at(SECOND_PC), 0);

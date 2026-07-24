@@ -12,6 +12,7 @@ pub(crate) struct O3LiveIssueServiceOutcome {
     issued_rows: usize,
     next_service_tick: Option<u64>,
     replay_boundary: Option<u64>,
+    waits_for_pending_dependency: bool,
 }
 
 impl O3LiveIssueServiceOutcome {
@@ -25,6 +26,10 @@ impl O3LiveIssueServiceOutcome {
 
     pub(in crate::o3_runtime) const fn replay_boundary(self) -> Option<u64> {
         self.replay_boundary
+    }
+
+    const fn waits_for_pending_dependency(self) -> bool {
+        self.waits_for_pending_dependency
     }
 }
 
@@ -48,6 +53,7 @@ struct O3LiveIssuePostService {
     next_service_tick: Option<u64>,
     replay_boundary: Option<u64>,
     no_wake_sequence: Option<u64>,
+    waits_for_pending_dependency: bool,
 }
 
 impl O3RuntimeState {
@@ -182,6 +188,7 @@ impl O3RuntimeState {
             issued_rows,
             next_service_tick: post.next_service_tick,
             replay_boundary: post.replay_boundary,
+            waits_for_pending_dependency: post.waits_for_pending_dependency,
         })
     }
 
@@ -229,8 +236,32 @@ impl O3RuntimeState {
             .into_iter()
             .flatten()
             .min();
-        let no_wake_sequence = next_service_tick
-            .is_none()
+        let only_dependency_blocked =
+            post_plan.issued().is_empty() && post_plan.resource_blocked().is_empty();
+        let waits_for_pending_dependency = only_dependency_blocked
+            && post_plan.dependency_blocked().iter().any(|row| {
+                self.pending_data_address_sequence_for_replay(row.sequence())
+                    .is_some()
+                    || queue.entry(row.sequence()).is_some_and(|entry| {
+                        entry.scheduling().data_producers().iter().any(|producer| {
+                            self.pending_data_address_sequence_for_replay(producer.sequence())
+                                .is_some()
+                        })
+                    })
+            });
+        let waits_for_live_data_dependency = only_dependency_blocked
+            && post_plan.dependency_blocked().iter().any(|row| {
+                queue.entry(row.sequence()).is_some_and(|entry| {
+                    entry.scheduling().data_producers().iter().any(|producer| {
+                        self.live_data_accesses
+                            .iter()
+                            .any(|live| live.sequence == producer.sequence())
+                    })
+                })
+            });
+        let waits_for_external_dependency =
+            waits_for_pending_dependency || waits_for_live_data_dependency;
+        let no_wake_sequence = (next_service_tick.is_none() && !waits_for_external_dependency)
             .then(|| self.live_issue.resident_sequences()[0]);
         Ok(O3LiveIssuePostService {
             resource_blocked_sequences: post_plan
@@ -249,6 +280,7 @@ impl O3RuntimeState {
             next_service_tick,
             replay_boundary: None,
             no_wake_sequence,
+            waits_for_pending_dependency,
         })
     }
 
@@ -335,7 +367,9 @@ impl O3RuntimeState {
         loop {
             let outcome = match self.service_live_issue_queue_at(hart, tick) {
                 Ok(outcome) => outcome,
-                Err(O3LiveIssueServiceError::NoWake { .. }) => break,
+                Err(O3LiveIssueServiceError::NoWake { sequence }) => {
+                    return Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence });
+                }
                 Err(O3LiveIssueServiceError::Runtime(error)) => return Err(error),
             };
             if outcome.replay_boundary().is_some() {
@@ -344,6 +378,9 @@ impl O3RuntimeState {
             let Some(next_tick) = outcome.next_service_tick() else {
                 break;
             };
+            if outcome.waits_for_pending_dependency() && next_tick > earliest_tick {
+                break;
+            }
             if self.pending_data_address_wake_tick() == Some(next_tick) {
                 break;
             }
