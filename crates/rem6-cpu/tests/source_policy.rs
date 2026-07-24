@@ -4639,6 +4639,7 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
     }
     let state_capture = rust_function_definition(&state_rollback, "capture_rollback").unwrap();
     let state_restore = rust_function_definition(&state_rollback, "restore_rollback").unwrap();
+    assert!(live_issue_state_rollback_source_is_bounded(&state_rollback));
     assert!(!state_capture.contains("compatibility_cycle_ticks"));
     assert!(!state_capture.contains("trace_records.clone"));
     assert!(state_restore.contains("truncate"));
@@ -8087,13 +8088,139 @@ fn o3_live_issue_transaction_clones_are_bounded(source: &str) -> bool {
 
 fn reserved_recording_requires_current_calendar_reservation(source: &str) -> bool {
     let production = production_rust_source(source);
-    let compact = production
+    let Some(guard) = rust_match_guard_after_some_binding(&production, "reservation") else {
+        return false;
+    };
+    let Some(operands) = rust_top_level_conjunction_operands(&guard) else {
+        return false;
+    };
+    let fixed_fu = "reservation.matches_fixed_fu(sequence,raw_ready_tick)";
+    let current_calendar = [
+        "self.writeback_calendar.reservation(sequence)==Some(reservation)",
+        "Some(reservation)==self.writeback_calendar.reservation(sequence)",
+    ];
+    operands.len() == 2
+        && operands.iter().any(|operand| operand == fixed_fu)
+        && operands
+            .iter()
+            .any(|operand| current_calendar.contains(&operand.as_str()))
+}
+
+fn rust_match_guard_after_some_binding(source: &str, binding: &str) -> Option<String> {
+    let chars = source.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        if identifier != "Some" {
+            index = end;
+            continue;
+        }
+        let open = skip_rust_whitespace(&chars, end);
+        if chars.get(open) != Some(&'(') {
+            index = end;
+            continue;
+        }
+        let close = matching_delimiter(&chars, open, '(', ')')?;
+        let bound = chars[open + 1..close].iter().collect::<String>();
+        if bound.trim() != binding {
+            index = close + 1;
+            continue;
+        }
+        let mut guard = skip_rust_whitespace(&chars, close + 1);
+        while chars.get(guard) == Some(&')') {
+            guard = skip_rust_whitespace(&chars, guard + 1);
+        }
+        let Some((guard_keyword, guard_start)) = rust_identifier_at(&chars, guard) else {
+            index = close + 1;
+            continue;
+        };
+        if guard_keyword != "if" {
+            index = close + 1;
+            continue;
+        }
+        let guard_start = skip_rust_whitespace(&chars, guard_start);
+        let mut round = 0;
+        let mut square = 0;
+        let mut curly = 0;
+        let mut cursor = guard_start;
+        while cursor + 1 < chars.len() {
+            match chars[cursor] {
+                '(' => round += 1,
+                ')' => round -= 1,
+                '[' => square += 1,
+                ']' => square -= 1,
+                '{' => curly += 1,
+                '}' => curly -= 1,
+                '=' if chars[cursor + 1] == '>' && round == 0 && square == 0 && curly == 0 => {
+                    return Some(chars[guard_start..cursor].iter().collect());
+                }
+                _ => {}
+            }
+            cursor += 1;
+        }
+        index = close + 1;
+    }
+    None
+}
+
+fn rust_top_level_conjunction_operands(expression: &str) -> Option<Vec<String>> {
+    let expression = strip_outer_rust_parentheses(expression);
+    let chars = expression.chars().collect::<Vec<_>>();
+    let mut operands = Vec::new();
+    let mut start = 0;
+    let mut round = 0;
+    let mut square = 0;
+    let mut curly = 0;
+    let mut cursor = 0;
+    while cursor + 1 < chars.len() {
+        match chars[cursor] {
+            '(' => round += 1,
+            ')' => round -= 1,
+            '[' => square += 1,
+            ']' => square -= 1,
+            '{' => curly += 1,
+            '}' => curly -= 1,
+            '&' if chars[cursor + 1] == '&' && round == 0 && square == 0 && curly == 0 => {
+                operands.push(compact_rust_expression(&chars[start..cursor]));
+                start = cursor + 2;
+                cursor += 1;
+            }
+            '|' if chars[cursor + 1] == '|' && round == 0 && square == 0 && curly == 0 => {
+                return None;
+            }
+            _ => {}
+        }
+        cursor += 1;
+    }
+    operands.push(compact_rust_expression(&chars[start..]));
+    (operands.len() == 2 && operands.iter().all(|operand| !operand.is_empty())).then_some(operands)
+}
+
+fn strip_outer_rust_parentheses(expression: &str) -> String {
+    let mut expression = expression.trim().to_owned();
+    loop {
+        let chars = expression.chars().collect::<Vec<_>>();
+        if chars.first() != Some(&'(')
+            || matching_delimiter(&chars, 0, '(', ')') != Some(chars.len().saturating_sub(1))
+        {
+            return expression;
+        }
+        expression = chars[1..chars.len() - 1]
+            .iter()
+            .collect::<String>()
+            .trim()
+            .to_owned();
+    }
+}
+
+fn compact_rust_expression(expression: &[char]) -> String {
+    strip_outer_rust_parentheses(&expression.iter().collect::<String>())
         .chars()
         .filter(|character| !character.is_whitespace())
-        .collect::<String>();
-    rust_method_call_positions(&production, "reservation").len() == 1
-        && (compact.contains("writeback_calendar.reservation(sequence)==Some(reservation)")
-            || compact.contains("Some(reservation)==writeback_calendar.reservation(sequence)"))
+        .collect()
 }
 
 fn transaction_replan_test_exercises_descendant_invalidation(source: &str) -> bool {
@@ -8223,6 +8350,58 @@ fn live_issue_state_rollback_definition_is_bounded(definition: &str) -> bool {
         && !definition.contains("compatibility_cycle_ticks")
         && !definition.contains("trace_records:")
         && !definition.contains("Vec<O3LiveIssueTraceRecord>")
+}
+
+fn live_issue_state_rollback_source_is_bounded(source: &str) -> bool {
+    if !live_issue_state_rollback_definition_is_bounded(source) {
+        return false;
+    }
+    let production = production_rust_source(source);
+    let Some(capture) = rust_function_definition(&production, "capture_rollback") else {
+        return false;
+    };
+    let compact = |code: &str| {
+        code.chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>()
+    };
+    let compact_capture = compact(&capture);
+    let compact_production = compact(&production);
+    for receiver in ["self.resident_sequences", "self.active_tick"] {
+        let operation = format!("{receiver}.clone()");
+        if compact_capture.matches(&operation).count() != 1
+            || compact_production.matches(&operation).count() != 1
+        {
+            return false;
+        }
+    }
+    if rust_method_call_positions(&production, "clone").len() != 2 {
+        return false;
+    }
+    for forbidden_call in [
+        "clone_from",
+        "clone_into",
+        "to_owned",
+        "to_vec",
+        "cloned",
+        "into_owned",
+    ] {
+        if !rust_method_call_positions(&production, forbidden_call).is_empty() {
+            return false;
+        }
+    }
+    for forbidden_reference in [
+        "Clone::clone",
+        "Clone::clone_from",
+        "ToOwned::to_owned",
+        "ToOwned::clone_into",
+        "O3LiveIssueState::clone",
+    ] {
+        if compact_production.contains(forbidden_reference) {
+            return false;
+        }
+    }
+    true
 }
 
 fn rust_method_call_positions(source: &str, name: &str) -> Vec<usize> {
@@ -8764,6 +8943,80 @@ struct O3LiveIssueStateRollback {
 }
 
 #[test]
+fn o3_live_issue_transaction_policy_rejects_unbounded_state_rollback_clones() {
+    let canonical = r#"
+struct O3LiveIssueStateRollback {
+    resident_sequences: O3LiveIssueResidentSequences,
+    requested_service_tick: Option<u64>,
+    active_tick: Option<O3LiveIssueActiveTick>,
+    transaction_active: bool,
+    mutation_generation: u64,
+    last_service_generation: Option<(u64, u64)>,
+    telemetry: O3LiveIssueTelemetry,
+    trace_records_len: usize,
+}
+
+impl O3LiveIssueState {
+    fn capture_rollback(&self) -> O3LiveIssueStateRollback {
+        O3LiveIssueStateRollback {
+            resident_sequences: self.resident_sequences.clone(),
+            requested_service_tick: self.requested_service_tick,
+            active_tick: self.active_tick.clone(),
+            transaction_active: self.transaction_active,
+            mutation_generation: self.mutation_generation,
+            last_service_generation: self.last_service_generation,
+            telemetry: self.telemetry,
+            trace_records_len: self.trace_records.len(),
+        }
+    }
+}
+"#;
+    assert!(live_issue_state_rollback_source_is_bounded(canonical));
+    for mutation in [
+        canonical.replace(
+            "O3LiveIssueStateRollback {\n            resident_sequences:",
+            "let _copy = self.clone();\n        O3LiveIssueStateRollback {\n            resident_sequences:",
+        ),
+        canonical.replace(
+            "O3LiveIssueStateRollback {\n            resident_sequences:",
+            "let alias = self; let _copy = alias.clone();\n        O3LiveIssueStateRollback {\n            resident_sequences:",
+        ),
+        canonical.replace(
+            "O3LiveIssueStateRollback {\n            resident_sequences:",
+            "let _copy = Clone::clone(self);\n        O3LiveIssueStateRollback {\n            resident_sequences:",
+        ),
+        canonical.replace(
+            "O3LiveIssueStateRollback {\n            resident_sequences:",
+            "let _copy = O3LiveIssueState::clone(self);\n        O3LiveIssueStateRollback {\n            resident_sequences:",
+        ),
+        canonical.replace(
+            "O3LiveIssueStateRollback {\n            resident_sequences:",
+            "let _copy = <O3LiveIssueState as Clone>::clone(self);\n        O3LiveIssueStateRollback {\n            resident_sequences:",
+        ),
+        canonical.replace(
+            "O3LiveIssueStateRollback {\n            resident_sequences:",
+            "let _copy = self.to_owned();\n        O3LiveIssueStateRollback {\n            resident_sequences:",
+        ),
+        canonical.replace(
+            "O3LiveIssueStateRollback {\n            resident_sequences:",
+            "let mut copy = O3LiveIssueState::default(); copy.clone_from(self);\n        O3LiveIssueStateRollback {\n            resident_sequences:",
+        ),
+        canonical.replace(
+            "resident_sequences: self.resident_sequences.clone()",
+            "resident_sequences: self.clone()",
+        ),
+        format!(
+            "{canonical}\nfn helper(state: &O3LiveIssueState) {{ let _copy = state.clone(); }}"
+        ),
+    ] {
+        assert!(
+            !live_issue_state_rollback_source_is_bounded(&mutation),
+            "accepted unbounded state rollback clone mutation `{mutation}`",
+        );
+    }
+}
+
+#[test]
 fn o3_live_issue_transaction_policy_rejects_stale_reservation_validation_mutations() {
     let canonical = r#"
 fn record_live_speculative_execution_with_reservation(
@@ -8771,12 +9024,23 @@ fn record_live_speculative_execution_with_reservation(
     sequence: u64,
     reservation: O3WritebackReservation,
 ) {
-    let valid = reservation.matches_fixed_fu(sequence, 42)
-        && self.writeback_calendar.reservation(sequence) == Some(reservation);
+    let valid = match (true, Some(reservation)) {
+        (true, Some(reservation))
+            if reservation.matches_fixed_fu(sequence, raw_ready_tick)
+                && self.writeback_calendar.reservation(sequence) == Some(reservation) => true,
+        _ => false,
+    };
 }
 "#;
     assert!(reserved_recording_requires_current_calendar_reservation(
         canonical
+    ));
+    assert!(reserved_recording_requires_current_calendar_reservation(
+        &canonical
+            .replace(
+                "reservation.matches_fixed_fu(sequence, raw_ready_tick)\n                && self.writeback_calendar.reservation(sequence) == Some(reservation)",
+                "Some(reservation) == self.writeback_calendar.reservation(sequence)\n                && reservation.matches_fixed_fu(sequence, raw_ready_tick)",
+            )
     ));
     for mutation in [
         canonical.replace(
@@ -8786,6 +9050,18 @@ fn record_live_speculative_execution_with_reservation(
         canonical.replace(
             "self.writeback_calendar.reservation(sequence) == Some(reservation)",
             "self.writeback_calendar.reservation(sequence).is_some()",
+        ),
+        canonical.replace(
+            "self.writeback_calendar.reservation(sequence) == Some(reservation) => true",
+            "self.writeback_calendar.reservation(sequence) == Some(reservation) || true => true",
+        ),
+        canonical.replace(
+            "let valid = match (true, Some(reservation)) {",
+            "let current = self.writeback_calendar.reservation(sequence) == Some(reservation);\n    let valid = match (true, Some(reservation)) {",
+        )
+        .replace(
+            "                && self.writeback_calendar.reservation(sequence) == Some(reservation) => true,",
+            "                => true,",
         ),
     ] {
         assert!(!reserved_recording_requires_current_calendar_reservation(
