@@ -1400,7 +1400,7 @@ The storage helper inspects struct field definitions, so method signatures may s
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib live_issue_transaction_ -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib selected_issue_batch_failure_records_no_partial_state -- --nocapture
-TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib o3_writeback_replan -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib 'o3_runtime_writeback::replan' -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --test source_policy o3_live_issue_transaction -- --nocapture
 git add crates/rem6-cpu/src/o3_runtime_issue.rs crates/rem6-cpu/src/o3_runtime_issue/transaction.rs crates/rem6-cpu/src/o3_runtime_issue/transaction_tests.rs crates/rem6-cpu/src/o3_runtime_control_window.rs crates/rem6-cpu/src/o3_runtime_writeback.rs crates/rem6-cpu/src/o3_runtime_issue_tests.rs crates/rem6-cpu/tests/source_policy.rs
 TMPDIR=$PWD/target/tmp git commit -m "feat: bound O3 live issue transactions"
