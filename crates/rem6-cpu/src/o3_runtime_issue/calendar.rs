@@ -41,37 +41,42 @@ struct O3LiveIssueReservations {
 }
 
 impl O3LiveIssueCalendar {
-    pub(in crate::o3_runtime) fn capture(
-        runtime: &O3RuntimeState,
-        head: O3LiveIssueHeadReservation,
-    ) -> Self {
+    pub(in crate::o3_runtime) fn capture(runtime: &O3RuntimeState) -> Self {
         let mut calendar = Self {
             issue_width: runtime.issue_width,
             memory_issue_width: runtime.memory_issue_width(),
             by_tick: BTreeMap::new(),
         };
-        calendar.reserve(head.issue_tick, head.op_class);
 
-        for tick in runtime
-            .pending_data_addresses
-            .iter()
-            .filter_map(|pending| pending.selected_issue_tick)
-        {
-            calendar.reserve(tick, O3IssueOpClass::Memory);
+        for live in &runtime.live_data_accesses {
+            calendar.reserve(live.issue_tick, O3IssueOpClass::Memory);
         }
-
-        for issued in runtime.live_speculative_executions.iter().filter(|issued| {
-            issued.sequence != head.sequence
-                && runtime
-                    .snapshot
-                    .reorder_buffer
-                    .iter()
-                    .any(|entry| entry.is_live_staged() && entry.sequence() == issued.sequence)
-        }) {
+        for pending in runtime.pending_data_addresses.iter() {
+            if let Some(tick) = pending.selected_issue_tick {
+                calendar.reserve(tick, O3IssueOpClass::Memory);
+            }
+        }
+        for issued in &runtime.live_speculative_executions {
             calendar.reserve(
                 issued.issue_tick,
                 live_issue_op_class(issued.execution.instruction()),
             );
+        }
+        calendar
+    }
+
+    pub(in crate::o3_runtime) fn capture_with_head_for_admission(
+        runtime: &O3RuntimeState,
+        head: O3LiveIssueHeadReservation,
+    ) -> Self {
+        let mut calendar = Self::capture(runtime);
+        let canonical_memory_head = head.op_class == O3IssueOpClass::Memory
+            && runtime
+                .live_data_accesses
+                .iter()
+                .any(|live| live.sequence == head.sequence() && live.issue_tick == head.issue_tick);
+        if !canonical_memory_head {
+            calendar.reserve(head.issue_tick, head.op_class);
         }
         calendar
     }

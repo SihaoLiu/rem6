@@ -105,50 +105,57 @@ impl O3LiveIssuePacket {
 }
 
 impl O3LiveIssueQueue {
-    pub(in crate::o3_runtime) fn capture(
+    pub(in crate::o3_runtime) fn materialize(
         runtime: &O3RuntimeState,
-        head: O3LiveIssueHeadReservation,
+        resident_sequences: &[u64],
     ) -> Result<O3LiveIssueQueueCapture, O3RuntimeError> {
-        let mut entries = Vec::new();
-        for (index, rob) in runtime.snapshot.reorder_buffer.iter().copied().enumerate() {
-            let sequence = rob.sequence();
-            if !rob.is_live_staged()
-                || sequence == head.sequence()
-                || runtime
-                    .live_speculative_executions
-                    .iter()
-                    .any(|issued| issued.sequence == sequence)
-            {
-                continue;
+        let mut entries = Vec::with_capacity(resident_sequences.len());
+        for &sequence in resident_sequences {
+            let index = runtime
+                .snapshot
+                .reorder_buffer
+                .binary_search_by_key(&sequence, |entry| entry.sequence())
+                .map_err(|_| O3RuntimeError::InvalidLiveIssueQueueEntry { sequence })?;
+            let rob = runtime.snapshot.reorder_buffer[index];
+            if !rob.is_live_staged() {
+                return Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence });
             }
             let pending = runtime.pending_data_addresses.find_sequence(sequence);
-            if pending.is_some_and(|pending| pending.materialized.is_some()) {
-                continue;
+            if pending.is_some_and(|row| row.materialized.is_some()) {
+                return Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence });
             }
-            let pending = pending.is_some();
             let Some(packet) = runtime.live_staged_issue_packet(sequence).cloned() else {
-                if pending {
-                    return Ok(O3LiveIssueQueueCapture::ReplayPending(sequence));
-                }
-                continue;
+                return if pending.is_some() {
+                    Ok(O3LiveIssueQueueCapture::ReplayPending(sequence))
+                } else {
+                    Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence })
+                };
             };
             let Some(scheduling) =
                 runtime.live_issue_scheduling_candidate_from_metadata(index, rob, &packet)
             else {
-                if pending {
-                    return Ok(O3LiveIssueQueueCapture::ReplayPending(sequence));
-                }
-                if !live_issue_instruction_is_supported(packet.instruction()) {
-                    continue;
-                }
-                return Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence });
+                return if pending.is_some() {
+                    Ok(O3LiveIssueQueueCapture::ReplayPending(sequence))
+                } else {
+                    Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence })
+                };
             };
             entries.push(O3LiveIssueQueueEntry { packet, scheduling });
         }
         Self::try_from_entries(entries).map(O3LiveIssueQueueCapture::Ready)
     }
 
-    fn try_from_entries(entries: Vec<O3LiveIssueQueueEntry>) -> Result<Self, O3RuntimeError> {
+    #[cfg(test)]
+    pub(in crate::o3_runtime) fn capture(
+        runtime: &O3RuntimeState,
+        _head: O3LiveIssueHeadReservation,
+    ) -> Result<O3LiveIssueQueueCapture, O3RuntimeError> {
+        Self::materialize(runtime, runtime.live_issue.resident_sequences())
+    }
+
+    pub(in crate::o3_runtime) fn try_from_entries(
+        entries: Vec<O3LiveIssueQueueEntry>,
+    ) -> Result<Self, O3RuntimeError> {
         if let Some(entries) = entries
             .windows(2)
             .find(|entries| entries[0].sequence() >= entries[1].sequence())
@@ -157,13 +164,6 @@ impl O3LiveIssueQueue {
             return Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence });
         }
         Ok(Self { entries })
-    }
-
-    #[cfg(test)]
-    pub(in crate::o3_runtime) fn from_entries_for_test(
-        entries: Vec<O3LiveIssueQueueEntry>,
-    ) -> Result<Self, O3RuntimeError> {
-        Self::try_from_entries(entries)
     }
 
     pub(in crate::o3_runtime) fn entries(&self) -> &[O3LiveIssueQueueEntry] {

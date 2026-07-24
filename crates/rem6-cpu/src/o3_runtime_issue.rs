@@ -275,23 +275,24 @@ impl O3RuntimeState {
         let mut tick = earliest_tick;
         let mut tick_decision = O3LiveIssueTickDecision::default();
         loop {
-            let queue = match O3LiveIssueQueue::capture(self, head)? {
-                O3LiveIssueQueueCapture::Ready(queue) => queue,
-                O3LiveIssueQueueCapture::ReplayPending(sequence) => {
-                    let mut staged = self.clone();
-                    staged.discard_pending_data_address_from(sequence);
-                    *self = staged;
-                    self.flush_live_issue_decision(tick, &mut tick_decision);
-                    break;
-                }
-            };
+            let queue =
+                match O3LiveIssueQueue::materialize(self, self.live_issue.resident_sequences())? {
+                    O3LiveIssueQueueCapture::Ready(queue) => queue,
+                    O3LiveIssueQueueCapture::ReplayPending(sequence) => {
+                        let mut staged = self.clone();
+                        staged.discard_pending_data_address_from(sequence);
+                        *self = staged;
+                        self.flush_live_issue_decision(tick, &mut tick_decision);
+                        break;
+                    }
+                };
             if queue.entries().is_empty() {
                 self.flush_live_issue_decision(tick, &mut tick_decision);
                 break;
             }
 
             let dependency_table = O3LiveIssueDependencyTable::new(self, queue.entries())?;
-            let calendar = O3LiveIssueCalendar::capture(self, head);
+            let calendar = O3LiveIssueCalendar::capture(self);
             let plan = calendar.plan_at(tick, &dependency_table, queue.entries())?;
             let issued_rows = plan.issued().len();
             if issued_rows != 0 {

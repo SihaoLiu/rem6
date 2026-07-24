@@ -1613,8 +1613,8 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     );
     let calendar_capture = rust_function_definition(&issue_calendar_code, "capture").unwrap();
     for anchor in [
-        ".pending_data_addresses",
-        ".filter_map(|pending| pending.selected_issue_tick)",
+        "for pending in runtime.pending_data_addresses.iter()",
+        "if let Some(tick) = pending.selected_issue_tick",
         "calendar.reserve(tick, O3IssueOpClass::Memory);",
     ] {
         assert!(
@@ -2692,8 +2692,8 @@ fn task8_dependent_result_address_production_ownership_is_final() {
     );
     let calendar_capture = rust_function_definition(calendar_owner, "capture").unwrap();
     for anchor in [
-        ".pending_data_addresses",
-        ".filter_map(|pending| pending.selected_issue_tick)",
+        "for pending in runtime.pending_data_addresses.iter()",
+        "if let Some(tick) = pending.selected_issue_tick",
         "calendar.reserve(tick, O3IssueOpClass::Memory);",
     ] {
         assert!(
@@ -3952,7 +3952,7 @@ fn o3_persistent_live_issue_state_owns_membership() {
 }
 
 #[test]
-fn o3_live_issue_queue_owns_candidate_inventory() {
+fn o3_persistent_live_issue_state_owns_candidate_inventory() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let issue_path = crate_dir.join("src/o3_runtime_issue.rs");
     let queue_path = crate_dir.join("src/o3_runtime_issue/queue.rs");
@@ -4054,6 +4054,19 @@ fn o3_live_issue_queue_owns_candidate_inventory() {
             })
         })
         .collect::<Vec<_>>();
+    assert_eq!(
+        production_struct_named_type_storage(&production_sources, "O3LiveIssueState"),
+        vec![(PathBuf::from("src/o3_runtime.rs"), 1)],
+    );
+    assert!(!queue.contains("for (index, rob) in runtime.snapshot.reorder_buffer"));
+    assert!(queue.contains("for &sequence in resident_sequences"));
+    assert!(queue.contains("binary_search_by_key(&sequence"));
+    for transient in ["O3LiveIssueDependencyTable", "O3LiveIssueCalendar"] {
+        assert!(
+            production_struct_named_type_storage(&production_sources, transient).is_empty(),
+            "production structs must not persist derived `{transient}` state",
+        );
+    }
     let mut offenders = Vec::new();
     for (relative, source) in &production_sources {
         if relative == Path::new("src/o3_runtime_issue/queue.rs") {
@@ -4179,9 +4192,18 @@ fn o3_live_issue_queue_owns_candidate_inventory() {
 
     let schedule = rust_function_definition(&issue, "schedule_live_speculative_issues")
         .expect("missing live issue scheduler");
-    assert_eq!(schedule.matches("O3LiveIssueQueue::capture(").count(), 1);
+    assert_eq!(
+        schedule.matches("O3LiveIssueQueue::materialize(").count(),
+        1
+    );
+    assert_eq!(
+        schedule
+            .matches("self.live_issue.resident_sequences()")
+            .count(),
+        1
+    );
     let loop_position = schedule.find("loop {").unwrap();
-    let queue_position = schedule.find("O3LiveIssueQueue::capture(").unwrap();
+    let queue_position = schedule.find("O3LiveIssueQueue::materialize(").unwrap();
     let dependency_position = schedule.find("O3LiveIssueDependencyTable::new(").unwrap();
     let calendar_position = schedule.find("O3LiveIssueCalendar::capture(").unwrap();
     let plan_position = schedule.find(".plan_at(").unwrap();
@@ -4304,13 +4326,16 @@ fn o3_live_issue_queue_owns_candidate_inventory() {
     for anchor in [
         "live_issue_queue_packet_binding_is_idempotent_and_exact",
         "live_issue_queue_packet_rebinding_rejects_any_identity_change",
-        "live_issue_queue_capture_is_sequence_ordered_and_requires_bound_packets",
+        "live_issue_queue_materialization_is_sequence_ordered_and_requires_bound_packets",
+        "live_issue_queue_materializes_resident_sequences_without_rob_inventory_scan",
+        "live_issue_queue_rejects_stale_ordinary_resident_sequence",
+        "live_issue_queue_returns_exact_pending_replay_boundary",
+        "live_issue_queue_preserves_architectural_sequence_order",
         "live_issue_queue_lookup_is_sequence_owned",
-        "live_issue_queue_excludes_unsupported_bound_packets",
+        "live_issue_queue_does_not_enqueue_unsupported_bound_packets",
         "live_issue_queue_rejects_duplicate_sequence_inventory",
         "live_issue_queue_excludes_invalidated_descendant_identities",
-        "live_issue_queue_stale_pending_row_returns_exact_replay_boundary",
-        "live_issue_queue_excludes_materialized_pending_rows",
+        "live_issue_queue_rejects_materialized_pending_resident_sequence",
     ] {
         assert_eq!(
             rust_test_function_definition_count(&queue_tests_source, anchor),
@@ -4331,11 +4356,13 @@ fn o3_live_issue_queue_owns_candidate_inventory() {
 fn o3_live_issue_calendar_owns_reservations_and_arbiter() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let issue_path = crate_dir.join("src/o3_runtime_issue.rs");
+    let admission_path = crate_dir.join("src/o3_runtime_memory_result_admission.rs");
     let calendar_path = crate_dir.join("src/o3_runtime_issue/calendar.rs");
     let calendar_tests_path = crate_dir.join("src/o3_runtime_issue/calendar_tests.rs");
     let issue_tests_path = crate_dir.join("src/o3_runtime_issue_tests.rs");
     let issue_source = fs::read_to_string(&issue_path).unwrap();
     let issue = production_rust_source(&issue_source);
+    let admission = production_rust_source(&fs::read_to_string(&admission_path).unwrap());
     let calendar = production_rust_source(&fs::read_to_string(&calendar_path).unwrap());
     let calendar_tests_source = fs::read_to_string(&calendar_tests_path).unwrap();
     let issue_tests_source = fs::read_to_string(&issue_tests_path).unwrap();
@@ -4438,24 +4465,55 @@ fn o3_live_issue_calendar_owns_reservations_and_arbiter() {
     );
 
     let calendar_capture = rust_function_definition(&calendar, "capture").unwrap();
-    let pending_row_reservation_loop = [
-        "for tick in runtime",
-        "            .pending_data_addresses",
-        "            .iter()",
-        "            .filter_map(|pending| pending.selected_issue_tick)",
-        "        {",
-        "            calendar.reserve(tick, O3IssueOpClass::Memory);",
-        "        }",
-    ]
-    .join("\n");
-    assert!(
-        calendar_capture.contains(&pending_row_reservation_loop),
-        "calendar capture must reserve once per materialized pending row without same-tick deduplication"
-    );
+    for anchor in [
+        "for live in &runtime.live_data_accesses",
+        "calendar.reserve(live.issue_tick, O3IssueOpClass::Memory);",
+        "for pending in runtime.pending_data_addresses.iter()",
+        "if let Some(tick) = pending.selected_issue_tick",
+        "calendar.reserve(tick, O3IssueOpClass::Memory);",
+        "for issued in &runtime.live_speculative_executions",
+        "live_issue_op_class(issued.execution.instruction())",
+    ] {
+        assert!(
+            calendar_capture.contains(anchor),
+            "calendar capture must derive canonical reservation evidence through `{anchor}`"
+        );
+    }
+    assert!(!calendar_capture.contains("O3LiveIssueHeadReservation"));
     assert!(
         !calendar_capture.contains("collect::<BTreeSet")
             && !calendar_capture.contains("pending_ticks"),
         "calendar capture must not deduplicate selected pending issue ticks"
+    );
+    let admission_capture = rust_function_definition(&calendar, "capture_with_head_for_admission")
+        .expect("missing narrow memory-result admission calendar helper");
+    assert!(admission_capture.contains("let mut calendar = Self::capture(runtime);"));
+    assert!(admission_capture.contains("calendar.reserve(head.issue_tick, head.op_class);"));
+    let admission_users = production_sources
+        .iter()
+        .filter_map(|(relative, source)| {
+            let count = source
+                .matches("O3LiveIssueCalendar::capture_with_head_for_admission(")
+                .count();
+            (count != 0).then(|| (relative.clone(), count))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        admission_users,
+        vec![(
+            PathBuf::from("src/o3_runtime_memory_result_admission.rs"),
+            1,
+        )],
+        "only memory-result admission may add an explicit issue head",
+    );
+    let next_memory_result_issue_tick =
+        rust_function_definition(&admission, "next_memory_result_issue_tick")
+            .expect("missing memory-result issue admission owner");
+    assert_eq!(
+        next_memory_result_issue_tick
+            .matches("O3LiveIssueCalendar::capture_with_head_for_admission(")
+            .count(),
+        1,
     );
 
     for forbidden in [
@@ -4474,7 +4532,9 @@ fn o3_live_issue_calendar_owns_reservations_and_arbiter() {
     let schedule = rust_function_definition(&issue, "schedule_live_speculative_issues")
         .expect("missing schedule_live_speculative_issues definition");
     assert_eq!(
-        schedule.matches("O3LiveIssueCalendar::capture(").count(),
+        schedule
+            .matches("O3LiveIssueCalendar::capture(self)")
+            .count(),
         1,
         "schedule_live_speculative_issues must capture exactly one fresh calendar per loop pass"
     );
@@ -4498,7 +4558,9 @@ fn o3_live_issue_calendar_owns_reservations_and_arbiter() {
     );
 
     let expected_calendar_tests = [
-        "live_issue_calendar_head_and_recorded_head_consume_one_slot",
+        "live_issue_calendar_derives_fixed_fu_reservations_without_caller_head",
+        "live_issue_calendar_derives_memory_head_from_live_data_access",
+        "live_issue_calendar_keeps_narrow_head_admission_helper",
         "live_issue_calendar_rebuild_releases_removed_prior_row",
         "live_issue_calendar_selected_pending_tick_reserves_memory",
         "live_issue_calendar_memory_width_one_blocks_younger_ready_memory_rows",

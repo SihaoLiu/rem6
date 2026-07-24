@@ -8,17 +8,16 @@ use super::super::o3_runtime_issue::calendar::{
 use super::*;
 
 #[test]
-fn live_issue_calendar_head_and_recorded_head_consume_one_slot() {
+fn live_issue_calendar_derives_fixed_fu_reservations_without_caller_head() {
     let mut runtime = O3RuntimeState::default();
     assert!(runtime.set_issue_width(2));
     let instruction = addi(3, 0, 1);
-    let head = O3LiveIssueHeadReservation::for_instruction(1, 20, instruction);
     stage_live_row(&mut runtime, 1, LOAD_PC);
     runtime
         .live_speculative_executions
         .push(live_execution(1, 20, LOAD_PC, instruction));
 
-    let plan = O3LiveIssueCalendar::capture(&runtime, head)
+    let plan = O3LiveIssueCalendar::capture(&runtime)
         .plan_scoped_at(
             20,
             std::iter::empty::<O3DependencyScopeId>(),
@@ -32,6 +31,24 @@ fn live_issue_calendar_head_and_recorded_head_consume_one_slot() {
 }
 
 #[test]
+fn live_issue_calendar_keeps_narrow_head_admission_helper() {
+    let mut runtime = O3RuntimeState::default();
+    assert!(runtime.set_issue_width(1));
+    let head = O3LiveIssueHeadReservation::for_instruction(1, 20, addi(3, 0, 1));
+
+    let plan = O3LiveIssueCalendar::capture_with_head_for_admission(&runtime, head)
+        .plan_scoped_at(
+            20,
+            std::iter::empty::<O3DependencyScopeId>(),
+            [ready(2, O3IssueOpClass::IntAlu)],
+        )
+        .unwrap();
+    assert_eq!(plan.reserved_width(), 1);
+    assert!(plan.issued().is_empty());
+    assert_eq!(sequences(plan.resource_blocked()), vec![2]);
+}
+
+#[test]
 fn live_issue_calendar_rebuild_releases_removed_prior_row() {
     let mut runtime = O3RuntimeState::default();
     assert!(runtime.set_issue_width(2));
@@ -39,33 +56,13 @@ fn live_issue_calendar_rebuild_releases_removed_prior_row() {
     runtime
         .live_speculative_executions
         .push(live_execution(2, 20, BRANCH_PC, mul(3, 1, 2)));
-    let head = O3LiveIssueHeadReservation::for_instruction(1, 10, addi(4, 0, 1));
 
-    let blocked = O3LiveIssueCalendar::capture(&runtime, head)
-        .plan_scoped_at(
-            20,
-            std::iter::empty::<O3DependencyScopeId>(),
-            [ready(3, O3IssueOpClass::IntMult)],
-        )
-        .unwrap();
+    let blocked = calendar_plan(&runtime, 20, [ready(3, O3IssueOpClass::IntMult)]);
     assert_eq!(blocked.reserved_width(), 1);
-    assert_eq!(
-        blocked
-            .resource_blocked()
-            .iter()
-            .map(O3ScopedReadyInstruction::sequence)
-            .collect::<Vec<_>>(),
-        vec![3]
-    );
+    assert_eq!(sequences(blocked.resource_blocked()), vec![3]);
 
-    runtime.snapshot.reorder_buffer.clear();
-    let released = O3LiveIssueCalendar::capture(&runtime, head)
-        .plan_scoped_at(
-            20,
-            std::iter::empty::<O3DependencyScopeId>(),
-            [ready(3, O3IssueOpClass::IntMult)],
-        )
-        .unwrap();
+    runtime.live_speculative_executions.clear();
+    let released = calendar_plan(&runtime, 20, [ready(3, O3IssueOpClass::IntMult)]);
     assert_eq!(released.reserved_width(), 0);
     assert_eq!(released.issued_sequences().collect::<Vec<_>>(), vec![3]);
 }
@@ -88,30 +85,47 @@ fn live_issue_calendar_selected_pending_tick_reserves_memory() {
         40,
         calendar_load_event(BRANCH_PC, 11, 6, 5, 0x9100),
     );
-    let head = runtime
-        .live_data_access_head_reservation(head_event.fetch().request_id())
-        .unwrap();
 
-    let plan = O3LiveIssueCalendar::capture(&runtime, head)
-        .plan_scoped_at(
-            40,
-            std::iter::empty::<O3DependencyScopeId>(),
-            [
-                ready(99, O3IssueOpClass::Memory),
-                ready(100, O3IssueOpClass::IntAlu),
-            ],
-        )
-        .unwrap();
+    let plan = calendar_plan(
+        &runtime,
+        40,
+        [
+            ready(99, O3IssueOpClass::Memory),
+            ready(100, O3IssueOpClass::IntAlu),
+        ],
+    );
 
     assert_eq!(plan.reserved_width(), 1);
     assert_eq!(plan.issued_sequences().collect::<Vec<_>>(), vec![100]);
-    assert_eq!(
-        plan.resource_blocked()
-            .iter()
-            .map(O3ScopedReadyInstruction::sequence)
-            .collect::<Vec<_>>(),
-        vec![99]
-    );
+    assert_eq!(sequences(plan.resource_blocked()), vec![99]);
+}
+
+#[test]
+fn live_issue_calendar_derives_memory_head_from_live_data_access() {
+    let mut runtime = O3RuntimeState::default();
+    assert!(runtime.set_issue_width(2));
+    assert!(runtime.set_memory_issue_width(1));
+    let head = calendar_load_event(LOAD_PC, 10, 5, 2, 0x9000);
+    assert!(runtime.stage_live_data_access_issue(
+        &head,
+        request(20),
+        31,
+        O3DataAccessWindowPolicy::MemoryResultWindow,
+    ));
+
+    let plan = O3LiveIssueCalendar::capture(&runtime)
+        .plan_scoped_at(
+            31,
+            std::iter::empty::<O3DependencyScopeId>(),
+            [
+                ready(2, O3IssueOpClass::Memory),
+                ready(3, O3IssueOpClass::IntAlu),
+            ],
+        )
+        .unwrap();
+    assert_eq!(plan.reserved_width(), 1);
+    assert_eq!(plan.issued_sequences().collect::<Vec<_>>(), vec![3]);
+    assert_eq!(sequences(plan.resource_blocked()), vec![2]);
 }
 
 #[test]
@@ -119,19 +133,16 @@ fn live_issue_calendar_memory_width_one_blocks_younger_ready_memory_rows() {
     let mut runtime = O3RuntimeState::default();
     assert!(runtime.set_issue_width(4));
     assert!(runtime.set_memory_issue_width(1));
-    let head = O3LiveIssueHeadReservation::for_instruction(1, 20, addi(3, 0, 1));
 
-    let plan = O3LiveIssueCalendar::capture(&runtime, head)
-        .plan_scoped_at(
-            40,
-            std::iter::empty::<O3DependencyScopeId>(),
-            [
-                ready(2, O3IssueOpClass::Memory),
-                ready(3, O3IssueOpClass::Memory),
-                ready(4, O3IssueOpClass::Memory),
-            ],
-        )
-        .unwrap();
+    let plan = calendar_plan(
+        &runtime,
+        40,
+        [
+            ready(2, O3IssueOpClass::Memory),
+            ready(3, O3IssueOpClass::Memory),
+            ready(4, O3IssueOpClass::Memory),
+        ],
+    );
 
     assert_eq!(plan.reserved_width(), 0);
     assert_eq!(plan.issued_sequences().collect::<Vec<_>>(), vec![2]);
@@ -144,19 +155,16 @@ fn live_issue_calendar_memory_width_two_selects_two_oldest_ready_memory_rows() {
     let mut runtime = O3RuntimeState::default();
     assert!(runtime.set_issue_width(4));
     assert!(runtime.set_memory_issue_width(2));
-    let head = O3LiveIssueHeadReservation::for_instruction(1, 20, addi(3, 0, 1));
 
-    let plan = O3LiveIssueCalendar::capture(&runtime, head)
-        .plan_scoped_at(
-            40,
-            std::iter::empty::<O3DependencyScopeId>(),
-            [
-                ready(2, O3IssueOpClass::Memory),
-                ready(3, O3IssueOpClass::Memory),
-                ready(4, O3IssueOpClass::Memory),
-            ],
-        )
-        .unwrap();
+    let plan = calendar_plan(
+        &runtime,
+        40,
+        [
+            ready(2, O3IssueOpClass::Memory),
+            ready(3, O3IssueOpClass::Memory),
+            ready(4, O3IssueOpClass::Memory),
+        ],
+    );
 
     assert_eq!(plan.issued_sequences().collect::<Vec<_>>(), vec![2, 3]);
     assert_eq!(sequences(plan.resource_blocked()), vec![4]);
@@ -168,20 +176,21 @@ fn live_issue_calendar_total_width_still_bounds_memory_width_four() {
     let mut runtime = O3RuntimeState::default();
     assert!(runtime.set_issue_width(4));
     assert!(runtime.set_memory_issue_width(4));
-    let head = O3LiveIssueHeadReservation::for_instruction(1, 40, addi(3, 0, 1));
+    stage_live_row(&mut runtime, 1, LOAD_PC);
+    runtime
+        .live_speculative_executions
+        .push(live_execution(1, 40, LOAD_PC, addi(3, 0, 1)));
 
-    let plan = O3LiveIssueCalendar::capture(&runtime, head)
-        .plan_scoped_at(
-            40,
-            std::iter::empty::<O3DependencyScopeId>(),
-            [
-                ready(2, O3IssueOpClass::Memory),
-                ready(3, O3IssueOpClass::Memory),
-                ready(4, O3IssueOpClass::Memory),
-                ready(5, O3IssueOpClass::Memory),
-            ],
-        )
-        .unwrap();
+    let plan = calendar_plan(
+        &runtime,
+        40,
+        [
+            ready(2, O3IssueOpClass::Memory),
+            ready(3, O3IssueOpClass::Memory),
+            ready(4, O3IssueOpClass::Memory),
+            ready(5, O3IssueOpClass::Memory),
+        ],
+    );
 
     assert_eq!(plan.reserved_width(), 1);
     assert_eq!(plan.issued_sequences().collect::<Vec<_>>(), vec![2, 3, 4]);
@@ -214,67 +223,50 @@ fn live_issue_calendar_rebuild_counts_each_same_tick_memory_reservation() {
 fn live_issue_calendar_separates_resource_and_dependency_blocks() {
     let mut runtime = O3RuntimeState::default();
     assert!(runtime.set_issue_width(2));
-    let head = O3LiveIssueHeadReservation::for_instruction(1, 20, mul(3, 1, 2));
+    stage_live_row(&mut runtime, 1, LOAD_PC);
+    runtime
+        .live_speculative_executions
+        .push(live_execution(1, 20, LOAD_PC, mul(3, 1, 2)));
     let unresolved = O3DependencyScopeId::new(7);
 
-    let plan = O3LiveIssueCalendar::capture(&runtime, head)
-        .plan_scoped_at(
-            20,
-            std::iter::empty::<O3DependencyScopeId>(),
-            [
-                ready(2, O3IssueOpClass::IntMult),
-                ready(3, O3IssueOpClass::Branch).with_waits_on([unresolved]),
-            ],
-        )
-        .unwrap();
+    let plan = calendar_plan(
+        &runtime,
+        20,
+        [
+            ready(2, O3IssueOpClass::IntMult),
+            ready(3, O3IssueOpClass::Branch).with_waits_on([unresolved]),
+        ],
+    );
 
     assert!(plan.issued().is_empty());
-    assert_eq!(
-        plan.resource_blocked()
-            .iter()
-            .map(O3ScopedReadyInstruction::sequence)
-            .collect::<Vec<_>>(),
-        vec![2]
-    );
-    assert_eq!(
-        plan.dependency_blocked()
-            .iter()
-            .map(O3ScopedReadyInstruction::sequence)
-            .collect::<Vec<_>>(),
-        vec![3]
-    );
+    assert_eq!(sequences(plan.resource_blocked()), vec![2]);
+    assert_eq!(sequences(plan.dependency_blocked()), vec![3]);
 }
 
 #[test]
 fn live_issue_calendar_tick_decision_aggregates_same_tick_attempts() {
     let mut first_runtime = O3RuntimeState::default();
     assert!(first_runtime.set_issue_width(2));
-    let first_head = O3LiveIssueHeadReservation::for_instruction(1, 20, addi(3, 0, 1));
+    stage_live_row(&mut first_runtime, 1, LOAD_PC);
+    first_runtime
+        .live_speculative_executions
+        .push(live_execution(1, 20, LOAD_PC, addi(3, 0, 1)));
     let unresolved = O3DependencyScopeId::new(7);
-    let first = O3LiveIssueCalendar::capture(&first_runtime, first_head)
-        .plan_scoped_at(
-            20,
-            std::iter::empty::<O3DependencyScopeId>(),
-            [
-                ready(2, O3IssueOpClass::Branch),
-                ready(3, O3IssueOpClass::IntMult),
-                ready(4, O3IssueOpClass::Branch).with_waits_on([unresolved]),
-            ],
-        )
-        .unwrap();
+    let first = calendar_plan(
+        &first_runtime,
+        20,
+        [
+            ready(2, O3IssueOpClass::Branch),
+            ready(3, O3IssueOpClass::IntMult),
+            ready(4, O3IssueOpClass::Branch).with_waits_on([unresolved]),
+        ],
+    );
     assert_eq!(first.resource_blocked().len(), 1);
     assert_eq!(first.dependency_blocked().len(), 1);
 
     let mut second_runtime = O3RuntimeState::default();
     assert!(second_runtime.set_issue_width(2));
-    let second_head = O3LiveIssueHeadReservation::for_instruction(9, 10, addi(4, 0, 1));
-    let second = O3LiveIssueCalendar::capture(&second_runtime, second_head)
-        .plan_scoped_at(
-            20,
-            std::iter::empty::<O3DependencyScopeId>(),
-            [ready(4, O3IssueOpClass::IntAlu)],
-        )
-        .unwrap();
+    let second = calendar_plan(&second_runtime, 20, [ready(4, O3IssueOpClass::IntAlu)]);
     assert!(second.dependency_blocked().is_empty());
 
     let mut decision = O3LiveIssueTickDecision::default();
@@ -297,6 +289,15 @@ fn sequences(rows: &[O3ScopedReadyInstruction]) -> Vec<u64> {
     rows.iter()
         .map(O3ScopedReadyInstruction::sequence)
         .collect()
+}
+
+fn calendar_plan<I>(runtime: &O3RuntimeState, tick: u64, ready: I) -> O3LiveIssueCyclePlan
+where
+    I: IntoIterator<Item = O3ScopedReadyInstruction>,
+{
+    O3LiveIssueCalendar::capture(runtime)
+        .plan_scoped_at(tick, std::iter::empty::<O3DependencyScopeId>(), ready)
+        .unwrap()
 }
 
 fn same_tick_memory_reservation_plan(issue_width: usize) -> O3LiveIssueCyclePlan {
@@ -322,20 +323,14 @@ fn same_tick_memory_reservation_plan(issue_width: usize) -> O3LiveIssueCyclePlan
             calendar_load_event(pc, sequence, rd, 5, address),
         );
     }
-    let head = runtime
-        .live_data_access_head_reservation(head_event.fetch().request_id())
-        .unwrap();
-
-    O3LiveIssueCalendar::capture(&runtime, head)
-        .plan_scoped_at(
-            40,
-            std::iter::empty::<O3DependencyScopeId>(),
-            [
-                ready(99, O3IssueOpClass::Memory),
-                ready(100, O3IssueOpClass::IntAlu),
-            ],
-        )
-        .unwrap()
+    calendar_plan(
+        &runtime,
+        40,
+        [
+            ready(99, O3IssueOpClass::Memory),
+            ready(100, O3IssueOpClass::IntAlu),
+        ],
+    )
 }
 
 fn stage_two_pending_loads(runtime: &mut O3RuntimeState, head_event: &RiscvCpuExecutionEvent) {

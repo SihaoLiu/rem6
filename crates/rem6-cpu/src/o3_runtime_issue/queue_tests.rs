@@ -89,37 +89,83 @@ fn live_issue_head_recording_accepts_exact_bound_packet() {
 }
 
 #[test]
-fn live_issue_queue_capture_is_sequence_ordered_and_requires_bound_packets() {
-    let mut runtime = O3RuntimeState::default();
-    let instructions = [branch(), mul(14, 2, 3), addi(15, 4, 1)];
-    let (head, sequences) = stage_queue_rows(&mut runtime, instructions);
+fn live_issue_queue_materialization_is_sequence_ordered_and_requires_bound_packets() {
+    let (mut runtime, instructions, sequences) = queue_rows();
     bind_queue_row(&mut runtime, BRANCH_PC, instructions[0], 11);
     bind_queue_row(&mut runtime, THIRD_PC, instructions[2], 13);
 
-    let first = ready_queue(O3LiveIssueQueue::capture(&runtime, head).unwrap());
+    let first = materialized_queue(&runtime);
     assert_eq!(
         first.sequences().collect::<Vec<_>>(),
         vec![sequences[0], sequences[2]]
     );
 
     bind_queue_row(&mut runtime, SECOND_PC, instructions[1], 12);
-    let second = ready_queue(O3LiveIssueQueue::capture(&runtime, head).unwrap());
+    let second = materialized_queue(&runtime);
     assert_eq!(second.sequences().collect::<Vec<_>>(), sequences);
 }
 
 #[test]
-fn live_issue_queue_lookup_is_sequence_owned() {
+fn live_issue_queue_materializes_resident_sequences_without_rob_inventory_scan() {
+    let (mut runtime, instructions, sequences) = queue_rows();
+    bind_queue_rows(&mut runtime, instructions);
+    assert!(runtime.live_issue.remove_exact_at(
+        sequences[1],
+        O3LiveIssueTraceAction::Retired,
+        Address::new(SECOND_PC),
+        O3LiveIssueTraceClass::IntegerMulDiv,
+        20,
+    ));
+
+    let queue = materialized_queue(&runtime);
+    assert_eq!(
+        queue.sequences().collect::<Vec<_>>(),
+        vec![sequences[0], sequences[2]]
+    );
+    assert!(runtime.live_staged_issue_packet(sequences[1]).is_some());
+}
+
+#[test]
+fn live_issue_queue_rejects_stale_ordinary_resident_sequence() {
+    let (mut runtime, instructions, sequences) = queue_rows();
+    bind_queue_row_at(&mut runtime, BRANCH_PC, instructions[0], 11, 20);
+    assert!(runtime.remove_live_staged_issue_identity_for_test(sequences[0]));
+
+    assert!(matches!(
+        O3LiveIssueQueue::materialize(&runtime, runtime.live_issue.resident_sequences()),
+        Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence })
+            if sequence == sequences[0]
+    ));
+}
+
+#[test]
+fn live_issue_queue_returns_exact_pending_replay_boundary() {
     let mut runtime = O3RuntimeState::default();
-    let instructions = [branch(), mul(14, 2, 3), addi(15, 4, 1)];
-    let (head, sequences) = stage_queue_rows(&mut runtime, instructions);
-    for (pc, instruction, sequence) in [
-        (BRANCH_PC, instructions[0], 11),
-        (SECOND_PC, instructions[1], 12),
-        (THIRD_PC, instructions[2], 13),
-    ] {
-        bind_queue_row(&mut runtime, pc, instruction, sequence);
-    }
-    let queue = ready_queue(O3LiveIssueQueue::capture(&runtime, head).unwrap());
+    let sequence = stage_queue_pending_row(&mut runtime);
+    assert!(runtime.remove_live_staged_issue_identity_for_test(sequence));
+
+    assert!(matches!(
+        O3LiveIssueQueue::materialize(&runtime, runtime.live_issue.resident_sequences()).unwrap(),
+        O3LiveIssueQueueCapture::ReplayPending(replay) if replay == sequence
+    ));
+}
+
+#[test]
+fn live_issue_queue_preserves_architectural_sequence_order() {
+    let (mut runtime, instructions, sequences) = queue_rows();
+    bind_queue_row_at(&mut runtime, THIRD_PC, instructions[2], 13, 20);
+    bind_queue_row_at(&mut runtime, BRANCH_PC, instructions[0], 11, 20);
+    bind_queue_row_at(&mut runtime, SECOND_PC, instructions[1], 12, 20);
+
+    let queue = materialized_queue(&runtime);
+    assert_eq!(queue.sequences().collect::<Vec<_>>(), sequences);
+}
+
+#[test]
+fn live_issue_queue_lookup_is_sequence_owned() {
+    let (mut runtime, instructions, sequences) = queue_rows();
+    bind_queue_rows(&mut runtime, instructions);
+    let queue = materialized_queue(&runtime);
     let middle = queue.entry(sequences[1]).expect("middle queue entry");
     assert_eq!(middle.scheduling().pc(), Address::new(SECOND_PC));
     assert_eq!(middle.packet().instruction(), instructions[1]);
@@ -128,14 +174,10 @@ fn live_issue_queue_lookup_is_sequence_owned() {
 }
 
 #[test]
-fn live_issue_queue_excludes_unsupported_bound_packets() {
+fn live_issue_queue_does_not_enqueue_unsupported_bound_packets() {
     let mut runtime = O3RuntimeState::default();
     let load = scalar_load_event();
     assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 20));
-    let head = runtime
-        .live_data_access_head_reservation(load.fetch().request_id())
-        .expect("unsupported-row head reservation");
-
     for (pc, raw, request_sequence) in [
         (BRANCH_PC, 0x0020_81d3, 11),
         (SECOND_PC, 0x0220_81d7, 12),
@@ -153,38 +195,29 @@ fn live_issue_queue_excludes_unsupported_bound_packets() {
         ));
     }
 
-    let queue = ready_queue(O3LiveIssueQueue::capture(&runtime, head).unwrap());
+    assert!(runtime.live_issue.resident_sequences().is_empty());
+    let queue = materialized_queue(&runtime);
     assert!(queue.entries().is_empty());
 }
 
 #[test]
 fn live_issue_queue_rejects_duplicate_sequence_inventory() {
-    let mut runtime = O3RuntimeState::default();
-    let instructions = [branch(), mul(14, 2, 3), addi(15, 4, 1)];
-    let (head, _) = stage_queue_rows(&mut runtime, instructions);
+    let (mut runtime, instructions, _) = queue_rows();
     bind_queue_row(&mut runtime, BRANCH_PC, instructions[0], 11);
-    let queue = ready_queue(O3LiveIssueQueue::capture(&runtime, head).unwrap());
+    let queue = materialized_queue(&runtime);
     let duplicate = queue.entries()[0].clone();
     let duplicate_sequence = duplicate.sequence();
 
     assert!(matches!(
-        O3LiveIssueQueue::from_entries_for_test(vec![duplicate.clone(), duplicate]),
+        O3LiveIssueQueue::try_from_entries(vec![duplicate.clone(), duplicate]),
         Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence }) if sequence == duplicate_sequence
     ));
 }
 
 #[test]
 fn live_issue_queue_excludes_invalidated_descendant_identities() {
-    let mut runtime = O3RuntimeState::default();
-    let instructions = [branch(), mul(14, 2, 3), addi(15, 4, 1)];
-    let (head, _) = stage_queue_rows(&mut runtime, instructions);
-    for (pc, instruction, sequence) in [
-        (BRANCH_PC, instructions[0], 11),
-        (SECOND_PC, instructions[1], 12),
-        (THIRD_PC, instructions[2], 13),
-    ] {
-        bind_queue_row(&mut runtime, pc, instruction, sequence);
-    }
+    let (mut runtime, instructions, _) = queue_rows();
+    bind_queue_rows(&mut runtime, instructions);
     let mut hart = RiscvHartState::new(BRANCH_PC);
     let execution = hart.execute_decoded(decoded(instructions[0])).unwrap();
     runtime.retire_live_staged_instruction(
@@ -193,37 +226,28 @@ fn live_issue_queue_excludes_invalidated_descendant_identities() {
         30,
     );
 
-    let queue = ready_queue(O3LiveIssueQueue::capture(&runtime, head).unwrap());
+    let queue = materialized_queue(&runtime);
     assert!(queue.entries().is_empty());
 }
 
 #[test]
-fn live_issue_queue_stale_pending_row_returns_exact_replay_boundary() {
+fn live_issue_queue_rejects_materialized_pending_resident_sequence() {
     let mut runtime = O3RuntimeState::default();
-    let (head, sequence) = stage_queue_pending_row(&mut runtime);
-    assert!(runtime.remove_live_staged_issue_identity_for_test(sequence));
-
-    assert!(matches!(
-        O3LiveIssueQueue::capture(&runtime, head).unwrap(),
-        O3LiveIssueQueueCapture::ReplayPending(replay) if replay == sequence
-    ));
-}
-
-#[test]
-fn live_issue_queue_excludes_materialized_pending_rows() {
-    let mut runtime = O3RuntimeState::default();
-    let (head, sequence) = stage_queue_pending_row(&mut runtime);
+    let sequence = stage_queue_pending_row(&mut runtime);
     runtime.set_pending_data_address_materialized_for_test(
         40,
         queue_load_event(BRANCH_PC, 11, 13, 12, 0x9100),
     );
 
-    let queue = ready_queue(O3LiveIssueQueue::capture(&runtime, head).unwrap());
-    assert!(queue.entry(sequence).is_none());
+    assert!(matches!(
+        O3LiveIssueQueue::materialize(&runtime, runtime.live_issue.resident_sequences()),
+        Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence: stale })
+            if stale == sequence
+    ));
 }
 
-fn ready_queue(capture: O3LiveIssueQueueCapture) -> O3LiveIssueQueue {
-    match capture {
+fn materialized_queue(runtime: &O3RuntimeState) -> O3LiveIssueQueue {
+    match O3LiveIssueQueue::materialize(runtime, runtime.live_issue.resident_sequences()).unwrap() {
         O3LiveIssueQueueCapture::Ready(queue) => queue,
         O3LiveIssueQueueCapture::ReplayPending(sequence) => {
             panic!("unexpected pending replay at {sequence}")
@@ -300,18 +324,42 @@ fn bind_queue_row(
     instruction: RiscvInstruction,
     request_sequence: u64,
 ) {
+    bind_queue_row_at(runtime, pc, instruction, request_sequence, 20);
+}
+
+fn bind_queue_row_at(
+    runtime: &mut O3RuntimeState,
+    pc: u64,
+    instruction: RiscvInstruction,
+    request_sequence: u64,
+    admission_tick: u64,
+) {
     assert!(runtime.bind_live_staged_issue_packet(
         Address::new(pc),
         decoded(instruction),
         &[request(request_sequence)],
-        20,
+        admission_tick,
     ));
 }
 
-fn stage_queue_rows(
-    runtime: &mut O3RuntimeState,
-    instructions: [RiscvInstruction; 3],
-) -> (O3LiveIssueHeadReservation, [u64; 3]) {
+fn bind_queue_rows(runtime: &mut O3RuntimeState, instructions: [RiscvInstruction; 3]) {
+    for (pc, instruction, request_sequence) in [
+        (BRANCH_PC, instructions[0], 11),
+        (SECOND_PC, instructions[1], 12),
+        (THIRD_PC, instructions[2], 13),
+    ] {
+        bind_queue_row(runtime, pc, instruction, request_sequence);
+    }
+}
+
+fn queue_rows() -> (O3RuntimeState, [RiscvInstruction; 3], [u64; 3]) {
+    let mut runtime = O3RuntimeState::default();
+    let instructions = [branch(), mul(14, 2, 3), addi(15, 4, 1)];
+    let sequences = stage_queue_rows(&mut runtime, instructions);
+    (runtime, instructions, sequences)
+}
+
+fn stage_queue_rows(runtime: &mut O3RuntimeState, instructions: [RiscvInstruction; 3]) -> [u64; 3] {
     assert!(runtime.set_issue_width(2));
     runtime.set_scalar_memory_window_limit(4);
     let load = scalar_load_event();
@@ -323,10 +371,7 @@ fn stage_queue_rows(
             .zip(instructions)
             .map(|(pc, instruction)| (Address::new(pc), instruction)),
     );
-    let head = runtime
-        .live_data_access_head_reservation(load.fetch().request_id())
-        .expect("queue fixture head reservation");
-    (head, queue_row_sequences(runtime))
+    queue_row_sequences(runtime)
 }
 
 fn queue_row_sequences(runtime: &O3RuntimeState) -> [u64; 3] {
@@ -341,7 +386,7 @@ fn queue_row_sequences(runtime: &O3RuntimeState) -> [u64; 3] {
     })
 }
 
-fn stage_queue_pending_row(runtime: &mut O3RuntimeState) -> (O3LiveIssueHeadReservation, u64) {
+fn stage_queue_pending_row(runtime: &mut O3RuntimeState) -> u64 {
     assert!(runtime.set_window_depths(4, 4));
     let load = queue_load_event(LOAD_PC, 10, 12, 10, 0x9000);
     assert!(runtime.stage_live_data_access_issue(
@@ -368,11 +413,7 @@ fn stage_queue_pending_row(runtime: &mut O3RuntimeState) -> (O3LiveIssueHeadRese
         ),
         1,
     );
-    let head = runtime
-        .live_data_access_head_reservation(load.fetch().request_id())
-        .expect("pending queue head reservation");
-    let sequence = runtime.pending_data_address_sequences_for_test()[0];
-    (head, sequence)
+    runtime.pending_data_address_sequences_for_test()[0]
 }
 
 fn queue_load_event(
@@ -382,28 +423,14 @@ fn queue_load_event(
     rs1: u8,
     address: u64,
 ) -> RiscvCpuExecutionEvent {
-    let instruction = RiscvInstruction::Load {
-        rd: reg(rd),
-        rs1: reg(rs1),
-        offset: Immediate::new(0),
-        width: MemoryWidth::Doubleword,
-        signed: false,
-    };
+    let raw = i_type(0, rs1, 0b011, rd, 0x03);
+    let decoded = RiscvInstruction::decode_with_length(raw).unwrap();
+    let mut hart = RiscvHartState::new(pc);
+    hart.write(reg(rs1), address);
     RiscvCpuExecutionEvent::new(
-        queue_fetch_event(pc, sequence, i_type(0, rs1, 0b011, rd, 0x03)),
-        instruction,
-        RiscvExecutionRecord::new(
-            instruction,
-            pc,
-            pc + 4,
-            Vec::new(),
-            Some(MemoryAccessKind::Load {
-                rd: reg(rd),
-                address,
-                width: MemoryWidth::Doubleword,
-                signed: false,
-            }),
-        ),
+        queue_fetch_event(pc, sequence, raw),
+        decoded.instruction(),
+        hart.execute_decoded(decoded).unwrap(),
     )
 }
 
