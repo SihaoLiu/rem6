@@ -21,8 +21,6 @@ mod state;
 mod transaction;
 pub(crate) use dependency::O3LiveIssueDependencyTable;
 use queue::{live_issue_op_class, O3LiveSpeculativeIssueCandidate};
-#[cfg(test)]
-pub(in crate::o3_runtime) use service::O3LiveIssueServiceError;
 pub(in crate::o3_runtime) use state::{O3LiveIssueState, O3LiveIssueStateRollback};
 pub use state::{
     O3LiveIssueTelemetry, O3LiveIssueTraceAction, O3LiveIssueTraceClass, O3LiveIssueTraceRecord,
@@ -247,6 +245,7 @@ impl O3RuntimeState {
         Ok(true)
     }
 
+    #[cfg(test)]
     pub(in crate::o3_runtime) fn record_live_issue_batch(
         &mut self,
         prepared: Vec<O3PreparedLiveIssue>,

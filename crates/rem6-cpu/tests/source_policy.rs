@@ -4587,7 +4587,13 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
         "writeback rollback coverage must prove descendant invalidation without cloning runtime",
     );
 
-    let batch = rust_function_definition(&issue, "record_live_issue_batch").unwrap();
+    assert!(
+        !production_defines_exact_function(&issue, "record_live_issue_batch"),
+        "production issue facade must not retain the superseded transaction wrapper",
+    );
+    let batch = rust_function_definition(&issue_source, "record_live_issue_batch").unwrap();
+    assert!(issue_source
+        .contains("#[cfg(test)]\n    pub(in crate::o3_runtime) fn record_live_issue_batch("));
     assert!(!batch.contains("self.clone()"));
     assert!(batch.contains("O3LiveIssueTransaction::record(self, prepared)"));
     let transaction_storage = production_struct_named_type_storage(
@@ -4682,6 +4688,7 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
         ],
     );
     for forbidden in [
+        "last_counted_cycle_tick",
         "compatibility_cycle_ticks",
         "trace_records:",
         "Vec<O3LiveIssueTraceRecord>",
@@ -4694,6 +4701,7 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
     let state_capture = rust_function_definition(&state_rollback, "capture_rollback").unwrap();
     let state_restore = rust_function_definition(&state_rollback, "restore_rollback").unwrap();
     assert!(live_issue_state_rollback_source_is_bounded(&state_rollback));
+    assert!(!state_capture.contains("last_counted_cycle_tick"));
     assert!(!state_capture.contains("compatibility_cycle_ticks"));
     assert!(!state_capture.contains("trace_records.clone"));
     assert!(state_restore.contains("truncate"));
@@ -4706,6 +4714,7 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
     assert!(capture.contains("stats: runtime.stats"));
 
     let record = rust_function_definition(&transaction, "record").unwrap();
+    assert!(!transaction.contains("last_counted_cycle_tick"));
     assert!(record.contains("O3LiveIssueRollback::capture(runtime)"));
     assert!(record.contains("runtime.live_issue.begin_transaction()"));
     assert!(record.contains("O3LiveIssueTransactionError::AlreadyActive"));
@@ -4791,6 +4800,7 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
     let service_path = crate_dir.join("src/o3_runtime_issue/service.rs");
     let service_tests_path = crate_dir.join("src/o3_runtime_issue/service_tests.rs");
     let state_path = crate_dir.join("src/o3_runtime_issue/state.rs");
+    let state_tests_path = crate_dir.join("src/o3_runtime_issue/state_tests.rs");
     let decision_path = crate_dir.join("src/o3_runtime_issue/state/decision.rs");
     let calendar_path = crate_dir.join("src/o3_runtime_issue/calendar.rs");
     let stats_path = crate_dir.join("src/o3_runtime_stats.rs");
@@ -4804,6 +4814,7 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
     let service_tests = fs::read_to_string(&service_tests_path).unwrap();
     let state_source = fs::read_to_string(&state_path).unwrap();
     let state = production_rust_source(&state_source);
+    let state_tests = fs::read_to_string(&state_tests_path).unwrap();
     let decision = production_rust_source(&fs::read_to_string(&decision_path).unwrap());
     let calendar = production_rust_source(&fs::read_to_string(&calendar_path).unwrap());
     let stats = production_rust_source(&fs::read_to_string(&stats_path).unwrap());
@@ -4837,6 +4848,8 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
 
     for owner in [
         "service_live_issue_queue_at",
+        "finish_live_issue_replay_at",
+        "finish_live_issue_service_at",
         "classify_live_issue_queue_after_service",
         "prepare_live_issue_batch",
         "schedule_live_speculative_issues",
@@ -4853,6 +4866,7 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
         );
     }
     assert!(o3_live_issue_service_is_exactly_one_tick(&service));
+    assert!(o3_live_issue_replay_finalization_is_shared(&service));
     assert!(o3_live_issue_delayed_stats_are_projected(
         &service, &state, &decision, &stats,
     ));
@@ -4878,12 +4892,12 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
             "compatibility driver retains planning authority `{forbidden}`",
         );
     }
-    assert!(
-        compatibility.contains("Err(O3LiveIssueServiceError::Runtime(error)) => return Err(error)")
-    );
+    assert!(compatibility.contains("let outcome = self.service_live_issue_queue_at(hart, tick)?;"));
     assert!(compatibility
         .contains("outcome.waits_for_pending_dependency() && next_tick > earliest_tick"));
     assert!(compatibility.contains("self.pending_data_address_wake_tick() == Some(next_tick)"));
+    assert!(compatibility.contains("if self.live_issue_is_quiescent()"));
+    assert!(compatibility.contains("self.seal_live_issue_decision();"));
 
     let classify = rust_function_definition(&service, "classify_live_issue_queue_after_service")
         .expect("missing post-service classifier");
@@ -4904,23 +4918,32 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
     assert!(
         compact_classify.contains("next_service_tick.is_none()&&!waits_for_external_dependency")
     );
-    let one_tick = rust_function_definition(&service, "service_live_issue_queue_at").unwrap();
-    let observe = one_tick.find("self.live_issue.observe_sequences(").unwrap();
-    let no_wake = one_tick
-        .find("return Err(O3LiveIssueServiceError::NoWake { sequence })")
+    let finish = rust_function_definition(&service, "finish_live_issue_service_at").unwrap();
+    let observe = finish.find("self.live_issue.observe_sequences(").unwrap();
+    let no_wake = finish
+        .find("return Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence })")
         .unwrap();
     assert!(
         observe < no_wake,
         "no-wake must retain the classified stats decision"
     );
 
-    let service_error = production_enum_definition(&service, "O3LiveIssueServiceError")
-        .expect("missing private service error");
-    assert!(service.contains("pub(crate) enum O3LiveIssueServiceError"));
-    assert!(service_error.contains("NoWake { sequence: u64 }"));
-    assert!(service_error.contains("Runtime(O3RuntimeError)"));
+    let one_tick = rust_function_definition(&service, "service_live_issue_queue_at").unwrap();
+    assert!(one_tick.contains(") -> Result<O3LiveIssueServiceOutcome, O3RuntimeError>"));
+    assert!(!service.contains("O3LiveIssueServiceError"));
+    assert!(!issue_source.contains("use service::O3LiveIssueServiceError"));
     assert!(!error.contains("LiveIssueQueueHasNoWake"));
     assert!(!error.contains("LiveIssueService"));
+
+    let live_issue_state = production_struct_definitions(&state)
+        .into_iter()
+        .find(|definition| {
+            production_defines_exact_named_item(definition, "struct", "O3LiveIssueState")
+        })
+        .expect("missing live issue state");
+    assert!(live_issue_state.contains("last_counted_cycle_tick: Option<u64>"));
+    assert!(!live_issue_state.contains("BTreeSet"));
+    assert!(!state.contains("compatibility_cycle_ticks"));
 
     let delta = production_struct_definitions(&decision)
         .into_iter()
@@ -4944,8 +4967,9 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
         "service_live_issue_queue_at_retains_resource_blocked_rows_for_next_tick",
         "service_live_issue_queue_at_requests_earliest_dependency_ready_tick",
         "service_live_issue_queue_at_allows_capacity_remaining_same_tick_reentry",
-        "service_live_issue_queue_at_reports_private_no_wake_invariant",
+        "service_live_issue_queue_at_translates_no_wake_to_runtime_error",
         "schedule_live_speculative_issues_translates_no_wake_and_preserves_diagnostics",
+        "two_pending_replay_reclassifies_older_resident_and_preserves_compatibility_wake",
         "live_issue_stats_same_tick_reentry_projects_once",
         "live_issue_stats_reset_rebases_unsealed_decision",
     ] {
@@ -4955,6 +4979,14 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
             "missing exact Task 5 service test `{test}`",
         );
     }
+    assert_eq!(
+        rust_test_function_definition_count(
+            &state_tests,
+            "live_issue_state_cycle_sealing_remains_monotonic_across_long_run",
+        ),
+        1,
+        "missing bounded long-run cycle marker regression",
+    );
 }
 
 #[test]
@@ -8711,6 +8743,7 @@ fn live_issue_state_rollback_definition_is_bounded(definition: &str) -> bool {
             "telemetry",
             "trace_records_len",
         ]
+        && !definition.contains("last_counted_cycle_tick")
         && !definition.contains("compatibility_cycle_ticks")
         && !definition.contains("trace_records:")
         && !definition.contains("Vec<O3LiveIssueTraceRecord>")
@@ -9201,15 +9234,32 @@ fn o3_live_issue_service_is_exactly_one_tick(source: &str) -> bool {
     let Some(service) = rust_function_definition(&production, "service_live_issue_queue_at") else {
         return false;
     };
-    let chars = service.chars().collect::<Vec<_>>();
-    if ["loop", "while"]
-        .into_iter()
-        .any(|keyword| contains_rust_identifier(&chars, keyword))
-        || rust_identifier_is_assigned(&service, "now")
-    {
+    let Some(replay) = rust_function_definition(&production, "finish_live_issue_replay_at") else {
         return false;
+    };
+    let Some(finish) = rust_function_definition(&production, "finish_live_issue_service_at") else {
+        return false;
+    };
+    let Some(classify) =
+        rust_function_definition(&production, "classify_live_issue_queue_after_service")
+    else {
+        return false;
+    };
+    for time_sensitive in [&service, &replay, &finish, &classify] {
+        let chars = time_sensitive.chars().collect::<Vec<_>>();
+        if ["loop", "while", "for"]
+            .into_iter()
+            .any(|keyword| contains_rust_identifier(&chars, keyword))
+            || rust_identifier_is_assigned(time_sensitive, "now")
+        {
+            return false;
+        }
     }
     let compact = service
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    let compact_production = production
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect::<String>();
@@ -9223,7 +9273,7 @@ fn o3_live_issue_service_is_exactly_one_tick(source: &str) -> bool {
         "self.prepare_live_issue_batch(hart,&queue,plan.issued(),now)",
         "O3LiveIssueTransaction::record(self,rows)",
         "self.classify_live_issue_queue_after_service(now)",
-        "self.live_issue.observe_sequences(",
+        "self.finish_live_issue_service_at(",
     ];
     let positions = anchors
         .iter()
@@ -9236,6 +9286,21 @@ fn o3_live_issue_service_is_exactly_one_tick(source: &str) -> bool {
     positions.is_some_and(|positions| positions.windows(2).all(|pair| pair[0] < pair[1]))
         && rust_method_call_positions(&service, "plan_at").len() == 1
         && rust_method_call_positions(&service, "service_live_issue_queue_at").is_empty()
+        && rust_method_call_positions(&production, "plan_at").len() == 2
+        && compact_production.matches(".plan_at(now,").count() == 2
+        && rust_method_call_positions(&production, "service_live_issue_queue_at").len() == 1
+        && rust_method_call_positions(&production, "prepare_live_issue_batch").len() == 1
+        && rust_method_call_positions(&production, "finish_live_issue_replay_at").len() == 4
+        && rust_method_call_positions(&production, "finish_live_issue_service_at").len() == 2
+        && rust_method_call_positions(&production, "classify_live_issue_queue_after_service").len()
+            == 2
+        && rust_method_call_positions(&production, "observe_sequences").len() == 1
+        && rust_method_call_positions(&production, "record_live_issue_batch").is_empty()
+        && rust_method_call_positions(&production, "record").len() == 1
+        && compact_production
+            .matches("O3LiveIssueTransaction::record(self,rows)")
+            .count()
+            == 1
 }
 
 fn o3_live_issue_compatibility_driver_fails_closed(source: &str) -> bool {
@@ -9249,9 +9314,61 @@ fn o3_live_issue_compatibility_driver_fails_closed(source: &str) -> bool {
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect::<String>();
-    compact.contains(
-        "Err(O3LiveIssueServiceError::NoWake{sequence})=>{returnErr(O3RuntimeError::InvalidLiveIssueQueueEntry{sequence});}",
-    )
+    compact
+        .matches("letoutcome=self.service_live_issue_queue_at(hart,tick)?;")
+        .count()
+        == 1
+        && rust_method_call_positions(&compatibility, "service_live_issue_queue_at").len() == 1
+        && ![
+            "matchself.service_live_issue_queue_at",
+            "unwrap_or(",
+            "unwrap_or_default(",
+            "unwrap_or_else(",
+            ".ok()",
+            "ifletOk(",
+        ]
+        .into_iter()
+        .any(|mutation| compact.contains(mutation))
+        && compact.contains("ifself.live_issue_is_quiescent(){self.seal_live_issue_decision();}")
+}
+
+fn o3_live_issue_replay_finalization_is_shared(source: &str) -> bool {
+    let production = production_rust_source(source);
+    let Some(service) = rust_function_definition(&production, "service_live_issue_queue_at") else {
+        return false;
+    };
+    let Some(replay) = rust_function_definition(&production, "finish_live_issue_replay_at") else {
+        return false;
+    };
+    let Some(classify) =
+        rust_function_definition(&production, "classify_live_issue_queue_after_service")
+    else {
+        return false;
+    };
+    let compact = replay
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    let anchors = [
+        "self.discard_pending_data_address_from(sequence)",
+        "self.classify_live_issue_queue_after_service(now)",
+        "post.replay_boundary",
+        "self.finish_live_issue_service_at(",
+    ];
+    let positions = anchors
+        .iter()
+        .map(|anchor| {
+            (compact.matches(anchor).count() == 1)
+                .then(|| compact.find(anchor))
+                .flatten()
+        })
+        .collect::<Option<Vec<_>>>();
+    positions.is_some_and(|positions| positions.windows(2).all(|pair| pair[0] < pair[1]))
+        && rust_method_call_positions(&service, "finish_live_issue_replay_at").len() == 4
+        && rust_method_call_positions(&replay, "classify_live_issue_queue_after_service").len() == 1
+        && rust_method_call_positions(&replay, "finish_live_issue_service_at").len() == 1
+        && rust_method_call_positions(&production, "discard_pending_data_address_from").len() == 1
+        && !classify.contains("discard_pending_data_address_from")
 }
 
 fn o3_live_issue_delayed_stats_are_projected(
@@ -9323,6 +9440,7 @@ fn o3_live_issue_delayed_stats_are_projected(
     let state_reset = compact(&state_reset);
     let seal_before = compact(&seal_before);
     let seal_current = compact(&seal_current);
+    let state_source = compact(state_source);
 
     stats.contains("matchself.live_issue.projected_decision()")
         && stats.contains("Some(delta)=>self.stats.project_issue_cycle(")
@@ -9350,10 +9468,13 @@ fn o3_live_issue_delayed_stats_are_projected(
         && reset.contains("self.observed_after_reset=false")
         && reset.contains("self.new_cycle=true")
         && reset.contains("self.refresh_projection()")
-        && take_current.contains("self.compatibility_cycle_ticks.insert(active.tick)")
-        && begin_active.contains("!self.compatibility_cycle_ticks.contains(&tick)")
+        && take_current.contains("self.last_counted_cycle_tick=Some(active.tick)")
+        && begin_active.contains("self.last_counted_cycle_tick.is_none_or(|last|tick>last)")
         && state_reset.contains("self.reset_active_decision_baseline()")
-        && state_reset.contains("self.compatibility_cycle_ticks.clear()")
+        && state_reset.contains("self.last_counted_cycle_tick=None")
+        && state_source.contains("last_counted_cycle_tick:Option<u64>")
+        && !state_source.contains("compatibility_cycle_ticks")
+        && !state_source.contains("BTreeSet<u64>")
         && seal_before.contains("self.live_issue.take_decision_before(tick)")
         && seal_before.contains("self.stats.record_issue_cycle(")
         && seal_current.contains("self.live_issue.take_current_decision()")
@@ -9394,74 +9515,179 @@ fn o3_live_issue_service_policy_rejects_later_tick_mutations() {
     assert!(o3_live_issue_service_is_exactly_one_tick(&service));
 
     let mutations = [
-        service.replacen(
-            "self.seal_live_issue_decision_before(now);",
-            "loop { self.seal_live_issue_decision_before(now); break; }",
-            1,
+        (
+            "direct loop",
+            service.replacen(
+                "self.seal_live_issue_decision_before(now);",
+                "loop { self.seal_live_issue_decision_before(now); break; }",
+                1,
+            ),
         ),
-        service.replacen(
-            "self.seal_live_issue_decision_before(now);",
-            "let mut now = now; now += 1; self.seal_live_issue_decision_before(now);",
-            1,
+        (
+            "direct for-loop future service",
+            service.replacen(
+                "self.seal_live_issue_decision_before(now);",
+                "for future_tick in [now.saturating_add(1)] { let _ = self.service_live_issue_queue_at(hart, future_tick)?; }\n        self.seal_live_issue_decision_before(now);",
+                1,
+            ),
         ),
-        service.replacen(
-            "plan.issued(), now)?;",
-            "plan.issued(), now.checked_add(1).unwrap())?;",
-            1,
+        (
+            "direct now mutation",
+            service.replacen(
+                "self.seal_live_issue_decision_before(now);",
+                "let mut now = now; now += 1; self.seal_live_issue_decision_before(now);",
+                1,
+            ),
         ),
-        service.replacen(
-            "let plan = calendar.plan_at(now, &dependencies, queue.entries())?;",
-            "let _extra = calendar.plan_at(now, &dependencies, queue.entries())?;\n        let plan = calendar.plan_at(now, &dependencies, queue.entries())?;",
-            1,
+        (
+            "future preparation tick",
+            service.replacen(
+                "plan.issued(), now)?;",
+                "plan.issued(), now.checked_add(1).unwrap())?;",
+                1,
+            ),
         ),
-        service.replacen(
-            "self.classify_live_issue_queue_after_service(now)?",
-            "O3LiveIssuePostService::default()",
-            1,
+        (
+            "extra direct plan",
+            service.replacen(
+                "let plan = calendar.plan_at(now, &dependencies, queue.entries())?;",
+                "let _extra = calendar.plan_at(now, &dependencies, queue.entries())?;\n        let plan = calendar.plan_at(now, &dependencies, queue.entries())?;",
+                1,
+            ),
         ),
-        service.replacen(
-            "O3LiveIssueTransaction::record(self, rows)",
-            "self.record_live_issue_batch(rows)",
-            1,
+        (
+            "helper future plan",
+            format!(
+                "{service}\nimpl O3RuntimeState {{\n    fn task5_mutant_extra_plan(&self, now: u64, dependencies: &O3LiveIssueDependencyTable, queue: &O3LiveIssueQueue) -> Result<(), O3RuntimeError> {{\n        let calendar = O3LiveIssueCalendar::capture(self);\n        let _ = calendar.plan_at(now.saturating_add(1), dependencies, queue.entries())?;\n        Ok(())\n    }}\n}}\n"
+            ),
+        ),
+        (
+            "helper future service",
+            format!(
+                "{service}\nimpl O3RuntimeState {{\n    fn task5_mutant_extra_service(&mut self, hart: &RiscvHartState, now: u64) -> Result<(), O3RuntimeError> {{\n        let _ = self.service_live_issue_queue_at(hart, now.saturating_add(1))?;\n        Ok(())\n    }}\n}}\n"
+            ),
+        ),
+        (
+            "helper future preparation",
+            format!(
+                "{service}\nimpl O3RuntimeState {{\n    fn task5_mutant_extra_prepare(&self, hart: &RiscvHartState, queue: &O3LiveIssueQueue, issued: &[O3ScopedReadyInstruction], now: u64) -> Result<(), O3RuntimeError> {{\n        let _ = self.prepare_live_issue_batch(hart, queue, issued, now.saturating_add(1))?;\n        Ok(())\n    }}\n}}\n"
+            ),
+        ),
+        (
+            "iterator future service",
+            format!(
+                "{service}\nimpl O3RuntimeState {{\n    fn task5_mutant_iterated_service(&mut self, hart: &RiscvHartState, now: u64) -> Result<(), O3RuntimeError> {{\n        [now.saturating_add(1)].into_iter().try_for_each(|future_tick| self.service_live_issue_queue_at(hart, future_tick).map(|_| ()))\n    }}\n}}\n"
+            ),
+        ),
+        (
+            "classification bypass",
+            service.replacen(
+                "self.classify_live_issue_queue_after_service(now)?",
+                "O3LiveIssuePostService::default()",
+                1,
+            ),
+        ),
+        (
+            "extra transaction recording",
+            service.replacen(
+                "match O3LiveIssueTransaction::record(self, rows) {",
+                "let _ = O3LiveIssueTransaction::record(self, Vec::new());\n                match O3LiveIssueTransaction::record(self, rows) {",
+                1,
+            ),
         ),
     ];
-    for mutation in mutations {
-        assert_ne!(mutation, service, "Task 5 service mutation did not apply");
+    for (description, mutation) in mutations {
+        assert_ne!(
+            mutation, service,
+            "Task 5 service mutation did not apply: {description}"
+        );
         assert!(
             !o3_live_issue_service_is_exactly_one_tick(&mutation),
-            "accepted later-tick or weakened service mutation",
+            "accepted later-tick or weakened service mutation: {description}",
         );
     }
 }
 
 #[test]
-fn o3_live_issue_service_compatibility_policy_rejects_silent_no_wake_mutations() {
+fn o3_live_issue_replay_policy_rejects_unclassified_survivor_mutations() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let service = fs::read_to_string(crate_dir.join("src/o3_runtime_issue/service.rs")).unwrap();
+    assert!(o3_live_issue_replay_finalization_is_shared(&service));
+
+    for (description, mutation) in [
+        (
+            "replay exit bypasses shared finalizer",
+            service.replacen(
+                "return self.finish_live_issue_replay_at(now, sequence, &[], 0, 0);",
+                "return Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence });",
+                1,
+            ),
+        ),
+        (
+            "replay cleanup removed",
+            service.replacen(
+                "self.discard_pending_data_address_from(sequence);",
+                "let _cleanup_boundary = sequence;",
+                1,
+            ),
+        ),
+        (
+            "survivor reclassification removed",
+            service.replacen(
+                "let post = self.classify_live_issue_queue_after_service(now)?;",
+                "let post = O3LiveIssuePostService::default();",
+                2,
+            ),
+        ),
+        (
+            "nested replay ignored",
+            service.replacen(
+                "if let Some(sequence) = post.replay_boundary {",
+                "if let Some(sequence) = None {",
+                2,
+            ),
+        ),
+    ] {
+        assert_ne!(
+            mutation, service,
+            "Task 5 replay mutation did not apply: {description}"
+        );
+        assert!(
+            !o3_live_issue_replay_finalization_is_shared(&mutation),
+            "accepted weakened replay finalization mutation: {description}",
+        );
+    }
+}
+
+#[test]
+fn o3_live_issue_service_compatibility_policy_rejects_silent_result_mutations() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let service = fs::read_to_string(crate_dir.join("src/o3_runtime_issue/service.rs")).unwrap();
     assert!(o3_live_issue_compatibility_driver_fails_closed(&service));
 
+    let direct = "let outcome = self.service_live_issue_queue_at(hart, tick)?;";
     for (description, mutation) in [
+        (
+            "defaulted error",
+            service.replacen(
+                direct,
+                "let outcome = self.service_live_issue_queue_at(hart, tick).unwrap_or_default();",
+                1,
+            ),
+        ),
+        (
+            "discarded error",
+            service.replacen(
+                direct,
+                "let outcome = self.service_live_issue_queue_at(hart, tick).ok().unwrap_or_default();",
+                1,
+            ),
+        ),
         (
             "silent break",
             service.replacen(
-                "return Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence });",
-                "break;",
-                1,
-            ),
-        ),
-        (
-            "silent success",
-            service.replacen(
-                "return Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence });",
-                "return Ok(());",
-                1,
-            ),
-        ),
-        (
-            "ignored sequence",
-            service.replacen(
-                "Err(O3LiveIssueServiceError::NoWake { sequence }) => {",
-                "Err(O3LiveIssueServiceError::NoWake { .. }) => {",
+                direct,
+                "let outcome = match self.service_live_issue_queue_at(hart, tick) { Ok(outcome) => outcome, Err(_) => break };",
                 1,
             ),
         ),
@@ -9472,7 +9698,7 @@ fn o3_live_issue_service_compatibility_policy_rejects_silent_no_wake_mutations()
         );
         assert!(
             !o3_live_issue_compatibility_driver_fails_closed(&mutation),
-            "accepted weakened no-wake compatibility mutation: {description}",
+            "accepted weakened compatibility result mutation: {description}",
         );
     }
 }
@@ -9506,8 +9732,33 @@ fn o3_live_issue_stats_policy_rejects_projection_and_rebase_mutations() {
         "self.observed_after_reset = true;",
         1,
     );
-    let decision_cycle =
-        decision.replacen("!self.compatibility_cycle_ticks.contains(&tick)", "true", 1);
+    let decision_cycle = decision.replacen(
+        "self.last_counted_cycle_tick.is_none_or(|last| tick > last)",
+        "true",
+        1,
+    );
+    let unbounded_cycle_state = state
+        .replacen(
+            "last_counted_cycle_tick: Option<u64>",
+            "compatibility_cycle_ticks: std::collections::BTreeSet<u64>",
+            1,
+        )
+        .replacen(
+            "self.last_counted_cycle_tick = None;",
+            "self.compatibility_cycle_ticks.clear();",
+            1,
+        );
+    let unbounded_cycle_decision = decision
+        .replacen(
+            "self.last_counted_cycle_tick = Some(active.tick);",
+            "self.compatibility_cycle_ticks.insert(active.tick);",
+            1,
+        )
+        .replacen(
+            "self.last_counted_cycle_tick.is_none_or(|last| tick > last)",
+            "!self.compatibility_cycle_ticks.contains(&tick)",
+            1,
+        );
     let state_mutation = state.replacen("self.reset_active_decision_baseline();", "", 1);
     let service_mutation =
         service.replacen("self.live_issue.take_decision_before(tick)", "None", 1);
@@ -9550,6 +9801,13 @@ fn o3_live_issue_stats_policy_rejects_projection_and_rebase_mutations() {
             &service,
             &state,
             &decision_cycle,
+            &stats,
+        ),
+        (
+            "per-cycle collection storage restored",
+            &service,
+            &unbounded_cycle_state,
+            &unbounded_cycle_decision,
             &stats,
         ),
         (
@@ -9693,7 +9951,7 @@ struct O3LiveIssueStateRollback {
         ),
         canonical.replace(
             "trace_records_len: usize,",
-            "trace_records_len: usize, pub(crate) compatibility_cycle_ticks: BTreeSet<u64>,",
+            "trace_records_len: usize, pub(crate) last_counted_cycle_tick: Option<u64>,",
         ),
         canonical.replace(
             "trace_records_len: usize,",

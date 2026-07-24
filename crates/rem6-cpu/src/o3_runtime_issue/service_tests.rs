@@ -1,5 +1,27 @@
-use super::super::o3_runtime_issue::O3LiveIssueServiceError;
 use super::*;
+use crate::o3_runtime::o3_runtime_pending_address_tests::multiple::ready_two_pending_issue;
+
+const REPLAY_SERVICE_TICK: u64 = 41;
+
+fn replay_survivor_fixture() -> (
+    O3RuntimeState,
+    RiscvHartState,
+    O3LiveIssueHeadReservation,
+    u64,
+    u64,
+) {
+    let (mut runtime, hart, head) = ready_two_pending_issue(2, false);
+    let sequences = runtime.pending_data_address_sequences_for_test();
+    let [survivor, replay] = sequences.as_slice() else {
+        panic!("expected two pending rows")
+    };
+    assert!(runtime.remove_live_staged_issue_identity_for_test(*replay));
+    assert!(runtime
+        .live_issue
+        .resident_sequences()
+        .starts_with(&[*survivor, *replay]));
+    (runtime, hart, head, *survivor, *replay)
+}
 
 #[test]
 fn service_live_issue_queue_at_issues_only_the_requested_tick() {
@@ -74,7 +96,7 @@ fn service_live_issue_queue_at_allows_capacity_remaining_same_tick_reentry() {
 }
 
 #[test]
-fn service_live_issue_queue_at_reports_private_no_wake_invariant() {
+fn service_live_issue_queue_at_translates_no_wake_to_runtime_error() {
     let mut fixture = ScalarIssueFixture::new_unbound(2, ScalarIssueCase::SameWindowLinkReturn);
     fixture.bind_row(1);
     let sequence = fixture.sequence(SECOND_PC);
@@ -83,7 +105,7 @@ fn service_live_issue_queue_at_reports_private_no_wake_invariant() {
         fixture
             .runtime
             .service_live_issue_queue_at(&fixture.hart, 20),
-        Err(O3LiveIssueServiceError::NoWake { sequence }),
+        Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence }),
     );
     assert_eq!(fixture.runtime.live_issue.resident_sequences(), &[sequence]);
     assert_eq!(fixture.runtime.stats().issue_cycles(), 1);
@@ -104,6 +126,43 @@ fn schedule_live_speculative_issues_translates_no_wake_and_preserves_diagnostics
     );
     assert_eq!(fixture.runtime.live_issue.resident_sequences(), &[sequence]);
     assert_eq!(fixture.runtime.live_issue_service_tick(), None);
+}
+
+#[test]
+fn two_pending_replay_reclassifies_older_resident_and_preserves_compatibility_wake() {
+    let (mut direct, hart, _, survivor, replay) = replay_survivor_fixture();
+    let outcome = direct
+        .service_live_issue_queue_at(&hart, REPLAY_SERVICE_TICK)
+        .unwrap();
+    assert_eq!(outcome.replay_boundary(), Some(replay));
+    assert_eq!(outcome.issued_rows(), 0);
+    assert_eq!(outcome.next_service_tick(), Some(REPLAY_SERVICE_TICK));
+    assert_eq!(direct.live_issue.resident_sequences(), [survivor]);
+    assert_eq!(direct.live_issue_service_tick(), Some(REPLAY_SERVICE_TICK));
+    assert!(!direct
+        .live_speculative_executions
+        .iter()
+        .any(|issued| issued.sequence == survivor));
+    assert_eq!(direct.stats().issue_cycles(), 1);
+    assert_eq!(direct.stats().issued_rows(), 0);
+
+    let (mut compatibility, hart, head, survivor, replay) = replay_survivor_fixture();
+    compatibility
+        .schedule_live_speculative_issues(&hart, head, REPLAY_SERVICE_TICK)
+        .unwrap();
+    assert_eq!(compatibility.live_issue.resident_sequences(), [survivor]);
+    assert_eq!(
+        compatibility.live_issue_service_tick(),
+        Some(REPLAY_SERVICE_TICK)
+    );
+    assert_eq!(
+        compatibility.pending_data_address_sequences_for_test(),
+        [survivor]
+    );
+    assert!(!compatibility
+        .live_speculative_executions
+        .iter()
+        .any(|issued| issued.sequence == survivor || issued.sequence == replay));
 }
 
 #[test]

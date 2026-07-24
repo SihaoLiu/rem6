@@ -217,6 +217,24 @@ fn live_issue_state_sealed_same_tick_reentry_reuses_cycle_until_reset() {
 }
 
 #[test]
+fn live_issue_state_cycle_sealing_remains_monotonic_across_long_run() {
+    let mut state = O3LiveIssueState::default();
+    for tick in 0..10_000 {
+        state.observe_sequences(tick, &[tick], &[], &[], 1);
+        assert!(state.take_current_decision().unwrap().new_cycle);
+
+        state.observe_sequences(tick, &[tick + 10_000], &[], &[], 1);
+        assert!(!state.take_current_decision().unwrap().new_cycle);
+    }
+
+    state.observe_sequences(10_000, &[20_000], &[], &[], 1);
+    assert!(state.take_current_decision().unwrap().new_cycle);
+    state.reset_stats_baseline();
+    state.observe_sequences(10_000, &[20_001], &[], &[], 1);
+    assert!(state.projected_decision().unwrap().new_cycle);
+}
+
+#[test]
 fn live_issue_head_binding_enqueues_then_durable_record_removes_exact_row() {
     let mut runtime = O3RuntimeState::default();
     let instruction = addi(3, 0, 1);

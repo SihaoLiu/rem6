@@ -71,7 +71,7 @@ fn assert_two_pending_allocation(runtime: &O3RuntimeState) {
     );
     assert!(runtime.live_data_accesses.len() == 1 && runtime.pending_data_accesses.is_empty());
 }
-fn ready_two_pending_issue(
+pub(in crate::o3_runtime) fn ready_two_pending_issue(
     issue_width: usize,
     chained: bool,
 ) -> (O3RuntimeState, RiscvHartState, O3LiveIssueHeadReservation) {

@@ -177,7 +177,7 @@ impl O3LiveIssueState {
         let active = self.active_tick.take()?;
         let delta = active.projected_delta?;
         if delta.new_cycle {
-            self.compatibility_cycle_ticks.insert(active.tick);
+            self.last_counted_cycle_tick = Some(active.tick);
         }
         Some(delta)
     }
@@ -197,7 +197,7 @@ impl O3LiveIssueState {
             .as_ref()
             .is_none_or(|active| active.tick != tick)
         {
-            let new_cycle = !self.compatibility_cycle_ticks.contains(&tick);
+            let new_cycle = self.last_counted_cycle_tick.is_none_or(|last| tick > last);
             self.active_tick = Some(O3LiveIssueActiveTick::at(tick, new_cycle));
         }
     }

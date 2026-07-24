@@ -16,6 +16,7 @@ pub(crate) struct O3LiveIssueServiceOutcome {
 }
 
 impl O3LiveIssueServiceOutcome {
+    #[cfg(test)]
     pub(in crate::o3_runtime) const fn issued_rows(self) -> usize {
         self.issued_rows
     }
@@ -30,18 +31,6 @@ impl O3LiveIssueServiceOutcome {
 
     const fn waits_for_pending_dependency(self) -> bool {
         self.waits_for_pending_dependency
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum O3LiveIssueServiceError {
-    NoWake { sequence: u64 },
-    Runtime(O3RuntimeError),
-}
-
-impl From<O3RuntimeError> for O3LiveIssueServiceError {
-    fn from(error: O3RuntimeError) -> Self {
-        Self::Runtime(error)
     }
 }
 
@@ -114,7 +103,7 @@ impl O3RuntimeState {
         &mut self,
         hart: &RiscvHartState,
         now: u64,
-    ) -> Result<O3LiveIssueServiceOutcome, O3LiveIssueServiceError> {
+    ) -> Result<O3LiveIssueServiceOutcome, O3RuntimeError> {
         self.seal_live_issue_decision_before(now);
         if !self.live_issue.begin_service_at(now) {
             return Ok(O3LiveIssueServiceOutcome::default());
@@ -123,11 +112,7 @@ impl O3RuntimeState {
         {
             O3LiveIssueQueueCapture::Ready(queue) => queue,
             O3LiveIssueQueueCapture::ReplayPending(sequence) => {
-                self.discard_pending_data_address_from(sequence);
-                return Ok(O3LiveIssueServiceOutcome {
-                    replay_boundary: Some(sequence),
-                    ..O3LiveIssueServiceOutcome::default()
-                });
+                return self.finish_live_issue_replay_at(now, sequence, &[], 0, 0);
             }
         };
         if queue.entries().is_empty() {
@@ -148,32 +133,75 @@ impl O3RuntimeState {
                 match O3LiveIssueTransaction::record(self, rows) {
                     Ok(O3LiveIssueBatchOutcome::Recorded) => plan.issued().len(),
                     Ok(O3LiveIssueBatchOutcome::ReplayPending(sequence)) => {
-                        return Ok(O3LiveIssueServiceOutcome {
-                            replay_boundary: Some(sequence),
-                            ..O3LiveIssueServiceOutcome::default()
-                        });
+                        return self.finish_live_issue_replay_at(now, sequence, &[], 0, 0);
                     }
-                    Err(O3LiveIssueTransactionError::Runtime(error)) => return Err(error.into()),
+                    Err(O3LiveIssueTransactionError::Runtime(error)) => return Err(error),
                     Err(O3LiveIssueTransactionError::AlreadyActive) => {
                         unreachable!("live issue service cannot nest issue transactions")
                     }
                 }
             }
             O3PreparedLiveIssueBatch::ReplayPending(sequence) => {
-                self.discard_pending_data_address_from(sequence);
-                return Ok(O3LiveIssueServiceOutcome {
-                    replay_boundary: Some(sequence),
-                    ..O3LiveIssueServiceOutcome::default()
-                });
+                return self.finish_live_issue_replay_at(now, sequence, &[], 0, 0);
             }
         };
-        let mut post = self.classify_live_issue_queue_after_service(now)?;
-        post.max_rows_at_tick = post
-            .max_rows_at_tick
-            .max(plan.reserved_width().saturating_add(issued_rows));
-        self.live_issue.observe_sequences(
+        let post = self.classify_live_issue_queue_after_service(now)?;
+        let max_rows_at_tick = plan.reserved_width().saturating_add(issued_rows);
+        if let Some(sequence) = post.replay_boundary {
+            return self.finish_live_issue_replay_at(
+                now,
+                sequence,
+                &issued_sequences,
+                issued_rows,
+                max_rows_at_tick,
+            );
+        }
+        self.finish_live_issue_service_at(
             now,
             &issued_sequences,
+            issued_rows,
+            None,
+            max_rows_at_tick,
+            post,
+        )
+    }
+
+    fn finish_live_issue_replay_at(
+        &mut self,
+        now: u64,
+        sequence: u64,
+        issued_sequences: &[u64],
+        issued_rows: usize,
+        max_rows_at_tick: usize,
+    ) -> Result<O3LiveIssueServiceOutcome, O3RuntimeError> {
+        self.discard_pending_data_address_from(sequence);
+        let post = self.classify_live_issue_queue_after_service(now)?;
+        if let Some(sequence) = post.replay_boundary {
+            return Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence });
+        }
+        self.finish_live_issue_service_at(
+            now,
+            issued_sequences,
+            issued_rows,
+            Some(sequence),
+            max_rows_at_tick,
+            post,
+        )
+    }
+
+    fn finish_live_issue_service_at(
+        &mut self,
+        now: u64,
+        issued_sequences: &[u64],
+        issued_rows: usize,
+        replay_boundary: Option<u64>,
+        max_rows_at_tick: usize,
+        mut post: O3LiveIssuePostService,
+    ) -> Result<O3LiveIssueServiceOutcome, O3RuntimeError> {
+        post.max_rows_at_tick = post.max_rows_at_tick.max(max_rows_at_tick);
+        self.live_issue.observe_sequences(
+            now,
+            issued_sequences,
             &post.resource_blocked_sequences,
             &post.dependency_blocked_sequences,
             post.max_rows_at_tick,
@@ -182,12 +210,12 @@ impl O3RuntimeState {
             self.live_issue.request_service_at(tick);
         }
         if let Some(sequence) = post.no_wake_sequence {
-            return Err(O3LiveIssueServiceError::NoWake { sequence });
+            return Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence });
         }
         Ok(O3LiveIssueServiceOutcome {
             issued_rows,
             next_service_tick: post.next_service_tick,
-            replay_boundary: post.replay_boundary,
+            replay_boundary,
             waits_for_pending_dependency: post.waits_for_pending_dependency,
         })
     }
@@ -195,7 +223,7 @@ impl O3RuntimeState {
     fn classify_live_issue_queue_after_service(
         &mut self,
         now: u64,
-    ) -> Result<O3LiveIssuePostService, O3LiveIssueServiceError> {
+    ) -> Result<O3LiveIssuePostService, O3RuntimeError> {
         if self.live_issue.resident_sequences().is_empty() {
             self.live_issue.clear_requested_service_tick();
             return Ok(O3LiveIssuePostService::default());
@@ -204,7 +232,6 @@ impl O3RuntimeState {
         {
             O3LiveIssueQueueCapture::Ready(queue) => queue,
             O3LiveIssueQueueCapture::ReplayPending(sequence) => {
-                self.discard_pending_data_address_from(sequence);
                 return Ok(O3LiveIssuePostService {
                     replay_boundary: Some(sequence),
                     ..O3LiveIssuePostService::default()
@@ -365,13 +392,7 @@ impl O3RuntimeState {
         self.live_issue.request_service_at(earliest_tick);
         let mut tick = earliest_tick;
         loop {
-            let outcome = match self.service_live_issue_queue_at(hart, tick) {
-                Ok(outcome) => outcome,
-                Err(O3LiveIssueServiceError::NoWake { sequence }) => {
-                    return Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence });
-                }
-                Err(O3LiveIssueServiceError::Runtime(error)) => return Err(error),
-            };
+            let outcome = self.service_live_issue_queue_at(hart, tick)?;
             if outcome.replay_boundary().is_some() {
                 break;
             }
@@ -385,6 +406,9 @@ impl O3RuntimeState {
                 break;
             }
             tick = next_tick;
+        }
+        if self.live_issue_is_quiescent() {
+            self.seal_live_issue_decision();
         }
         Ok(())
     }

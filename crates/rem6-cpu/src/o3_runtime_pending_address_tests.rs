@@ -18,7 +18,7 @@ use rem6_transport::{MemoryRouteId, TransportEndpointId};
 #[path = "o3_runtime_pending_address_tests/lifecycle.rs"]
 mod lifecycle;
 #[path = "o3_runtime_pending_address_tests/multiple.rs"]
-mod multiple;
+pub(in crate::o3_runtime) mod multiple;
 #[path = "o3_runtime_pending_address_tests/scheduling.rs"]
 mod scheduling;
 #[path = "o3_runtime_pending_address_tests/staging.rs"]

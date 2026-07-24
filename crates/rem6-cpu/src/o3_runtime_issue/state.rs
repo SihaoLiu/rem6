@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     ops::{Deref, DerefMut},
 };
 
@@ -125,7 +125,7 @@ impl DerefMut for O3LiveIssueResidentSequences {
 pub(in crate::o3_runtime) struct O3LiveIssueState {
     resident_sequences: O3LiveIssueResidentSequences,
     requested_service_tick: Option<u64>,
-    compatibility_cycle_ticks: BTreeSet<u64>,
+    last_counted_cycle_tick: Option<u64>,
     active_tick: Option<O3LiveIssueActiveTick>,
     transaction_active: bool,
     mutation_generation: u64,
@@ -326,7 +326,7 @@ impl O3LiveIssueState {
             ..O3LiveIssueTelemetry::default()
         };
         self.trace_records.clear();
-        self.compatibility_cycle_ticks.clear();
+        self.last_counted_cycle_tick = None;
         self.reset_active_decision_baseline();
     }
 
