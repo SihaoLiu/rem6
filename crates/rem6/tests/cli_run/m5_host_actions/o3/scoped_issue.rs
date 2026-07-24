@@ -38,6 +38,81 @@ const SCOPED_ISSUE_STATS: [(&str, &str, &str); 5] = [
     ("max_rows_per_cycle", "max_rows_per_cycle", "Count"),
 ];
 
+const ISSUE_QUEUE_STATS: [(&str, &str); 9] = [
+    ("enqueued_rows", "enqueued_rows"),
+    ("service_turns", "service_turns"),
+    ("wake_requests", "wake_requests"),
+    ("current_occupancy", "current_occupancy"),
+    ("peak_occupancy", "peak_occupancy"),
+    (
+        "issued_by_class/scalar_integer",
+        "issued_by_class.scalar_integer",
+    ),
+    (
+        "issued_by_class/integer_mul_div",
+        "issued_by_class.integer_mul_div",
+    ),
+    ("issued_by_class/memory_agu", "issued_by_class.memory_agu"),
+    ("issued_by_class/control", "issued_by_class.control"),
+];
+
+#[test]
+fn core_summary_json_o3_issue_queue() {
+    let path = scoped_issue_binary("o3-issue-queue-json", ScopedIssueCase::CrossResource);
+    let json = scoped_issue_json(&path, "direct", 2, 1_500);
+    let queue = json
+        .pointer("/cores/0/o3_runtime/issue/queue")
+        .unwrap_or_else(|| panic!("missing O3 issue queue telemetry: {json}"));
+
+    for (json_field, _) in ISSUE_QUEUE_STATS {
+        queue_u64(queue, json_field);
+    }
+    assert!(queue_u64(queue, "enqueued_rows") > 0);
+    assert!(queue_u64(queue, "service_turns") > 0);
+    assert!(queue_u64(queue, "wake_requests") > 0);
+    assert_eq!(queue_u64(queue, "current_occupancy"), 0);
+    assert!(queue_u64(queue, "peak_occupancy") > 0);
+    let issued_by_class = ["scalar_integer", "integer_mul_div", "memory_agu", "control"]
+        .into_iter()
+        .map(|issue_class| queue_u64(queue, &format!("issued_by_class/{issue_class}")))
+        .sum::<u64>();
+    assert!(issued_by_class > 0);
+}
+
+#[test]
+fn stats_output_o3_runtime_issue_queue() {
+    let path = scoped_issue_binary("o3-issue-queue-stats", ScopedIssueCase::CrossResource);
+    let json = scoped_issue_json(&path, "direct", 2, 1_500);
+    let queue = json
+        .pointer("/cores/0/o3_runtime/issue/queue")
+        .unwrap_or_else(|| panic!("missing O3 issue queue telemetry: {json}"));
+
+    for (json_field, stat_field) in ISSUE_QUEUE_STATS {
+        assert_json_stat(
+            &json,
+            &format!("sim.cpu0.o3.issue_queue.{stat_field}"),
+            "Count",
+            queue_u64(queue, json_field),
+            "resettable",
+        );
+    }
+
+    let output = scoped_issue_command_with_stats_format(&path, "direct", 2, 1_500, "text")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    for (json_field, stat_field) in ISSUE_QUEUE_STATS {
+        let stat_path = format!("sim.cpu0.o3.issue_queue.{stat_field}");
+        assert_text_resettable_count_stat(&stdout, &stat_path, queue_u64(queue, json_field));
+        assert_text_stat_occurs_once(&stdout, &stat_path);
+    }
+}
+
 #[test]
 fn rem6_run_o3_scoped_issue_width_one_serializes_direct_window() {
     let path = scoped_issue_binary("o3-scoped-issue-width-one", ScopedIssueCase::CrossResource);
@@ -763,6 +838,13 @@ fn issue_u64(issue: &Value, field: &str) -> u64 {
         .pointer(&format!("/{field}"))
         .and_then(Value::as_u64)
         .unwrap_or_else(|| panic!("scoped issue JSON should expose {field}: {issue}"))
+}
+
+fn queue_u64(queue: &Value, field: &str) -> u64 {
+    queue
+        .pointer(&format!("/{field}"))
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("O3 issue queue JSON should expose {field}: {queue}"))
 }
 
 fn assert_scoped_issue_native_stats(json: &Value, issue: &Value) {

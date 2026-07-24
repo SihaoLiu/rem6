@@ -1,6 +1,7 @@
 use rem6_cpu::{
-    BranchTargetKindCounts, BranchTargetProviderCounts, O3RuntimeSnapshot, O3RuntimeStats,
-    O3RuntimeTraceRecord, O3RuntimeWritebackReservation, RiscvReturnAddressStackStats,
+    BranchTargetKindCounts, BranchTargetProviderCounts, O3LiveIssueTelemetry, O3RuntimeSnapshot,
+    O3RuntimeStats, O3RuntimeTraceRecord, O3RuntimeWritebackReservation,
+    RiscvReturnAddressStackStats,
 };
 
 use crate::branch_predictor_summary::{
@@ -105,6 +106,7 @@ pub struct Rem6CoreSummary {
     pub(crate) in_order_pipeline_branch_speculation_removed_youngers: u64,
     pub(crate) in_order_pipeline_branch_speculation_max_pending: u64,
     pub(crate) o3_runtime: O3RuntimeStats,
+    pub(crate) o3_runtime_live_issue_telemetry: O3LiveIssueTelemetry,
     pub(crate) o3_runtime_execution_mode: Option<&'static str>,
     pub(crate) o3_runtime_stats_epoch: u64,
     pub(crate) o3_runtime_stats_reset_tick: u64,

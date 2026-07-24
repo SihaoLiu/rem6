@@ -1567,6 +1567,7 @@ impl SystemActionExecutor {
                     &mut self.stats,
                     cpu,
                     snapshot,
+                    rem6_cpu::O3LiveIssueTelemetry::default(),
                     &runtime_snapshot,
                     in_order_pipeline_cycles,
                 )

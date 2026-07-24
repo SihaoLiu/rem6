@@ -1,6 +1,6 @@
 use rem6_cpu::{
-    BranchTargetKind, CpuId, O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering,
-    O3RuntimeSnapshot, O3RuntimeStats,
+    BranchTargetKind, CpuId, O3LiveIssueTelemetry, O3RuntimeFuLatencyClass, O3RuntimeLsqOperation,
+    O3RuntimeLsqOrdering, O3RuntimeSnapshot, O3RuntimeStats,
 };
 use rem6_stats::{StatId, StatsError, StatsRegistry};
 
@@ -10,6 +10,23 @@ use super::groups::*;
 use super::helpers::*;
 
 mod snapshot;
+
+pub(in crate::riscv_o3_runtime_stats) fn update_resettable_counter_delta(
+    registry: &mut StatsRegistry,
+    stat: StatId,
+    previous: u64,
+    current: u64,
+) -> Result<(), StatsError> {
+    if current < previous {
+        registry.set_resettable_counter(stat, current)
+    } else {
+        let delta = current - previous;
+        if delta != 0 {
+            registry.increment(stat, delta)?;
+        }
+        Ok(())
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct RiscvO3RuntimeCpuStats {
@@ -93,6 +110,15 @@ pub(super) struct RiscvO3RuntimeCpuStats {
     resource_blocked_row_cycles: StatId,
     dependency_blocked_row_cycles: StatId,
     max_rows_per_cycle: StatId,
+    issue_queue_enqueued_rows: StatId,
+    issue_queue_service_turns: StatId,
+    issue_queue_wake_requests: StatId,
+    issue_queue_current_occupancy: StatId,
+    issue_queue_peak_occupancy: StatId,
+    issue_queue_scalar_integer_issued_rows: StatId,
+    issue_queue_integer_mul_div_issued_rows: StatId,
+    issue_queue_memory_agu_issued_rows: StatId,
+    issue_queue_control_issued_rows: StatId,
     writeback_port_cycles: StatId,
     writeback_port_admitted_rows: StatId,
     writeback_port_deferred_rows: StatId,
@@ -534,6 +560,60 @@ impl RiscvO3RuntimeCpuStats {
                 "max_rows_per_cycle",
                 "Count",
             )?,
+            issue_queue_enqueued_rows: register_o3_counter(
+                registry,
+                &prefix,
+                "issue_queue.enqueued_rows",
+                "Count",
+            )?,
+            issue_queue_service_turns: register_o3_counter(
+                registry,
+                &prefix,
+                "issue_queue.service_turns",
+                "Count",
+            )?,
+            issue_queue_wake_requests: register_o3_counter(
+                registry,
+                &prefix,
+                "issue_queue.wake_requests",
+                "Count",
+            )?,
+            issue_queue_current_occupancy: register_o3_counter(
+                registry,
+                &prefix,
+                "issue_queue.current_occupancy",
+                "Count",
+            )?,
+            issue_queue_peak_occupancy: register_o3_counter(
+                registry,
+                &prefix,
+                "issue_queue.peak_occupancy",
+                "Count",
+            )?,
+            issue_queue_scalar_integer_issued_rows: register_o3_counter(
+                registry,
+                &prefix,
+                "issue_queue.issued_by_class.scalar_integer",
+                "Count",
+            )?,
+            issue_queue_integer_mul_div_issued_rows: register_o3_counter(
+                registry,
+                &prefix,
+                "issue_queue.issued_by_class.integer_mul_div",
+                "Count",
+            )?,
+            issue_queue_memory_agu_issued_rows: register_o3_counter(
+                registry,
+                &prefix,
+                "issue_queue.issued_by_class.memory_agu",
+                "Count",
+            )?,
+            issue_queue_control_issued_rows: register_o3_counter(
+                registry,
+                &prefix,
+                "issue_queue.issued_by_class.control",
+                "Count",
+            )?,
             writeback_port_cycles: register_o3_counter(
                 registry,
                 &prefix,
@@ -766,6 +846,8 @@ impl RiscvO3RuntimeCpuStats {
         registry: &mut StatsRegistry,
         previous: O3RuntimeStats,
         current: O3RuntimeStats,
+        previous_live_issue: O3LiveIssueTelemetry,
+        current_live_issue: O3LiveIssueTelemetry,
         runtime_snapshot: &O3RuntimeSnapshot,
         in_order_pipeline_cycles: u64,
     ) -> Result<(), StatsError> {
@@ -1083,6 +1165,53 @@ impl RiscvO3RuntimeCpuStats {
                 registry.increment(stat, delta)?;
             }
         }
+        for (stat, previous, current) in [
+            (
+                self.issue_queue_enqueued_rows,
+                previous_live_issue.enqueued_rows(),
+                current_live_issue.enqueued_rows(),
+            ),
+            (
+                self.issue_queue_service_turns,
+                previous_live_issue.service_turns(),
+                current_live_issue.service_turns(),
+            ),
+            (
+                self.issue_queue_wake_requests,
+                previous_live_issue.wake_requests(),
+                current_live_issue.wake_requests(),
+            ),
+            (
+                self.issue_queue_scalar_integer_issued_rows,
+                previous_live_issue.scalar_integer_issued_rows(),
+                current_live_issue.scalar_integer_issued_rows(),
+            ),
+            (
+                self.issue_queue_integer_mul_div_issued_rows,
+                previous_live_issue.integer_mul_div_issued_rows(),
+                current_live_issue.integer_mul_div_issued_rows(),
+            ),
+            (
+                self.issue_queue_memory_agu_issued_rows,
+                previous_live_issue.memory_agu_issued_rows(),
+                current_live_issue.memory_agu_issued_rows(),
+            ),
+            (
+                self.issue_queue_control_issued_rows,
+                previous_live_issue.control_issued_rows(),
+                current_live_issue.control_issued_rows(),
+            ),
+        ] {
+            update_resettable_counter_delta(registry, stat, previous, current)?;
+        }
+        registry.set_resettable_counter(
+            self.issue_queue_current_occupancy,
+            current_live_issue.current_occupancy(),
+        )?;
+        registry.set_resettable_counter(
+            self.issue_queue_peak_occupancy,
+            current_live_issue.peak_occupancy(),
+        )?;
         self.set_writeback_port_extrema_snapshot(registry, current)?;
         self.set_runtime_snapshot_counts(registry, runtime_snapshot)?;
         self.structural_aliases

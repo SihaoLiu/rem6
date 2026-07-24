@@ -24,6 +24,8 @@ mod m5_host_action_fixture_ownership;
 mod m5_host_action_o3_runtime_ownership;
 #[path = "source_policy/o3_alias_authority.rs"]
 mod o3_alias_authority;
+#[path = "source_policy/o3_issue_queue_telemetry_ownership.rs"]
+mod o3_issue_queue_telemetry_ownership;
 #[path = "source_policy/o3_live_window_ownership.rs"]
 mod o3_live_window_ownership;
 #[path = "source_policy/o3_memory_issue_width_ownership.rs"]
@@ -584,7 +586,7 @@ fn cli_stats_output_o3_runtime_stays_focused() {
 fn cli_stats_output_o3_runtime_issue_stays_focused() {
     assert_cli_o3_runtime_stats_family_is_focused(
         "o3_runtime_issue",
-        "emit_o3_runtime_issue_stats(stats, core.cpu, o3)?;",
+        "emit_o3_runtime_issue_stats(stats, core.cpu, o3, queue)?;",
         "",
         "issue_cycles,issued_rows,resource_blocked_row_cycles,dependency_blocked_row_cycles,max_rows_per_cycle",
     );

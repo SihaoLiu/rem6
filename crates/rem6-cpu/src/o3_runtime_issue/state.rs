@@ -337,12 +337,10 @@ impl O3LiveIssueState {
         self.mutation_generation = self.mutation_generation.wrapping_add(1);
     }
 
-    #[cfg(test)]
     pub(in crate::o3_runtime) const fn telemetry(&self) -> O3LiveIssueTelemetry {
         self.telemetry
     }
 
-    #[cfg(test)]
     pub(in crate::o3_runtime) fn trace_records(&self) -> &[O3LiveIssueTraceRecord] {
         &self.trace_records
     }

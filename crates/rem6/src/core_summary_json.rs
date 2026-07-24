@@ -186,8 +186,21 @@ fn o3_runtime_iq_json(summary: &Rem6CoreSummary) -> String {
 }
 
 fn o3_runtime_issue_json(summary: &Rem6CoreSummary) -> String {
+    let queue = summary.o3_runtime_live_issue_telemetry;
+    let queue = format!(
+        "{{\"enqueued_rows\":{},\"service_turns\":{},\"wake_requests\":{},\"current_occupancy\":{},\"peak_occupancy\":{},\"issued_by_class\":{{\"scalar_integer\":{},\"integer_mul_div\":{},\"memory_agu\":{},\"control\":{}}}}}",
+        queue.enqueued_rows(),
+        queue.service_turns(),
+        queue.wake_requests(),
+        queue.current_occupancy(),
+        queue.peak_occupancy(),
+        queue.scalar_integer_issued_rows(),
+        queue.integer_mul_div_issued_rows(),
+        queue.memory_agu_issued_rows(),
+        queue.control_issued_rows(),
+    );
     format!(
-        "{{\"configured_width\":{},\"configured_memory_width\":{},\"cycles\":{},\"issued_rows\":{},\"resource_blocked_row_cycles\":{},\"dependency_blocked_row_cycles\":{},\"max_rows_per_cycle\":{}}}",
+        "{{\"configured_width\":{},\"configured_memory_width\":{},\"cycles\":{},\"issued_rows\":{},\"resource_blocked_row_cycles\":{},\"dependency_blocked_row_cycles\":{},\"max_rows_per_cycle\":{},\"queue\":{queue}}}",
         summary.o3_runtime_issue_width,
         summary.o3_runtime_memory_issue_width,
         summary.o3_runtime.issue_cycles(),
@@ -828,7 +841,9 @@ impl Rem6CoreSummary {
                 )
             })
             .unwrap_or_default();
-        let o3_runtime = if self.o3_runtime.has_activity() {
+        let o3_runtime = if self.o3_runtime.has_activity()
+            || self.o3_runtime_live_issue_telemetry != rem6_cpu::O3LiveIssueTelemetry::default()
+        {
             let execution_mode = self
                 .o3_runtime_execution_mode
                 .map(|mode| format!("\"{}\"", json_escape(mode)))

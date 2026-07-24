@@ -458,6 +458,7 @@ pub(super) fn execution_summary(
             in_order_pipeline_branch_speculation_max_pending: branch_speculation_summary
                 .max_pending(),
             o3_runtime: core.o3_runtime_stats(),
+            o3_runtime_live_issue_telemetry: core.o3_runtime_live_issue_telemetry(),
             o3_runtime_execution_mode: execution_mode_for_cpu(&inputs.host_actions, cpu),
             o3_runtime_stats_epoch: o3_runtime_stats_reset.0,
             o3_runtime_stats_reset_tick: o3_runtime_stats_reset.1,

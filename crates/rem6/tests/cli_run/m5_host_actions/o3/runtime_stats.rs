@@ -602,6 +602,19 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
     assert_json_stat_absent(&json, "system.cpu.commit.branchMispredicts");
     assert_json_stat_absent(&json, "system.cpu.rob.maxOccupancy");
     assert_json_stat_absent(&json, "system.cpu.lsq0.maxOccupancy");
+    for path in [
+        "enqueued_rows",
+        "service_turns",
+        "wake_requests",
+        "current_occupancy",
+        "peak_occupancy",
+        "issued_by_class.scalar_integer",
+        "issued_by_class.integer_mul_div",
+        "issued_by_class.memory_agu",
+        "issued_by_class.control",
+    ] {
+        assert_json_stat_absent(&json, &format!("sim.cpu0.o3.issue_queue.{path}"));
+    }
     assert!(
         json.pointer("/cores/0/o3_runtime").is_none(),
         "timing-mode run should not emit inactive O3 runtime state: {json}"
@@ -669,6 +682,15 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "sim.cpu0.o3.iq.issued_inst_type.mem_write",
         "sim.cpu0.o3.iq.issued_inst_type.int_mul",
         "sim.cpu0.o3.iq.issued_inst_type.int_div",
+        "sim.cpu0.o3.issue_queue.enqueued_rows",
+        "sim.cpu0.o3.issue_queue.service_turns",
+        "sim.cpu0.o3.issue_queue.wake_requests",
+        "sim.cpu0.o3.issue_queue.current_occupancy",
+        "sim.cpu0.o3.issue_queue.peak_occupancy",
+        "sim.cpu0.o3.issue_queue.issued_by_class.scalar_integer",
+        "sim.cpu0.o3.issue_queue.issued_by_class.integer_mul_div",
+        "sim.cpu0.o3.issue_queue.issued_by_class.memory_agu",
+        "sim.cpu0.o3.issue_queue.issued_by_class.control",
         "sim.cpu0.o3.commit.committed_inst_type.mem_read",
         "sim.cpu0.o3.commit.committed_inst_type.mem_write",
         "sim.cpu0.o3.commit.committed_inst_type.int_mul",

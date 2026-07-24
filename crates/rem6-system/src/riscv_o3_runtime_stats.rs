@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use rem6_cpu::{CpuId, O3RuntimeSnapshot, O3RuntimeStats, O3RuntimeTraceRecord};
+use rem6_cpu::{
+    CpuId, O3LiveIssueTelemetry, O3RuntimeSnapshot, O3RuntimeStats, O3RuntimeTraceRecord,
+};
 use rem6_stats::{StatsError, StatsRegistry};
 
 mod cpu;
@@ -20,6 +22,7 @@ pub struct RiscvO3RuntimeStats {
     stats: BTreeMap<CpuId, RiscvO3RuntimeCpuStats>,
     active_cpus: Arc<Mutex<BTreeSet<CpuId>>>,
     previous: Arc<Mutex<BTreeMap<CpuId, O3RuntimeStats>>>,
+    previous_live_issue: Arc<Mutex<BTreeMap<CpuId, O3LiveIssueTelemetry>>>,
     cycle_baselines: Arc<Mutex<BTreeMap<CpuId, u64>>>,
     trace_offsets: Arc<Mutex<BTreeMap<CpuId, usize>>>,
     event_windows: Arc<Mutex<BTreeMap<CpuId, RiscvO3RuntimeEventWindowSnapshot>>>,
@@ -50,6 +53,7 @@ impl RiscvO3RuntimeStats {
             stats,
             active_cpus: Arc::new(Mutex::new(BTreeSet::new())),
             previous: Arc::new(Mutex::new(BTreeMap::new())),
+            previous_live_issue: Arc::new(Mutex::new(BTreeMap::new())),
             cycle_baselines: Arc::new(Mutex::new(
                 cpus.iter().copied().map(|cpu| (cpu, 0)).collect(),
             )),
@@ -88,6 +92,17 @@ impl RiscvO3RuntimeStats {
                 .copied()
                 .map(|cpu| (cpu, O3RuntimeStats::default())),
         );
+        let mut previous_live_issue = self
+            .previous_live_issue
+            .lock()
+            .expect("O3 runtime stats lock");
+        previous_live_issue.clear();
+        previous_live_issue.extend(
+            self.cpus
+                .iter()
+                .copied()
+                .map(|cpu| (cpu, O3LiveIssueTelemetry::default())),
+        );
         let cycle_baselines = cycle_baselines.into_iter().collect::<BTreeMap<_, _>>();
         let mut stored_cycle_baselines =
             self.cycle_baselines.lock().expect("O3 runtime stats lock");
@@ -109,6 +124,7 @@ impl RiscvO3RuntimeStats {
         registry: &mut StatsRegistry,
         cpu: CpuId,
         snapshot: O3RuntimeStats,
+        live_issue: O3LiveIssueTelemetry,
         runtime_snapshot: &O3RuntimeSnapshot,
         trace_records: &[O3RuntimeTraceRecord],
         in_order_pipeline_cycles: u64,
@@ -120,10 +136,17 @@ impl RiscvO3RuntimeStats {
             self.resettable_pipeline_cycles(cpu, in_order_pipeline_cycles);
         let mut previous = self.previous.lock().expect("O3 runtime stats lock");
         let previous_snapshot = previous.entry(cpu).or_default();
+        let mut previous_live_issue = self
+            .previous_live_issue
+            .lock()
+            .expect("O3 runtime stats lock");
+        let previous_live_issue_snapshot = previous_live_issue.entry(cpu).or_default();
         stats.increment_delta(
             registry,
             *previous_snapshot,
             snapshot,
+            *previous_live_issue_snapshot,
+            live_issue,
             runtime_snapshot,
             resettable_pipeline_cycles,
         )?;
@@ -132,7 +155,8 @@ impl RiscvO3RuntimeStats {
         let event_summary_snapshot = self.observe_event_summary_records(cpu, trace_records);
         stats.set_event_summary_snapshot(registry, &event_summary_snapshot)?;
         *previous_snapshot = snapshot;
-        self.sync_active_cpu(cpu, snapshot);
+        *previous_live_issue_snapshot = live_issue;
+        self.sync_active_cpu(cpu, snapshot, live_issue);
         Ok(())
     }
 
@@ -141,6 +165,7 @@ impl RiscvO3RuntimeStats {
         registry: &mut StatsRegistry,
         cpu: CpuId,
         snapshot: O3RuntimeStats,
+        live_issue: O3LiveIssueTelemetry,
         runtime_snapshot: &O3RuntimeSnapshot,
         in_order_pipeline_cycles: u64,
     ) -> Result<(), StatsError> {
@@ -155,6 +180,7 @@ impl RiscvO3RuntimeStats {
         stats.set_snapshot(
             registry,
             snapshot,
+            live_issue,
             runtime_snapshot,
             resettable_pipeline_cycles,
         )?;
@@ -162,7 +188,11 @@ impl RiscvO3RuntimeStats {
             .lock()
             .expect("O3 runtime stats lock")
             .insert(cpu, snapshot);
-        self.sync_active_cpu(cpu, snapshot);
+        self.previous_live_issue
+            .lock()
+            .expect("O3 runtime stats lock")
+            .insert(cpu, live_issue);
+        self.sync_active_cpu(cpu, snapshot, live_issue);
         Ok(())
     }
 
@@ -216,9 +246,14 @@ impl RiscvO3RuntimeStats {
             .expect("O3 runtime stats lock") = false;
     }
 
-    fn sync_active_cpu(&self, cpu: CpuId, snapshot: O3RuntimeStats) {
+    fn sync_active_cpu(
+        &self,
+        cpu: CpuId,
+        snapshot: O3RuntimeStats,
+        live_issue: O3LiveIssueTelemetry,
+    ) {
         let mut active_cpus = self.active_cpus.lock().expect("O3 runtime stats lock");
-        if snapshot.has_activity() {
+        if snapshot.has_activity() || live_issue != O3LiveIssueTelemetry::default() {
             active_cpus.insert(cpu);
         } else {
             active_cpus.remove(&cpu);
@@ -323,6 +358,7 @@ impl Default for RiscvO3RuntimeStats {
             stats: BTreeMap::new(),
             active_cpus: Arc::new(Mutex::new(BTreeSet::new())),
             previous: Arc::new(Mutex::new(BTreeMap::new())),
+            previous_live_issue: Arc::new(Mutex::new(BTreeMap::new())),
             cycle_baselines: Arc::new(Mutex::new(BTreeMap::new())),
             trace_offsets: Arc::new(Mutex::new(BTreeMap::new())),
             event_windows: Arc::new(Mutex::new(BTreeMap::new())),
@@ -1104,6 +1140,7 @@ mod tests {
                 &mut registry,
                 cpu,
                 core.o3_runtime_stats(),
+                core.o3_runtime_live_issue_telemetry(),
                 &runtime_snapshot,
                 &[],
                 core.in_order_pipeline_snapshot().cycle(),
@@ -1123,6 +1160,7 @@ mod tests {
                 &mut registry,
                 cpu,
                 core.o3_runtime_stats(),
+                core.o3_runtime_live_issue_telemetry(),
                 &runtime_snapshot,
                 &[],
                 core.in_order_pipeline_snapshot().cycle(),
@@ -1144,6 +1182,7 @@ mod tests {
                 &mut registry,
                 cpu,
                 core.o3_runtime_stats(),
+                core.o3_runtime_live_issue_telemetry(),
                 &runtime_snapshot,
                 &[],
                 core.in_order_pipeline_snapshot().cycle(),
@@ -1159,6 +1198,7 @@ mod tests {
                 &mut registry,
                 cpu,
                 O3RuntimeStats::default(),
+                O3LiveIssueTelemetry::default(),
                 &empty_snapshot,
                 0,
             )
@@ -1188,6 +1228,7 @@ mod tests {
                 &mut registry,
                 cpu,
                 core.o3_runtime_stats(),
+                core.o3_runtime_live_issue_telemetry(),
                 &runtime_snapshot,
                 &trace_records,
                 core.in_order_pipeline_snapshot().cycle(),
@@ -1209,6 +1250,7 @@ mod tests {
                 &mut registry,
                 cpu,
                 O3RuntimeStats::default(),
+                O3LiveIssueTelemetry::default(),
                 &empty_snapshot,
                 0,
             )
@@ -1240,6 +1282,7 @@ mod tests {
                 &mut registry,
                 cpu,
                 core.o3_runtime_stats(),
+                core.o3_runtime_live_issue_telemetry(),
                 &runtime_snapshot,
                 &[],
                 105,
@@ -1270,6 +1313,7 @@ mod tests {
                 &mut registry,
                 cpu,
                 core.o3_runtime_stats(),
+                core.o3_runtime_live_issue_telemetry(),
                 &runtime_snapshot,
                 50,
             )
@@ -1282,6 +1326,9 @@ mod tests {
         );
         assert_eq!(sample.value(), ratio_ppm(1, 50));
     }
+
+    #[path = "issue_queue_tests.rs"]
+    mod issue_queue_tests;
 
     fn stat_sample(registry: &StatsRegistry, tick: u64, path: &str) -> rem6_stats::StatSample {
         let snapshot = registry.snapshot(tick);

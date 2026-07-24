@@ -1,6 +1,6 @@
 use rem6_cpu::{
-    BranchTargetKind, O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering,
-    O3RuntimeSnapshot, O3RuntimeStats,
+    BranchTargetKind, O3LiveIssueTelemetry, O3RuntimeFuLatencyClass, O3RuntimeLsqOperation,
+    O3RuntimeLsqOrdering, O3RuntimeSnapshot, O3RuntimeStats,
 };
 use rem6_stats::{StatsError, StatsRegistry};
 
@@ -36,6 +36,7 @@ impl RiscvO3RuntimeCpuStats {
         self,
         registry: &mut StatsRegistry,
         snapshot: O3RuntimeStats,
+        live_issue: O3LiveIssueTelemetry,
         runtime_snapshot: &O3RuntimeSnapshot,
         in_order_pipeline_cycles: u64,
     ) -> Result<(), StatsError> {
@@ -220,6 +221,30 @@ impl RiscvO3RuntimeCpuStats {
             (self.max_rob_occupancy, snapshot.max_rob_occupancy()),
             (self.max_lsq_occupancy, snapshot.max_lsq_occupancy()),
             (self.rename_map_entries, snapshot.rename_map_entries()),
+            (self.issue_queue_enqueued_rows, live_issue.enqueued_rows()),
+            (self.issue_queue_service_turns, live_issue.service_turns()),
+            (self.issue_queue_wake_requests, live_issue.wake_requests()),
+            (
+                self.issue_queue_current_occupancy,
+                live_issue.current_occupancy(),
+            ),
+            (self.issue_queue_peak_occupancy, live_issue.peak_occupancy()),
+            (
+                self.issue_queue_scalar_integer_issued_rows,
+                live_issue.scalar_integer_issued_rows(),
+            ),
+            (
+                self.issue_queue_integer_mul_div_issued_rows,
+                live_issue.integer_mul_div_issued_rows(),
+            ),
+            (
+                self.issue_queue_memory_agu_issued_rows,
+                live_issue.memory_agu_issued_rows(),
+            ),
+            (
+                self.issue_queue_control_issued_rows,
+                live_issue.control_issued_rows(),
+            ),
         ] {
             registry.set_resettable_counter(stat, value)?;
         }

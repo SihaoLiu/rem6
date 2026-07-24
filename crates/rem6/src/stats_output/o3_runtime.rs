@@ -927,7 +927,8 @@ pub(super) fn emit_o3_runtime_stats(
     gem5_cpu_alias_prefix: &str,
 ) -> Result<(), Rem6CliError> {
     let o3 = core.o3_runtime;
-    if !o3.has_activity() {
+    let queue = core.o3_runtime_live_issue_telemetry;
+    if !o3.has_activity() && queue == rem6_cpu::O3LiveIssueTelemetry::default() {
         return Ok(());
     }
 
@@ -944,7 +945,7 @@ pub(super) fn emit_o3_runtime_stats(
         core.o3_runtime_stats_reset_tick,
     )?;
     emit_o3_execution_mode_stats(stats, core.cpu, core.o3_runtime_execution_mode)?;
-    emit_o3_runtime_issue_stats(stats, core.cpu, o3)?;
+    emit_o3_runtime_issue_stats(stats, core.cpu, o3, queue)?;
     emit_o3_runtime_writeback_port_stats(stats, core.cpu, o3)?;
 
     for (name, value) in [

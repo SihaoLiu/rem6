@@ -69,12 +69,10 @@ impl O3RuntimeState {
         self.live_issue.is_quiescent()
     }
 
-    #[cfg(test)]
     pub fn live_issue_telemetry(&self) -> O3LiveIssueTelemetry {
         self.live_issue.telemetry()
     }
 
-    #[cfg(test)]
     pub fn live_issue_trace_records(&self) -> &[O3LiveIssueTraceRecord] {
         self.live_issue.trace_records()
     }

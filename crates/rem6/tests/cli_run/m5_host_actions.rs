@@ -2067,6 +2067,14 @@ fn assert_work_marker(
 }
 
 fn assert_text_count_stat(stdout: &str, path: &str, value: u64) {
+    assert_text_count_stat_with_policy(stdout, path, value, "monotonic");
+}
+
+fn assert_text_resettable_count_stat(stdout: &str, path: &str, value: u64) {
+    assert_text_count_stat_with_policy(stdout, path, value, "resettable");
+}
+
+fn assert_text_count_stat_with_policy(stdout: &str, path: &str, value: u64, policy: &str) {
     let line = stdout
         .lines()
         .find(|line| line.split_whitespace().next() == Some(path))
@@ -2085,8 +2093,8 @@ fn assert_text_count_stat(stdout: &str, path: &str, value: u64) {
         "missing Count unit for {path} in line: {line}"
     );
     assert!(
-        line.contains("reset_policy=monotonic"),
-        "missing monotonic reset policy for {path} in line: {line}"
+        line.contains(&format!("reset_policy={policy}")),
+        "missing {policy} reset policy for {path} in line: {line}"
     );
 }
 
