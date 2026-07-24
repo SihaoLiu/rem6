@@ -4058,6 +4058,7 @@ fn o3_persistent_live_issue_state_owns_candidate_inventory() {
         production_struct_named_type_storage(&production_sources, "O3LiveIssueState"),
         vec![(PathBuf::from("src/o3_runtime.rs"), 1)],
     );
+    assert!(!queue_source.contains("fn capture("));
     assert!(!queue.contains("for (index, rob) in runtime.snapshot.reorder_buffer"));
     assert!(queue.contains("for &sequence in resident_sequences"));
     assert!(queue.contains("binary_search_by_key(&sequence"));

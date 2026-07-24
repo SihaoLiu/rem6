@@ -209,7 +209,7 @@ fn live_issue_queue_rejects_duplicate_sequence_inventory() {
     let duplicate_sequence = duplicate.sequence();
 
     assert!(matches!(
-        O3LiveIssueQueue::try_from_entries(vec![duplicate.clone(), duplicate]),
+        O3LiveIssueQueue::from_entries_for_test(vec![duplicate.clone(), duplicate]),
         Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence }) if sequence == duplicate_sequence
     ));
 }

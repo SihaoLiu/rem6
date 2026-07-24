@@ -519,6 +519,10 @@ fn memory_result_replanning_invalidates_dependent_chain_until_authoritative_reis
         .live_speculative_executions
         .iter()
         .all(|issued| issued.sequence != child_sequence && issued.sequence != grandchild_sequence));
+    assert_eq!(
+        runtime.live_issue.resident_sequences(),
+        [child_sequence, grandchild_sequence]
+    );
     assert!(runtime.writeback_reservation(child_sequence).is_none());
     assert!(runtime.writeback_reservation(grandchild_sequence).is_none());
     let head = runtime

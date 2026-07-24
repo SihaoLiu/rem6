@@ -269,12 +269,10 @@ fn stage_future_pending_wake_with_head(runtime: &mut O3RuntimeState) -> RiscvCpu
     let ready = runtime
         .take_ready_live_data_access_event(HEAD_WRITEBACK_TICK)
         .expect("completed head is ready for retirement");
-    let head_sequence = runtime.snapshot().reorder_buffer()[0].sequence();
-    let head = O3LiveIssueHeadReservation::for_instruction(
-        head_sequence,
-        HEAD_WRITEBACK_TICK,
-        head_execution.instruction(),
-    );
+    runtime.live_data_accesses[0].issue_tick = HEAD_WRITEBACK_TICK;
+    let head = runtime
+        .live_data_access_head_reservation(head_execution.fetch().request_id())
+        .expect("canonical pending-address head reservation");
     let mut hart = RiscvHartState::new(HEAD_PC);
     hart.write(reg(5), 0xdead_beef);
     runtime

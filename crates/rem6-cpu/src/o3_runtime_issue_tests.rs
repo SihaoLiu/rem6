@@ -891,7 +891,12 @@ impl ScalarIssueFixture {
     }
 
     fn queue(&self) -> O3LiveIssueQueue {
-        match O3LiveIssueQueue::capture(&self.runtime, self.head).unwrap() {
+        match O3LiveIssueQueue::materialize(
+            &self.runtime,
+            self.runtime.live_issue.resident_sequences(),
+        )
+        .unwrap()
+        {
             O3LiveIssueQueueCapture::Ready(queue) => queue,
             O3LiveIssueQueueCapture::ReplayPending(sequence) => {
                 panic!("unexpected pending replay at {sequence}")

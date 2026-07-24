@@ -343,12 +343,15 @@ fn two_pending_siblings_width_two_keep_one_memory_slot_and_coissue_scalar() {
 fn two_pending_chain_initial_schedule_waits_on_first_sequence() {
     let (mut runtime, hart, head) = ready_two_pending_issue(2, true);
     let sequences = runtime.pending_data_address_sequences_for_test();
-    let queue = match O3LiveIssueQueue::capture(&runtime, head).unwrap() {
-        O3LiveIssueQueueCapture::Ready(queue) => queue,
-        O3LiveIssueQueueCapture::ReplayPending(sequence) => {
-            panic!("unexpected pending replay at {sequence}")
-        }
-    };
+    let queue =
+        match O3LiveIssueQueue::materialize(&runtime, runtime.live_issue.resident_sequences())
+            .unwrap()
+        {
+            O3LiveIssueQueueCapture::Ready(queue) => queue,
+            O3LiveIssueQueueCapture::ReplayPending(sequence) => {
+                panic!("unexpected pending replay at {sequence}")
+            }
+        };
     let second = queue
         .entry(sequences[1])
         .expect("second pending queue entry");

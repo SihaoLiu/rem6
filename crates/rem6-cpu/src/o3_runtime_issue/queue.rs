@@ -145,17 +145,7 @@ impl O3LiveIssueQueue {
         Self::try_from_entries(entries).map(O3LiveIssueQueueCapture::Ready)
     }
 
-    #[cfg(test)]
-    pub(in crate::o3_runtime) fn capture(
-        runtime: &O3RuntimeState,
-        _head: O3LiveIssueHeadReservation,
-    ) -> Result<O3LiveIssueQueueCapture, O3RuntimeError> {
-        Self::materialize(runtime, runtime.live_issue.resident_sequences())
-    }
-
-    pub(in crate::o3_runtime) fn try_from_entries(
-        entries: Vec<O3LiveIssueQueueEntry>,
-    ) -> Result<Self, O3RuntimeError> {
+    fn try_from_entries(entries: Vec<O3LiveIssueQueueEntry>) -> Result<Self, O3RuntimeError> {
         if let Some(entries) = entries
             .windows(2)
             .find(|entries| entries[0].sequence() >= entries[1].sequence())
@@ -164,6 +154,13 @@ impl O3LiveIssueQueue {
             return Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence });
         }
         Ok(Self { entries })
+    }
+
+    #[cfg(test)]
+    pub(in crate::o3_runtime) fn from_entries_for_test(
+        entries: Vec<O3LiveIssueQueueEntry>,
+    ) -> Result<Self, O3RuntimeError> {
+        Self::try_from_entries(entries)
     }
 
     pub(in crate::o3_runtime) fn entries(&self) -> &[O3LiveIssueQueueEntry] {

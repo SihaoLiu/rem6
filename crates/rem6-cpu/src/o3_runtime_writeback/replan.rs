@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::o3_pipeline::{
     O3PendingStateSnapshot, O3WritebackCompletion, O3WritebackTransferBuffer,
@@ -17,6 +17,7 @@ pub(super) struct O3WritebackReplanTransaction {
     live_speculative_executions: Vec<O3LiveSpeculativeExecution>,
     writeback_calendar: O3WritebackReservationCalendar,
     live_writeback_counted_sequences: BTreeSet<u64>,
+    invalidated_live_issue_sequences: BTreeMap<u64, u64>,
     finalized_writeback_port_stats: O3FinalizedWritebackPortStats,
     stats: O3RuntimeStats,
 }
@@ -35,6 +36,7 @@ impl O3WritebackReplanTransaction {
             live_speculative_executions: runtime.live_speculative_executions.clone(),
             writeback_calendar: runtime.writeback_calendar.clone(),
             live_writeback_counted_sequences: runtime.live_writeback_counted_sequences.clone(),
+            invalidated_live_issue_sequences: BTreeMap::new(),
             finalized_writeback_port_stats: runtime.finalized_writeback_port_stats.clone(),
             stats: runtime.stats,
         }
@@ -48,6 +50,9 @@ impl O3WritebackReplanTransaction {
         runtime.live_writeback_counted_sequences = self.live_writeback_counted_sequences;
         runtime.finalized_writeback_port_stats = self.finalized_writeback_port_stats;
         runtime.stats = self.stats;
+        for (sequence, tick) in self.invalidated_live_issue_sequences {
+            runtime.enqueue_bound_live_issue_sequence_at(sequence, tick);
+        }
     }
 
     pub(super) fn reserve_writeback_completions_in_place(
@@ -203,6 +208,12 @@ impl O3WritebackReplanTransaction {
     }
 
     fn invalidate_speculative_descendants(&mut self, invalidated: &BTreeSet<u64>) {
+        self.invalidated_live_issue_sequences.extend(
+            self.live_speculative_executions
+                .iter()
+                .filter(|issued| invalidated.contains(&issued.sequence))
+                .map(|issued| (issued.sequence, issued.issue_tick)),
+        );
         self.live_speculative_executions
             .retain(|issued| !invalidated.contains(&issued.sequence));
         for entry in &mut self.reorder_buffer {

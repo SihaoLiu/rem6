@@ -148,11 +148,7 @@ fn pending_address_scheduler_width_one_orders_memory_before_scalar() {
     blocked.complete_head(PRODUCER_VALUE);
     blocked.publish_head();
     let head_sequence = blocked.runtime.snapshot().reorder_buffer()[0].sequence();
-    blocked.head = O3LiveIssueHeadReservation::for_instruction(
-        head_sequence,
-        HEAD_WRITEBACK_TICK,
-        blocked.head_execution.instruction(),
-    );
+    blocked.runtime.live_data_accesses[0].issue_tick = HEAD_WRITEBACK_TICK;
 
     blocked.schedule(HEAD_WRITEBACK_TICK).unwrap();
 
@@ -179,31 +175,15 @@ fn pending_address_scheduler_width_one_orders_memory_before_scalar() {
                 .to_vec(),
         ))
     );
-    blocked.head = O3LiveIssueHeadReservation::for_instruction(
-        head_sequence,
-        HEAD_WRITEBACK_TICK + 1,
-        blocked.head_execution.instruction(),
-    );
-
     blocked.schedule(HEAD_WRITEBACK_TICK + 1).unwrap();
 
-    assert_eq!(blocked.scalar_issue_tick(), None);
-    assert_eq!(
-        blocked.runtime.pending_data_address_wake_tick(),
-        Some(HEAD_WRITEBACK_TICK + 2)
-    );
-    blocked.head = O3LiveIssueHeadReservation::for_instruction(
-        head_sequence,
-        0,
-        blocked.head_execution.instruction(),
-    );
-    blocked.schedule(HEAD_WRITEBACK_TICK + 2).unwrap();
     assert_eq!(
         blocked
             .runtime
             .pending_data_address_selected_issue_tick_for_test(),
-        Some(HEAD_WRITEBACK_TICK + 2)
+        Some(HEAD_WRITEBACK_TICK + 1)
     );
+    assert_eq!(blocked.scalar_issue_tick(), Some(HEAD_WRITEBACK_TICK + 2));
     assert_eq!(blocked.runtime.pending_data_address_wake_tick(), None);
     assert!(matches!(
         blocked
@@ -220,11 +200,7 @@ fn pending_address_scheduler_width_one_orders_memory_before_scalar() {
     fired.complete_head(PRODUCER_VALUE);
     fired.publish_head();
     let head_sequence = fired.runtime.snapshot().reorder_buffer()[0].sequence();
-    fired.head = O3LiveIssueHeadReservation::for_instruction(
-        head_sequence,
-        HEAD_WRITEBACK_TICK,
-        fired.head_execution.instruction(),
-    );
+    fired.runtime.live_data_accesses[0].issue_tick = HEAD_WRITEBACK_TICK;
     fired.schedule(HEAD_WRITEBACK_TICK).unwrap();
     fired.hart.write(reg(5), PRODUCER_VALUE);
     fired.runtime.remove_live_data_access_rows(head_sequence, 1);
@@ -265,11 +241,7 @@ fn pending_address_scheduler_width_one_orders_memory_before_scalar() {
     stale.complete_head(PRODUCER_VALUE);
     stale.publish_head();
     let head_sequence = stale.runtime.snapshot().reorder_buffer()[0].sequence();
-    stale.head = O3LiveIssueHeadReservation::for_instruction(
-        head_sequence,
-        HEAD_WRITEBACK_TICK,
-        stale.head_execution.instruction(),
-    );
+    stale.runtime.live_data_accesses[0].issue_tick = HEAD_WRITEBACK_TICK;
     stale.schedule(HEAD_WRITEBACK_TICK).unwrap();
     stale.hart.write(reg(5), PRODUCER_VALUE);
     stale.runtime.remove_live_data_access_rows(head_sequence, 1);
@@ -437,7 +409,12 @@ fn pending_address_materialization_failure_replays_without_callback_error() {
         .runtime
         .pending_data_address_sequence_for_test()
         .expect("pending sequence");
-    let queue = match O3LiveIssueQueue::capture(&short.runtime, short.head).unwrap() {
+    let queue = match O3LiveIssueQueue::materialize(
+        &short.runtime,
+        short.runtime.live_issue.resident_sequences(),
+    )
+    .unwrap()
+    {
         O3LiveIssueQueueCapture::Ready(queue) => queue,
         O3LiveIssueQueueCapture::ReplayPending(sequence) => {
             panic!("unexpected pending replay at {sequence}")
