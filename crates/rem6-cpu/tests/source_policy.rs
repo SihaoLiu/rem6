@@ -10,13 +10,15 @@ const MAX_O3_RUNTIME_ISSUE_CALENDAR_TEST_LINES: usize = 450;
 const MAX_O3_RUNTIME_LIVE_ISSUE_IDENTITY_LINES: usize = 350;
 const MAX_RISCV_O3_WRITEBACK_WAKE_DESIRED_LINES: usize = 220;
 const MAX_O3_RUNTIME_ISSUE_STATE_LINES: usize = 450;
+const RESERVED_O3_RUNTIME_ISSUE_STATE_TASK5_LINES: usize = 20;
 const MAX_O3_RUNTIME_ISSUE_STATE_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_LINES: usize = 180;
 const MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_TEST_LINES: usize = 180;
 const MAX_O3_RUNTIME_ISSUE_SERVICE_LINES: usize = 600;
 const MAX_O3_RUNTIME_ISSUE_SERVICE_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_ISSUE_TRANSACTION_LINES: usize = 450;
-const MAX_O3_RUNTIME_ISSUE_TRANSACTION_TEST_LINES: usize = 500;
+const MAX_O3_RUNTIME_ISSUE_TRANSACTION_TEST_LINES: usize = 350;
+const MAX_O3_RUNTIME_ISSUE_TRANSACTION_REPLAN_TEST_LINES: usize = 260;
 const MAX_O3_RUNTIME_ISSUE_QUEUE_LINES: usize = 600;
 const MAX_O3_RUNTIME_ISSUE_QUEUE_TEST_LINES: usize = 450;
 const MAX_O3_RUNTIME_ISSUE_QUEUE_MATERIALIZATION_TEST_LINES: usize = 250;
@@ -140,6 +142,10 @@ fn o3_persistent_iq_cpu_files_stay_focused() {
         (
             "src/o3_runtime_issue/transaction_tests.rs",
             MAX_O3_RUNTIME_ISSUE_TRANSACTION_TEST_LINES,
+        ),
+        (
+            "src/o3_runtime_issue/transaction_tests/replan.rs",
+            MAX_O3_RUNTIME_ISSUE_TRANSACTION_REPLAN_TEST_LINES,
         ),
     ] {
         let path = crate_dir.join(relative);
@@ -3872,6 +3878,7 @@ fn o3_persistent_live_issue_state_owns_membership() {
     let issue_path = crate_dir.join("src/o3_runtime_issue.rs");
     let issue_tests_path = crate_dir.join("src/o3_runtime_issue_tests.rs");
     let state_path = crate_dir.join("src/o3_runtime_issue/state.rs");
+    let state_rollback_path = crate_dir.join("src/o3_runtime_issue/state/rollback.rs");
     let state_tests_path = crate_dir.join("src/o3_runtime_issue/state_tests.rs");
     let identity_path = crate_dir.join("src/o3_runtime_live_window/issue_identity.rs");
     let checkpoint_path = crate_dir.join("src/o3_runtime_checkpoint.rs");
@@ -3879,6 +3886,8 @@ fn o3_persistent_live_issue_state_owns_membership() {
     let root = production_rust_source(&root_source);
     let issue_source = fs::read_to_string(&issue_path).unwrap();
     let issue_tests_source = fs::read_to_string(&issue_tests_path).unwrap();
+    let state_source = production_rust_source(&fs::read_to_string(&state_path).unwrap());
+    let state_rollback = production_rust_source(&fs::read_to_string(&state_rollback_path).unwrap());
     let checkpoint = production_rust_source(&fs::read_to_string(checkpoint_path).unwrap());
 
     assert!(
@@ -3890,11 +3899,32 @@ fn o3_persistent_live_issue_state_owns_membership() {
         "missing focused persistent live issue state tests"
     );
     assert!(line_count(&state_path) <= MAX_O3_RUNTIME_ISSUE_STATE_LINES);
+    assert!(
+        line_count(&state_path) + RESERVED_O3_RUNTIME_ISSUE_STATE_TASK5_LINES
+            <= MAX_O3_RUNTIME_ISSUE_STATE_LINES,
+        "live issue state must reserve {RESERVED_O3_RUNTIME_ISSUE_STATE_TASK5_LINES} lines for Task 5",
+    );
     assert!(line_count(&state_tests_path) <= MAX_O3_RUNTIME_ISSUE_STATE_TEST_LINES);
     assert_eq!(
         path_owned_module_declaration_count(&issue_source, "o3_runtime_issue/state.rs", "state",),
         1,
     );
+    for method in [
+        "begin_transaction",
+        "end_transaction",
+        "transaction_active",
+        "is_quiescent",
+    ] {
+        assert_eq!(
+            rust_function_definition_count(&state_source, method),
+            0,
+            "core live issue state must not define transaction method `{method}`",
+        );
+        assert!(
+            production_function_is_visible(&state_rollback, method),
+            "rollback transaction method `{method}` must preserve internal visibility",
+        );
+    }
     assert_eq!(
         path_owned_module_declaration_count(
             &issue_tests_source,
@@ -4449,6 +4479,8 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
     let state_rollback_tests_path = crate_dir.join("src/o3_runtime_issue/state/rollback_tests.rs");
     let transaction_path = crate_dir.join("src/o3_runtime_issue/transaction.rs");
     let transaction_tests_path = crate_dir.join("src/o3_runtime_issue/transaction_tests.rs");
+    let transaction_replan_tests_path =
+        crate_dir.join("src/o3_runtime_issue/transaction_tests/replan.rs");
     let issue_tests_path = crate_dir.join("src/o3_runtime_issue_tests.rs");
     let control_path = crate_dir.join("src/o3_runtime_control_window.rs");
     let writeback_path = crate_dir.join("src/o3_runtime_writeback.rs");
@@ -4462,6 +4494,7 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
     let transaction_source = fs::read_to_string(&transaction_path).unwrap();
     let transaction = production_rust_source(&transaction_source);
     let transaction_tests = fs::read_to_string(&transaction_tests_path).unwrap();
+    let transaction_replan_tests = fs::read_to_string(&transaction_replan_tests_path).unwrap();
     let issue_tests_source = fs::read_to_string(&issue_tests_path).unwrap();
     let control = production_rust_source(&fs::read_to_string(&control_path).unwrap());
     let writeback = production_rust_source(&fs::read_to_string(&writeback_path).unwrap());
@@ -4470,6 +4503,10 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
 
     assert!(line_count(&transaction_path) <= MAX_O3_RUNTIME_ISSUE_TRANSACTION_LINES);
     assert!(line_count(&transaction_tests_path) <= MAX_O3_RUNTIME_ISSUE_TRANSACTION_TEST_LINES);
+    assert!(
+        line_count(&transaction_replan_tests_path)
+            <= MAX_O3_RUNTIME_ISSUE_TRANSACTION_REPLAN_TEST_LINES
+    );
     assert!(line_count(&state_rollback_path) <= MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_LINES);
     assert!(
         line_count(&state_rollback_tests_path) <= MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_TEST_LINES
@@ -4493,6 +4530,15 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
         "issue tests must attach the transaction tests exactly once",
     );
     assert_eq!(
+        path_owned_module_declaration_count(
+            &transaction_tests,
+            "transaction_tests/replan.rs",
+            "replan",
+        ),
+        1,
+        "transaction tests must attach the replan rollback child exactly once",
+    );
+    assert_eq!(
         path_owned_module_declaration_count(&state_source, "state/rollback.rs", "rollback",),
         1,
         "live issue state must attach its rollback child exactly once",
@@ -4503,6 +4549,7 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
         "state rollback owner must attach its tests exactly once",
     );
 
+    let transaction_test_sources = [&transaction_tests, &transaction_replan_tests];
     for test in [
         "live_issue_transaction_failure_records_no_partial_runtime_or_queue_state",
         "live_issue_transaction_writeback_replan_rollback_restores_ports_and_descendants",
@@ -4515,7 +4562,10 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
         "live_issue_transaction_reserved_recording_rejects_stale_replanned_reservation",
     ] {
         assert_eq!(
-            rust_test_function_definition_count(&transaction_tests, test),
+            transaction_test_sources
+                .iter()
+                .map(|source| rust_test_function_definition_count(source, test))
+                .sum::<usize>(),
             1,
             "missing exact compiled transaction test `{test}`",
         );
@@ -4529,7 +4579,7 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
         "missing bounded live issue state rollback history test",
     );
     assert!(
-        transaction_replan_test_exercises_descendant_invalidation(&transaction_tests),
+        transaction_replan_test_exercises_descendant_invalidation(&transaction_replan_tests),
         "writeback rollback coverage must prove descendant invalidation without cloning runtime",
     );
 
@@ -8223,6 +8273,115 @@ fn compact_rust_expression(expression: &[char]) -> String {
         .collect()
 }
 
+fn rust_macro_invocation_bodies(source: &str, name: &str) -> Vec<(usize, String)> {
+    let code = production_rust_source(source);
+    let chars = code.chars().collect::<Vec<_>>();
+    let mut invocations = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        if identifier != name {
+            index = end;
+            continue;
+        }
+        let bang = skip_rust_whitespace(&chars, end);
+        if chars.get(bang) != Some(&'!') {
+            index = end;
+            continue;
+        }
+        let open = skip_rust_whitespace(&chars, bang + 1);
+        let Some((open_delimiter, close_delimiter)) =
+            chars.get(open).and_then(|delimiter| match delimiter {
+                '(' => Some(('(', ')')),
+                '[' => Some(('[', ']')),
+                '{' => Some(('{', '}')),
+                _ => None,
+            })
+        else {
+            index = end;
+            continue;
+        };
+        let Some(close) = matching_delimiter(&chars, open, open_delimiter, close_delimiter) else {
+            index = end;
+            continue;
+        };
+        invocations.push((index, chars[open + 1..close].iter().collect()));
+        index = close + 1;
+    }
+    invocations
+}
+
+fn rust_top_level_arguments(expression: &str) -> Vec<String> {
+    let chars = expression.chars().collect::<Vec<_>>();
+    let mut arguments = Vec::new();
+    let mut start = 0;
+    let mut round = 0;
+    let mut square = 0;
+    let mut curly = 0;
+    for (cursor, character) in chars.iter().copied().enumerate() {
+        match character {
+            '(' => round += 1,
+            ')' => round -= 1,
+            '[' => square += 1,
+            ']' => square -= 1,
+            '{' => curly += 1,
+            '}' => curly -= 1,
+            ',' if round == 0 && square == 0 && curly == 0 => {
+                arguments.push(chars[start..cursor].iter().collect::<String>());
+                start = cursor + 1;
+            }
+            _ => {}
+        }
+    }
+    arguments.push(chars[start..].iter().collect());
+    arguments
+}
+
+fn compact_rust_code(source: &str) -> String {
+    source
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect()
+}
+
+fn asserts_failed_live_issue_batch(assertion: &str) -> bool {
+    if assertion.contains("||") {
+        return false;
+    }
+    let matches = rust_macro_invocation_bodies(assertion, "matches");
+    if matches.len() != 1 {
+        return false;
+    }
+    let matches_body = &matches[0].1;
+    if compact_rust_code(assertion) != format!("matches!({})", compact_rust_code(matches_body)) {
+        return false;
+    }
+    let arguments = rust_top_level_arguments(matches_body);
+    arguments.len() == 2
+        && compact_rust_code(&arguments[0])
+            == "runtime.record_live_issue_batch(fixture.prepared)"
+        && compact_rust_code(&arguments[1])
+            == "Err(O3LiveIssueTransactionError::Runtime(O3RuntimeError::SelectedIssueCandidateNotExecutable{sequence}))ifsequence==fixture.rejected_sequence"
+}
+
+fn compares_live_issue_rollback_state(assertion: &str) -> bool {
+    let arguments = rust_top_level_arguments(assertion)
+        .into_iter()
+        .map(|argument| compact_rust_code(&argument))
+        .collect::<Vec<_>>();
+    arguments.len() == 2
+        && ((arguments[0] == "touched(&runtime)" && arguments[1] == "before")
+            || (arguments[1] == "touched(&runtime)" && arguments[0] == "before"))
+}
+
+fn asserts_descendant_restored(assertion: &str) -> bool {
+    compact_rust_code(assertion)
+        == "runtime.live_speculative_executions.iter().any(|execution|execution.sequence==fixture.child_sequence)"
+}
+
 fn transaction_replan_test_exercises_descendant_invalidation(source: &str) -> bool {
     let Some(fixture) = rust_function_definition(source, "writeback_replan_rollback_fixture")
     else {
@@ -8234,14 +8393,41 @@ fn transaction_replan_test_exercises_descendant_invalidation(source: &str) -> bo
     ) else {
         return false;
     };
+    let test = production_rust_source(&test);
+    let assertions = rust_macro_invocation_bodies(&test, "assert");
+    let Some((failure_position, _)) = assertions
+        .iter()
+        .find(|(_, assertion)| asserts_failed_live_issue_batch(assertion))
+    else {
+        return false;
+    };
+    let rollback_assertions = rust_macro_invocation_bodies(&test, "assert_eq");
+    let Some((rollback_position, _)) = rollback_assertions
+        .iter()
+        .find(|(_, assertion)| compares_live_issue_rollback_state(assertion))
+    else {
+        return false;
+    };
+    let Some((descendant_position, _)) = assertions
+        .iter()
+        .find(|(_, assertion)| asserts_descendant_restored(assertion))
+    else {
+        return false;
+    };
+    let test_chars = test.chars().collect::<Vec<_>>();
+    let before_failure =
+        compact_rust_code(&test_chars[..*failure_position].iter().collect::<String>());
     rust_method_call_positions(&test, "writeback_replan_rollback_fixture").len() == 2
         && rust_method_call_positions(&test, "reserve_writeback_completions").len() == 1
+        && rust_method_call_positions(&test, "record_live_issue_batch").len() == 1
         && rust_method_call_positions(&test, "resident_sequences").len() == 1
         && rust_method_call_positions(&test, "trace_records").len() == 2
         && rust_method_call_positions(&fixture, "clone").is_empty()
         && rust_method_call_positions(&test, "clone").is_empty()
         && fixture.contains("producer_sequences")
-        && test.contains("child_sequence")
+        && before_failure.contains("letbefore=touched(&runtime);")
+        && failure_position < rollback_position
+        && rollback_position < descendant_position
 }
 
 fn production_named_struct_fields(definition: &str) -> Vec<String> {
@@ -9072,18 +9258,84 @@ fn record_live_speculative_execution_with_reservation(
 
 #[test]
 fn o3_live_issue_transaction_policy_rejects_weak_replan_rollback_coverage() {
-    let weak = r#"
+    let canonical = r#"
+fn writeback_replan_rollback_fixture() {
+    let producer_sequences = Vec::new();
+}
+
 fn live_issue_transaction_writeback_replan_rollback_restores_ports_and_descendants() {
-    let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::CrossResource);
-    let prepared = prepared_rows(&fixture, 21);
-    let calendar = fixture.runtime.writeback_calendar.clone();
-    assert!(fixture.runtime.record_live_issue_batch(prepared).is_err());
-    assert_eq!(fixture.runtime.writeback_calendar, calendar);
+    let probe = writeback_replan_rollback_fixture();
+    let pre_replan_trace_records = probe.runtime.live_issue.trace_records().len();
+    let mut probe_runtime = probe.runtime;
+    probe_runtime.reserve_writeback_completions(ready).unwrap();
+    assert!(probe_runtime
+        .live_issue
+        .resident_sequences()
+        .contains(&probe.child_sequence));
+    assert!(probe_runtime.live_issue.trace_records().len() > pre_replan_trace_records);
+
+    let fixture = writeback_replan_rollback_fixture();
+    let mut runtime = fixture.runtime;
+    let before = touched(&runtime);
+    assert!(matches!(
+        runtime.record_live_issue_batch(fixture.prepared),
+        Err(O3LiveIssueTransactionError::Runtime(
+            O3RuntimeError::SelectedIssueCandidateNotExecutable { sequence }
+        )) if sequence == fixture.rejected_sequence
+    ));
+    assert_eq!(touched(&runtime), before);
+    assert!(runtime
+        .live_speculative_executions
+        .iter()
+        .any(|execution| execution.sequence == fixture.child_sequence));
 }
 "#;
-    assert!(!transaction_replan_test_exercises_descendant_invalidation(
-        weak
+    assert!(transaction_replan_test_exercises_descendant_invalidation(
+        canonical
     ));
+    for (description, mutation) in [
+        (
+            "batch invocation removed",
+            canonical.replace("record_live_issue_batch", "observe_live_issue_batch"),
+        ),
+        (
+            "failure assertion removed",
+            canonical.replace("assert!(matches!(", "matches!("),
+        ),
+        (
+            "failure assertion weakened",
+            canonical.replace(
+                ")) if sequence == fixture.rejected_sequence\n    ));",
+                ")) if sequence == fixture.rejected_sequence\n    ) || true);",
+            ),
+        ),
+        (
+            "rollback comparison removed",
+            canonical.replace(
+                "assert_eq!(touched(&runtime), before);",
+                "let _after = touched(&runtime);",
+            ),
+        ),
+        (
+            "rollback comparison weakened",
+            canonical.replace(
+                "assert_eq!(touched(&runtime), before);",
+                "assert_eq!(touched(&runtime), touched(&runtime));",
+            ),
+        ),
+        (
+            "descendant restoration removed",
+            canonical.replace(
+                ".any(|execution| execution.sequence == fixture.child_sequence));",
+                ".any(|_| true));",
+            ),
+        ),
+    ] {
+        assert!(
+            !transaction_replan_test_exercises_descendant_invalidation(&mutation),
+            "accepted replan rollback coverage mutation `{description}`",
+        );
+    }
 }
 
 #[test]

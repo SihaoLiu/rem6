@@ -12,6 +12,26 @@ pub(in crate::o3_runtime) struct O3LiveIssueStateRollback {
 }
 
 impl O3LiveIssueState {
+    pub(in crate::o3_runtime) fn begin_transaction(&mut self) -> bool {
+        let started = !self.transaction_active;
+        self.transaction_active = true;
+        started
+    }
+
+    pub(in crate::o3_runtime) fn end_transaction(&mut self) {
+        self.transaction_active = false;
+    }
+
+    pub(in crate::o3_runtime) const fn transaction_active(&self) -> bool {
+        self.transaction_active
+    }
+
+    pub(in crate::o3_runtime) fn is_quiescent(&self) -> bool {
+        self.resident_sequences.is_empty()
+            && self.requested_service_tick.is_none()
+            && !self.transaction_active
+    }
+
     pub(in crate::o3_runtime) fn capture_rollback(&self) -> O3LiveIssueStateRollback {
         O3LiveIssueStateRollback {
             resident_sequences: self.resident_sequences.clone(),

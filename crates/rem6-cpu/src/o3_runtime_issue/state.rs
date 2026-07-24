@@ -337,26 +337,6 @@ impl O3LiveIssueState {
         self.mutation_generation = self.mutation_generation.wrapping_add(1);
     }
 
-    pub(in crate::o3_runtime) fn begin_transaction(&mut self) -> bool {
-        let started = !self.transaction_active;
-        self.transaction_active = true;
-        started
-    }
-
-    pub(in crate::o3_runtime) fn end_transaction(&mut self) {
-        self.transaction_active = false;
-    }
-
-    pub(in crate::o3_runtime) const fn transaction_active(&self) -> bool {
-        self.transaction_active
-    }
-
-    pub(in crate::o3_runtime) fn is_quiescent(&self) -> bool {
-        self.resident_sequences.is_empty()
-            && self.requested_service_tick.is_none()
-            && !self.transaction_active
-    }
-
     pub(in crate::o3_runtime) const fn telemetry(&self) -> O3LiveIssueTelemetry {
         self.telemetry
     }
