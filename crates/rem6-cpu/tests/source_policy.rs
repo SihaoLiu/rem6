@@ -10,7 +10,7 @@ const MAX_O3_RUNTIME_ISSUE_CALENDAR_TEST_LINES: usize = 450;
 const MAX_O3_RUNTIME_LIVE_ISSUE_IDENTITY_LINES: usize = 350;
 const MAX_RISCV_O3_WRITEBACK_WAKE_DESIRED_LINES: usize = 220;
 const MAX_O3_RUNTIME_ISSUE_STATE_LINES: usize = 450;
-const RESERVED_O3_RUNTIME_ISSUE_STATE_TASK5_LINES: usize = 20;
+const MAX_O3_RUNTIME_ISSUE_STATE_DECISION_LINES: usize = 300;
 const MAX_O3_RUNTIME_ISSUE_STATE_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_LINES: usize = 180;
 const MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_TEST_LINES: usize = 180;
@@ -99,7 +99,6 @@ const MAX_RISCV_PRODUCER_FORWARDED_DESCENDANT_LINES: usize = 120;
 const MAX_SOURCE_LINES: usize = 1800;
 
 #[test]
-#[ignore = "RED until Tasks 2, 4, and 5 create all focused issue owners"]
 fn o3_persistent_iq_cpu_files_stay_focused() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     for (relative, limit) in [
@@ -114,6 +113,10 @@ fn o3_persistent_iq_cpu_files_stay_focused() {
         (
             "src/o3_runtime_issue/state.rs",
             MAX_O3_RUNTIME_ISSUE_STATE_LINES,
+        ),
+        (
+            "src/o3_runtime_issue/state/decision.rs",
+            MAX_O3_RUNTIME_ISSUE_STATE_DECISION_LINES,
         ),
         (
             "src/o3_runtime_issue/state_tests.rs",
@@ -1037,6 +1040,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let pending_set_path = crate_dir.join("src/o3_runtime_pending_address_set.rs");
     let pending_staging_path = crate_dir.join("src/o3_runtime_pending_address_staging.rs");
     let issue_root_path = crate_dir.join("src/o3_runtime_issue.rs");
+    let issue_service_path = crate_dir.join("src/o3_runtime_issue/service.rs");
     let issue_transaction_path = crate_dir.join("src/o3_runtime_issue/transaction.rs");
     let issue_calendar_path = crate_dir.join("src/o3_runtime_issue/calendar.rs");
     let issue_pending_path = crate_dir.join("src/o3_runtime_issue/pending_address.rs");
@@ -1057,6 +1061,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         &pending_set_path,
         &pending_staging_path,
         &issue_root_path,
+        &issue_service_path,
         &issue_transaction_path,
         &issue_calendar_path,
         &issue_pending_path,
@@ -1084,6 +1089,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let pending_set = fs::read_to_string(&pending_set_path).unwrap();
     let pending_staging = fs::read_to_string(&pending_staging_path).unwrap();
     let issue_root = fs::read_to_string(&issue_root_path).unwrap();
+    let issue_service = fs::read_to_string(&issue_service_path).unwrap();
     let issue_transaction = fs::read_to_string(&issue_transaction_path).unwrap();
     let issue_calendar = fs::read_to_string(&issue_calendar_path).unwrap();
     let issue_pending = fs::read_to_string(&issue_pending_path).unwrap();
@@ -1302,6 +1308,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let pending_set_code = production_rust_source(&pending_set);
     let pending_staging_code = production_rust_source(&pending_staging);
     let issue_root_code = production_rust_source(&issue_root);
+    let issue_service_code = production_rust_source(&issue_service);
     let issue_transaction_code = production_rust_source(&issue_transaction);
     let issue_calendar_code = production_rust_source(&issue_calendar);
     let issue_pending_code = production_rust_source(&issue_pending);
@@ -1698,7 +1705,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         assert!(blocked_wake.contains(anchor));
     }
     let prepare_batch =
-        rust_function_definition(&issue_root_code, "prepare_live_issue_batch").unwrap();
+        rust_function_definition(&issue_service_code, "prepare_live_issue_batch").unwrap();
     for anchor in [
         "queue.entry(issued.sequence())",
         "!entry.scheduling().is_pending_data_address()",
@@ -1712,7 +1719,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "discard_pending_data_address_from(sequence)",
     ] {
         assert!(
-            issue_root_code.contains(anchor),
+            issue_service_code.contains(anchor),
             "pending replay owner is missing `{anchor}`"
         );
     }
@@ -3899,11 +3906,6 @@ fn o3_persistent_live_issue_state_owns_membership() {
         "missing focused persistent live issue state tests"
     );
     assert!(line_count(&state_path) <= MAX_O3_RUNTIME_ISSUE_STATE_LINES);
-    assert!(
-        line_count(&state_path) + RESERVED_O3_RUNTIME_ISSUE_STATE_TASK5_LINES
-            <= MAX_O3_RUNTIME_ISSUE_STATE_LINES,
-        "live issue state must reserve {RESERVED_O3_RUNTIME_ISSUE_STATE_TASK5_LINES} lines for Task 5",
-    );
     assert!(line_count(&state_tests_path) <= MAX_O3_RUNTIME_ISSUE_STATE_TEST_LINES);
     assert_eq!(
         path_owned_module_declaration_count(&issue_source, "o3_runtime_issue/state.rs", "state",),
@@ -4032,6 +4034,7 @@ fn o3_persistent_live_issue_state_owns_membership() {
 fn o3_persistent_live_issue_state_owns_candidate_inventory() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let issue_path = crate_dir.join("src/o3_runtime_issue.rs");
+    let service_path = crate_dir.join("src/o3_runtime_issue/service.rs");
     let queue_path = crate_dir.join("src/o3_runtime_issue/queue.rs");
     let queue_tests_path = crate_dir.join("src/o3_runtime_issue/queue_tests.rs");
     let queue_materialization_tests_path =
@@ -4043,6 +4046,7 @@ fn o3_persistent_live_issue_state_owns_candidate_inventory() {
     let retire_path = crate_dir.join("src/riscv_live_retire_window.rs");
     let issue_source = fs::read_to_string(&issue_path).unwrap();
     let issue = production_rust_source(&issue_source);
+    let service = production_rust_source(&fs::read_to_string(&service_path).unwrap());
     let queue_source = fs::read_to_string(&queue_path).unwrap();
     let queue = production_rust_source(&queue_source);
     let queue_tests_source = fs::read_to_string(&queue_tests_path).unwrap();
@@ -4301,8 +4305,8 @@ fn o3_persistent_live_issue_state_owns_candidate_inventory() {
         persistent_queue_storage.join(", "),
     );
 
-    let schedule = rust_function_definition(&issue, "schedule_live_speculative_issues")
-        .expect("missing live issue scheduler");
+    let schedule = rust_function_definition(&service, "service_live_issue_queue_at")
+        .expect("missing one-tick live issue service");
     assert_eq!(
         schedule.matches("O3LiveIssueQueue::materialize(").count(),
         1
@@ -4313,18 +4317,16 @@ fn o3_persistent_live_issue_state_owns_candidate_inventory() {
             .count(),
         1
     );
-    let loop_position = schedule.find("loop {").unwrap();
     let queue_position = schedule.find("O3LiveIssueQueue::materialize(").unwrap();
     let dependency_position = schedule.find("O3LiveIssueDependencyTable::new(").unwrap();
     let calendar_position = schedule.find("O3LiveIssueCalendar::capture(").unwrap();
     let plan_position = schedule.find(".plan_at(").unwrap();
     assert!(
-        loop_position < queue_position
-            && queue_position < dependency_position
+        queue_position < dependency_position
             && dependency_position < calendar_position
             && calendar_position < plan_position,
     );
-    let prepare = rust_function_definition(&issue, "prepare_live_issue_batch")
+    let prepare = rust_function_definition(&service, "prepare_live_issue_batch")
         .expect("missing live issue preparation");
     assert!(prepare.contains("queue.entry(issued.sequence())"));
     let scheduling_from_metadata =
@@ -4474,6 +4476,7 @@ fn o3_persistent_live_issue_state_owns_candidate_inventory() {
 fn o3_live_issue_transaction_bounds_batch_rollback() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let issue_path = crate_dir.join("src/o3_runtime_issue.rs");
+    let service_path = crate_dir.join("src/o3_runtime_issue/service.rs");
     let state_path = crate_dir.join("src/o3_runtime_issue/state.rs");
     let state_rollback_path = crate_dir.join("src/o3_runtime_issue/state/rollback.rs");
     let state_rollback_tests_path = crate_dir.join("src/o3_runtime_issue/state/rollback_tests.rs");
@@ -4487,6 +4490,7 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
     let error_path = crate_dir.join("src/o3_runtime_error.rs");
     let issue_source = fs::read_to_string(&issue_path).unwrap();
     let issue = production_rust_source(&issue_source);
+    let service = production_rust_source(&fs::read_to_string(&service_path).unwrap());
     let state_source = fs::read_to_string(&state_path).unwrap();
     let state_rollback_source = fs::read_to_string(&state_rollback_path).unwrap();
     let state_rollback = production_rust_source(&state_rollback_source);
@@ -4761,7 +4765,7 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
     assert!(transaction.contains("AlreadyActive"));
     assert!(transaction.contains("Runtime(O3RuntimeError)"));
     assert!(transaction.contains("impl From<O3RuntimeError> for O3LiveIssueTransactionError"));
-    let scheduler = rust_function_definition(&issue, "schedule_live_speculative_issues").unwrap();
+    let scheduler = rust_function_definition(&service, "service_live_issue_queue_at").unwrap();
     assert!(scheduler.contains("O3LiveIssueTransactionError::Runtime"));
     assert!(scheduler.contains("O3LiveIssueTransactionError::AlreadyActive"));
 }
@@ -4781,15 +4785,180 @@ fn o3_live_issue_transaction_keeps_active_guard_private() {
 }
 
 #[test]
+fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let issue_path = crate_dir.join("src/o3_runtime_issue.rs");
+    let service_path = crate_dir.join("src/o3_runtime_issue/service.rs");
+    let service_tests_path = crate_dir.join("src/o3_runtime_issue/service_tests.rs");
+    let state_path = crate_dir.join("src/o3_runtime_issue/state.rs");
+    let decision_path = crate_dir.join("src/o3_runtime_issue/state/decision.rs");
+    let calendar_path = crate_dir.join("src/o3_runtime_issue/calendar.rs");
+    let stats_path = crate_dir.join("src/o3_runtime_stats.rs");
+    let error_path = crate_dir.join("src/o3_runtime_error.rs");
+    let issue_tests_path = crate_dir.join("src/o3_runtime_issue_tests.rs");
+
+    let issue_source = fs::read_to_string(&issue_path).unwrap();
+    let issue = production_rust_source(&issue_source);
+    let service_source = fs::read_to_string(&service_path).unwrap();
+    let service = production_rust_source(&service_source);
+    let service_tests = fs::read_to_string(&service_tests_path).unwrap();
+    let state_source = fs::read_to_string(&state_path).unwrap();
+    let state = production_rust_source(&state_source);
+    let decision = production_rust_source(&fs::read_to_string(&decision_path).unwrap());
+    let calendar = production_rust_source(&fs::read_to_string(&calendar_path).unwrap());
+    let stats = production_rust_source(&fs::read_to_string(&stats_path).unwrap());
+    let error = production_rust_source(&fs::read_to_string(&error_path).unwrap());
+    let issue_tests = fs::read_to_string(&issue_tests_path).unwrap();
+
+    assert!(line_count(&service_path) <= MAX_O3_RUNTIME_ISSUE_SERVICE_LINES);
+    assert!(line_count(&service_tests_path) <= MAX_O3_RUNTIME_ISSUE_SERVICE_TEST_LINES);
+    assert!(line_count(&state_path) <= MAX_O3_RUNTIME_ISSUE_STATE_LINES);
+    assert!(line_count(&decision_path) <= MAX_O3_RUNTIME_ISSUE_STATE_DECISION_LINES);
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &issue_source,
+            "o3_runtime_issue/service.rs",
+            "service",
+        ),
+        1,
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &issue_tests,
+            "o3_runtime_issue/service_tests.rs",
+            "service",
+        ),
+        1,
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(&state_source, "state/decision.rs", "decision",),
+        1,
+    );
+
+    for owner in [
+        "service_live_issue_queue_at",
+        "classify_live_issue_queue_after_service",
+        "prepare_live_issue_batch",
+        "schedule_live_speculative_issues",
+        "seal_live_issue_decision_before",
+        "seal_live_issue_decision",
+    ] {
+        assert!(
+            production_defines_exact_function(&service, owner),
+            "service owner is missing `{owner}`",
+        );
+        assert!(
+            !production_defines_exact_function(&issue, owner),
+            "issue facade retains service function `{owner}`",
+        );
+    }
+    assert!(o3_live_issue_service_is_exactly_one_tick(&service));
+    assert!(o3_live_issue_delayed_stats_are_projected(
+        &service, &state, &decision, &stats,
+    ));
+    assert!(!calendar.contains("O3LiveIssueTickDecision"));
+
+    let compatibility = rust_function_definition(&service, "schedule_live_speculative_issues")
+        .expect("missing temporary compatibility driver");
+    assert_eq!(
+        rust_method_call_positions(&compatibility, "service_live_issue_queue_at").len(),
+        1,
+    );
+    for forbidden in [
+        "O3LiveIssueQueue::materialize",
+        "O3LiveIssueDependencyTable::new",
+        "O3LiveIssueCalendar::capture",
+        ".plan_at(",
+        "prepare_live_issue_batch",
+        "O3LiveIssueTransaction::record",
+    ] {
+        assert!(
+            !compatibility.contains(forbidden),
+            "compatibility driver retains planning authority `{forbidden}`",
+        );
+    }
+    assert!(compatibility.contains("Err(O3LiveIssueServiceError::NoWake { .. }) => break"));
+    assert!(
+        compatibility.contains("Err(O3LiveIssueServiceError::Runtime(error)) => return Err(error)")
+    );
+    assert!(compatibility.contains("self.pending_data_address_wake_tick() == Some(next_tick)"));
+
+    let classify = rust_function_definition(&service, "classify_live_issue_queue_after_service")
+        .expect("missing post-service classifier");
+    for candidate in [
+        "same_tick",
+        "resource_tick",
+        "dependency_tick",
+        "pending_tick",
+    ] {
+        assert!(classify.contains(candidate));
+    }
+    assert!(classify.contains("no_wake_sequence"));
+    assert!(classify.contains("self.live_issue.resident_sequences()[0]"));
+    let one_tick = rust_function_definition(&service, "service_live_issue_queue_at").unwrap();
+    let observe = one_tick.find("self.live_issue.observe_sequences(").unwrap();
+    let no_wake = one_tick
+        .find("return Err(O3LiveIssueServiceError::NoWake { sequence })")
+        .unwrap();
+    assert!(
+        observe < no_wake,
+        "no-wake must retain the classified stats decision"
+    );
+
+    let service_error = production_enum_definition(&service, "O3LiveIssueServiceError")
+        .expect("missing private service error");
+    assert!(service.contains("pub(crate) enum O3LiveIssueServiceError"));
+    assert!(service_error.contains("NoWake { sequence: u64 }"));
+    assert!(service_error.contains("Runtime(O3RuntimeError)"));
+    assert!(!error.contains("LiveIssueQueueHasNoWake"));
+    assert!(!error.contains("LiveIssueService"));
+
+    let delta = production_struct_definitions(&decision)
+        .into_iter()
+        .find(|definition| {
+            production_defines_exact_named_item(definition, "struct", "O3LiveIssueDecisionDelta")
+        })
+        .expect("missing active decision delta");
+    assert_eq!(
+        production_named_struct_fields(&delta),
+        [
+            "new_cycle",
+            "issued_rows",
+            "resource_blocked_rows",
+            "dependency_blocked_rows",
+            "max_rows_at_tick",
+        ],
+    );
+
+    for test in [
+        "service_live_issue_queue_at_issues_only_the_requested_tick",
+        "service_live_issue_queue_at_retains_resource_blocked_rows_for_next_tick",
+        "service_live_issue_queue_at_requests_earliest_dependency_ready_tick",
+        "service_live_issue_queue_at_allows_capacity_remaining_same_tick_reentry",
+        "service_live_issue_queue_at_reports_private_no_wake_invariant",
+        "live_issue_stats_same_tick_reentry_projects_once",
+        "live_issue_stats_reset_rebases_unsealed_decision",
+    ] {
+        assert_eq!(
+            rust_test_function_definition_count(&service_tests, test),
+            1,
+            "missing exact Task 5 service test `{test}`",
+        );
+    }
+}
+
+#[test]
 fn o3_live_issue_calendar_owns_reservations_and_arbiter() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let issue_path = crate_dir.join("src/o3_runtime_issue.rs");
+    let service_path = crate_dir.join("src/o3_runtime_issue/service.rs");
     let admission_path = crate_dir.join("src/o3_runtime_memory_result_admission.rs");
     let calendar_path = crate_dir.join("src/o3_runtime_issue/calendar.rs");
     let calendar_tests_path = crate_dir.join("src/o3_runtime_issue/calendar_tests.rs");
     let issue_tests_path = crate_dir.join("src/o3_runtime_issue_tests.rs");
     let issue_source = fs::read_to_string(&issue_path).unwrap();
     let issue = production_rust_source(&issue_source);
+    let service = production_rust_source(&fs::read_to_string(&service_path).unwrap());
     let admission = production_rust_source(&fs::read_to_string(&admission_path).unwrap());
     let calendar = production_rust_source(&fs::read_to_string(&calendar_path).unwrap());
     let calendar_tests_source = fs::read_to_string(&calendar_tests_path).unwrap();
@@ -4836,7 +5005,6 @@ fn o3_live_issue_calendar_owns_reservations_and_arbiter() {
         "struct O3LiveIssueCalendar {\n    issue_width: usize,\n    memory_issue_width: usize,",
         "struct O3LiveIssueReservations",
         "struct O3LiveIssueCyclePlan",
-        "struct O3LiveIssueTickDecision",
         "O3ScopedIssueScheduler::new(",
         "fn live_issue_capacities_after_reservations(",
         "memory_issue_width: runtime.memory_issue_width(),",
@@ -4957,32 +5125,30 @@ fn o3_live_issue_calendar_owns_reservations_and_arbiter() {
             "src/o3_runtime_issue.rs must not retain `{forbidden}`"
         );
     }
-    let schedule = rust_function_definition(&issue, "schedule_live_speculative_issues")
-        .expect("missing schedule_live_speculative_issues definition");
+    let schedule = rust_function_definition(&service, "service_live_issue_queue_at")
+        .expect("missing one-tick issue service definition");
     assert_eq!(
         schedule
             .matches("O3LiveIssueCalendar::capture(self)")
             .count(),
         1,
-        "schedule_live_speculative_issues must capture exactly one fresh calendar per loop pass"
+        "service_live_issue_queue_at must capture exactly one fresh calendar per turn"
     );
-    let loop_position = schedule.find("loop {").expect("missing scheduling loop");
     let dependency_position = schedule
-        .find("let dependency_table = O3LiveIssueDependencyTable::new(")
-        .expect("missing per-pass dependency table");
+        .find("let dependencies = O3LiveIssueDependencyTable::new(")
+        .expect("missing per-turn dependency table");
     let capture_position = schedule
         .find("O3LiveIssueCalendar::capture(")
         .expect("missing per-pass calendar capture");
     let plan_position = schedule.find(".plan_at(").expect("missing calendar plan");
     let issued_position = schedule
-        .find("let issued_rows = plan.issued().len();")
-        .expect("missing issued-row observation");
+        .find("let issued_sequences = plan")
+        .expect("missing issued-sequence observation");
     assert!(
-        loop_position < dependency_position
-            && dependency_position < capture_position
+        dependency_position < capture_position
             && capture_position < plan_position
             && plan_position < issued_position,
-        "calendar capture must stay inside the scheduling loop after dependency discovery and before planning"
+        "calendar capture must stay inside one service turn after dependency discovery and before planning"
     );
 
     let expected_calendar_tests = [
@@ -4996,7 +5162,6 @@ fn o3_live_issue_calendar_owns_reservations_and_arbiter() {
         "live_issue_calendar_total_width_still_bounds_memory_width_four",
         "live_issue_calendar_rebuild_counts_each_same_tick_memory_reservation",
         "live_issue_calendar_separates_resource_and_dependency_blocks",
-        "live_issue_calendar_tick_decision_aggregates_same_tick_attempts",
     ];
     for anchor in expected_calendar_tests {
         assert_eq!(
@@ -5011,7 +5176,8 @@ fn o3_live_issue_calendar_owns_reservations_and_arbiter() {
 fn o3_runtime_issue_lives_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root = fs::read_to_string(crate_dir.join("src/o3_runtime.rs")).unwrap();
-    let module_path = crate_dir.join("src/o3_runtime_issue.rs");
+    let issue_path = crate_dir.join("src/o3_runtime_issue.rs");
+    let service_path = crate_dir.join("src/o3_runtime_issue/service.rs");
     let live_retire =
         fs::read_to_string(crate_dir.join("src/riscv_live_retire_window.rs")).unwrap();
 
@@ -5020,51 +5186,53 @@ fn o3_runtime_issue_lives_in_focused_module() {
         "src/o3_runtime.rs must declare the focused O3 issue module"
     );
     assert!(
-        module_path.exists(),
+        issue_path.exists() && service_path.exists(),
         "live O3 issue scheduling belongs in src/o3_runtime_issue.rs"
     );
-    let module = fs::read_to_string(&module_path).unwrap();
-    let lines = module.lines().count();
+    let issue_source = fs::read_to_string(&issue_path).unwrap();
+    let issue = production_rust_source(&issue_source);
+    let service = production_rust_source(&fs::read_to_string(&service_path).unwrap());
+    let lines = issue.lines().count();
     assert!(
         lines <= MAX_O3_RUNTIME_ISSUE_LINES,
         "src/o3_runtime_issue.rs exceeds {MAX_O3_RUNTIME_ISSUE_LINES} lines: {lines}"
     );
+    assert!(service.lines().count() <= MAX_O3_RUNTIME_ISSUE_SERVICE_LINES);
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &issue_source,
+            "o3_runtime_issue/service.rs",
+            "service",
+        ),
+        1,
+    );
 
-    let issue_authority_patterns = [
-        "pub(crate) fn schedule_live_speculative_issues(",
-        "self.stats.record_issue_cycle(",
+    for anchor in [
         "pub(crate) fn live_data_access_head_reservation(",
         "pub(super) const fn memory(",
-    ];
-    for anchor in issue_authority_patterns {
-        assert!(
-            module.contains(anchor),
-            "src/o3_runtime_issue.rs is missing issue-scheduler owner `{anchor}`"
-        );
+    ] {
+        assert!(issue.contains(anchor), "issue facade is missing `{anchor}`");
+        assert!(!service.contains(anchor), "service duplicates `{anchor}`");
     }
-    for anchor in issue_authority_patterns {
-        for path in rust_source_files(&crate_dir.join("src")) {
-            let relative = path.strip_prefix(crate_dir).unwrap();
-            if relative == Path::new("src/o3_runtime_issue.rs") {
-                continue;
-            }
-            let source = fs::read_to_string(&path).unwrap();
-            assert!(
-                !source.contains(anchor),
-                "{} duplicates scoped issue authority `{anchor}`; keep it in src/o3_runtime_issue.rs",
-                relative.display()
-            );
-        }
-    }
-    for anchor in ["O3LiveIssueCalendar::capture(", ".plan_at("] {
+    for anchor in [
+        "pub(crate) fn schedule_live_speculative_issues(",
+        "pub(crate) fn service_live_issue_queue_at(",
+        "fn classify_live_issue_queue_after_service(",
+        "fn prepare_live_issue_batch(",
+        "self.stats.record_issue_cycle(",
+        "O3LiveIssueCalendar::capture(",
+        ".plan_at(",
+    ] {
         assert!(
-            module.contains(anchor),
-            "src/o3_runtime_issue.rs must delegate live issue arbitration through `{anchor}`"
+            service.contains(anchor),
+            "service owner is missing `{anchor}`"
         );
+        assert!(!issue.contains(anchor), "issue facade retains `{anchor}`");
     }
     assert!(
-        !module.contains("O3ScopedIssueScheduler::new("),
-        "src/o3_runtime_issue.rs must not construct the scoped issue scheduler directly"
+        !issue.contains("O3ScopedIssueScheduler::new(")
+            && !service.contains("O3ScopedIssueScheduler::new("),
+        "focused issue owners must delegate scoped arbitration to calendar.rs"
     );
     assert!(
         live_retire.contains(".schedule_live_speculative_issues("),
@@ -8990,6 +9158,182 @@ fn attributed_test() {}
     );
 }
 
+fn rust_identifier_is_assigned(source: &str, target: &str) -> bool {
+    let chars = production_rust_source(source).chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        if identifier == target {
+            let operator = skip_rust_whitespace(&chars, end);
+            let direct = chars.get(operator) == Some(&'=')
+                && !matches!(chars.get(operator + 1), Some('=' | '>'));
+            let compound = matches!(
+                (chars.get(operator), chars.get(operator + 1)),
+                (
+                    Some('+' | '-' | '*' | '/' | '%' | '&' | '|' | '^' | '<' | '>'),
+                    Some('=')
+                )
+            );
+            if direct || compound {
+                return true;
+            }
+        }
+        index = end;
+    }
+    false
+}
+
+fn o3_live_issue_service_is_exactly_one_tick(source: &str) -> bool {
+    let production = production_rust_source(source);
+    let Some(service) = rust_function_definition(&production, "service_live_issue_queue_at") else {
+        return false;
+    };
+    let chars = service.chars().collect::<Vec<_>>();
+    if ["loop", "while"]
+        .into_iter()
+        .any(|keyword| contains_rust_identifier(&chars, keyword))
+        || rust_identifier_is_assigned(&service, "now")
+    {
+        return false;
+    }
+    let compact = service
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    let anchors = [
+        "self.seal_live_issue_decision_before(now)",
+        "self.live_issue.begin_service_at(now)",
+        "O3LiveIssueQueue::materialize(self,self.live_issue.resident_sequences())",
+        "O3LiveIssueDependencyTable::new(self,queue.entries())",
+        "O3LiveIssueCalendar::capture(self)",
+        "calendar.plan_at(now,&dependencies,queue.entries())",
+        "self.prepare_live_issue_batch(hart,&queue,plan.issued(),now)",
+        "O3LiveIssueTransaction::record(self,rows)",
+        "self.classify_live_issue_queue_after_service(now)",
+        "self.live_issue.observe_sequences(",
+    ];
+    let positions = anchors
+        .iter()
+        .map(|anchor| {
+            (compact.matches(anchor).count() == 1)
+                .then(|| compact.find(anchor))
+                .flatten()
+        })
+        .collect::<Option<Vec<_>>>();
+    positions.is_some_and(|positions| positions.windows(2).all(|pair| pair[0] < pair[1]))
+        && rust_method_call_positions(&service, "plan_at").len() == 1
+        && rust_method_call_positions(&service, "service_live_issue_queue_at").is_empty()
+}
+
+fn o3_live_issue_delayed_stats_are_projected(
+    service_source: &str,
+    state_source: &str,
+    decision_source: &str,
+    stats_source: &str,
+) -> bool {
+    let compact = |source: &str| {
+        source
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>()
+    };
+    let Some(stats) = rust_function_definition(service_source, "stats") else {
+        return false;
+    };
+    let Some(record) = rust_function_definition(stats_source, "record_issue_cycle") else {
+        return false;
+    };
+    let Some(project) = rust_function_definition(stats_source, "project_issue_cycle") else {
+        return false;
+    };
+    let Some(observe) = rust_function_definition(decision_source, "observe") else {
+        return false;
+    };
+    let Some(refresh) = rust_function_definition(decision_source, "refresh_projection") else {
+        return false;
+    };
+    let Some(new_issued) = rust_function_definition(decision_source, "new_issued_rows") else {
+        return false;
+    };
+    let Some(new_blocked) = rust_function_definition(decision_source, "new_blocked_rows") else {
+        return false;
+    };
+    let Some(reset) = rust_function_definition(decision_source, "reset_baseline") else {
+        return false;
+    };
+    let Some(take_current) = rust_function_definition(decision_source, "take_current_decision")
+    else {
+        return false;
+    };
+    let Some(begin_active) = rust_function_definition(decision_source, "begin_active_decision_at")
+    else {
+        return false;
+    };
+    let Some(state_reset) = rust_function_definition(state_source, "reset_stats_baseline") else {
+        return false;
+    };
+    let Some(seal_before) =
+        rust_function_definition(service_source, "seal_live_issue_decision_before")
+    else {
+        return false;
+    };
+    let Some(seal_current) = rust_function_definition(service_source, "seal_live_issue_decision")
+    else {
+        return false;
+    };
+    let stats = compact(&stats);
+    let record = compact(&record);
+    let project = compact(&project);
+    let observe = compact(&observe);
+    let refresh = compact(&refresh);
+    let new_issued = compact(&new_issued);
+    let new_blocked = compact(&new_blocked);
+    let reset = compact(&reset);
+    let take_current = compact(&take_current);
+    let begin_active = compact(&begin_active);
+    let state_reset = compact(&state_reset);
+    let seal_before = compact(&seal_before);
+    let seal_current = compact(&seal_current);
+
+    stats.contains("matchself.live_issue.projected_decision()")
+        && stats.contains("Some(delta)=>self.stats.project_issue_cycle(")
+        && stats.contains("None=>self.stats")
+        && record.contains("*self=self.project_issue_cycle(")
+        && project.contains("self.issue_cycles=self.issue_cycles.saturating_add(")
+        && project.contains("self.issued_rows=self.issued_rows.saturating_add(")
+        && observe.contains("self.issued_sequences.entry(*sequence).or_default()")
+        && observe.contains("*rows=rows.saturating_add(1)")
+        && observe.contains("self.blocked_sequences.clear()")
+        && observe.matches("self.blocked_sequences.extend(").count() == 2
+        && observe
+            .contains("self.max_rows_after_reset=self.max_rows_after_reset.max(max_rows_at_tick)")
+        && observe.contains("self.observed_after_reset=true")
+        && observe.contains("self.refresh_projection()")
+        && refresh.contains("self.observed_after_reset.then(")
+        && refresh.contains("issued_rows:self.new_issued_rows()")
+        && refresh.contains("new_cycle:self.new_cycle")
+        && new_issued.contains("self.baseline_issued_sequences.get(sequence)")
+        && new_issued.contains("rows.saturating_sub(")
+        && new_blocked.contains("self.baseline_blocked_sequences.get(sequence)!=Some(blocked)")
+        && reset.contains("self.baseline_issued_sequences=self.issued_sequences.clone()")
+        && reset.contains("self.baseline_blocked_sequences=self.blocked_sequences.clone()")
+        && reset.contains("self.max_rows_after_reset=0")
+        && reset.contains("self.observed_after_reset=false")
+        && reset.contains("self.new_cycle=true")
+        && reset.contains("self.refresh_projection()")
+        && take_current.contains("self.compatibility_cycle_ticks.insert(active.tick)")
+        && begin_active.contains("!self.compatibility_cycle_ticks.contains(&tick)")
+        && state_reset.contains("self.reset_active_decision_baseline()")
+        && state_reset.contains("self.compatibility_cycle_ticks.clear()")
+        && seal_before.contains("self.live_issue.take_decision_before(tick)")
+        && seal_before.contains("self.stats.record_issue_cycle(")
+        && seal_current.contains("self.live_issue.take_current_decision()")
+        && seal_current.contains("self.stats.record_issue_cycle(")
+}
+
 #[test]
 fn source_policy_helper_rejects_aliased_o3_rob_inventory_scans() {
     let point_lookups = r#"
@@ -9013,6 +9357,169 @@ fn source_policy_helper_rejects_aliased_o3_rob_inventory_scans() {
         assert!(
             !materialize_reorder_buffer_accesses_are_point_lookups(mutation),
             "accepted full ROB inventory mutation `{mutation}`",
+        );
+    }
+}
+
+#[test]
+fn o3_live_issue_service_policy_rejects_later_tick_mutations() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let service = fs::read_to_string(crate_dir.join("src/o3_runtime_issue/service.rs")).unwrap();
+    assert!(o3_live_issue_service_is_exactly_one_tick(&service));
+
+    let mutations = [
+        service.replacen(
+            "self.seal_live_issue_decision_before(now);",
+            "loop { self.seal_live_issue_decision_before(now); break; }",
+            1,
+        ),
+        service.replacen(
+            "self.seal_live_issue_decision_before(now);",
+            "let mut now = now; now += 1; self.seal_live_issue_decision_before(now);",
+            1,
+        ),
+        service.replacen(
+            "plan.issued(), now)?;",
+            "plan.issued(), now.checked_add(1).unwrap())?;",
+            1,
+        ),
+        service.replacen(
+            "let plan = calendar.plan_at(now, &dependencies, queue.entries())?;",
+            "let _extra = calendar.plan_at(now, &dependencies, queue.entries())?;\n        let plan = calendar.plan_at(now, &dependencies, queue.entries())?;",
+            1,
+        ),
+        service.replacen(
+            "self.classify_live_issue_queue_after_service(now)?",
+            "O3LiveIssuePostService::default()",
+            1,
+        ),
+        service.replacen(
+            "O3LiveIssueTransaction::record(self, rows)",
+            "self.record_live_issue_batch(rows)",
+            1,
+        ),
+    ];
+    for mutation in mutations {
+        assert_ne!(mutation, service, "Task 5 service mutation did not apply");
+        assert!(
+            !o3_live_issue_service_is_exactly_one_tick(&mutation),
+            "accepted later-tick or weakened service mutation",
+        );
+    }
+}
+
+#[test]
+fn o3_live_issue_stats_policy_rejects_projection_and_rebase_mutations() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let service = fs::read_to_string(crate_dir.join("src/o3_runtime_issue/service.rs")).unwrap();
+    let state = fs::read_to_string(crate_dir.join("src/o3_runtime_issue/state.rs")).unwrap();
+    let decision =
+        fs::read_to_string(crate_dir.join("src/o3_runtime_issue/state/decision.rs")).unwrap();
+    let stats = fs::read_to_string(crate_dir.join("src/o3_runtime_stats.rs")).unwrap();
+    assert!(o3_live_issue_delayed_stats_are_projected(
+        &service, &state, &decision, &stats,
+    ));
+
+    let projection_mutation = service.replacen(
+        "match self.live_issue.projected_decision()",
+        "match None",
+        1,
+    );
+    let decision_difference =
+        decision.replace("self.baseline_issued_sequences", "self.issued_sequences");
+    let decision_reset = decision.replacen(
+        "self.baseline_issued_sequences = self.issued_sequences.clone();",
+        "self.baseline_issued_sequences.clear();",
+        1,
+    );
+    let decision_observed = decision.replacen(
+        "self.observed_after_reset = false;",
+        "self.observed_after_reset = true;",
+        1,
+    );
+    let decision_cycle =
+        decision.replacen("!self.compatibility_cycle_ticks.contains(&tick)", "true", 1);
+    let state_mutation = state.replacen("self.reset_active_decision_baseline();", "", 1);
+    let service_mutation =
+        service.replacen("self.live_issue.take_decision_before(tick)", "None", 1);
+    let stats_mutation = stats.replacen(
+        "*self = self.project_issue_cycle(",
+        "let _projected = self.project_issue_cycle(",
+        1,
+    );
+    for (description, mutated_service, mutated_state, mutated_decision, mutated_stats) in [
+        (
+            "projection removed",
+            &projection_mutation,
+            &state,
+            &decision,
+            &stats,
+        ),
+        (
+            "issued baseline removed",
+            &service,
+            &state,
+            &decision_difference,
+            &stats,
+        ),
+        (
+            "issued reset removed",
+            &service,
+            &state,
+            &decision_reset,
+            &stats,
+        ),
+        (
+            "reset observation retained",
+            &service,
+            &state,
+            &decision_observed,
+            &stats,
+        ),
+        (
+            "sealed cycle history ignored",
+            &service,
+            &state,
+            &decision_cycle,
+            &stats,
+        ),
+        (
+            "state reset delegate removed",
+            &service,
+            &state_mutation,
+            &decision,
+            &stats,
+        ),
+        (
+            "prior seal removed",
+            &service_mutation,
+            &state,
+            &decision,
+            &stats,
+        ),
+        (
+            "stats projection discarded",
+            &service,
+            &state,
+            &decision,
+            &stats_mutation,
+        ),
+    ] {
+        assert!(
+            mutated_service != &service
+                || mutated_state != &state
+                || mutated_decision != &decision
+                || mutated_stats != &stats,
+            "delayed-stats mutation did not apply: {description}",
+        );
+        assert!(
+            !o3_live_issue_delayed_stats_are_projected(
+                mutated_service,
+                mutated_state,
+                mutated_decision,
+                mutated_stats,
+            ),
+            "accepted weakened delayed-stats mutation: {description}",
         );
     }
 }

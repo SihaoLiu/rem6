@@ -3,7 +3,7 @@ use rem6_isa_riscv::{RiscvExecutionRecord, RiscvInstruction};
 use crate::o3_pipeline::{O3DependencyScopeId, O3IssueOpClass, O3ScopedReadyInstruction};
 
 use super::super::o3_runtime_issue::calendar::{
-    O3LiveIssueCalendar, O3LiveIssueCyclePlan, O3LiveIssueTickDecision, LIVE_ISSUE_QUEUE,
+    O3LiveIssueCalendar, O3LiveIssueCyclePlan, LIVE_ISSUE_QUEUE,
 };
 use super::*;
 
@@ -241,44 +241,6 @@ fn live_issue_calendar_separates_resource_and_dependency_blocks() {
     assert!(plan.issued().is_empty());
     assert_eq!(sequences(plan.resource_blocked()), vec![2]);
     assert_eq!(sequences(plan.dependency_blocked()), vec![3]);
-}
-
-#[test]
-fn live_issue_calendar_tick_decision_aggregates_same_tick_attempts() {
-    let mut first_runtime = O3RuntimeState::default();
-    assert!(first_runtime.set_issue_width(2));
-    stage_live_row(&mut first_runtime, 1, LOAD_PC);
-    first_runtime
-        .live_speculative_executions
-        .push(live_execution(1, 20, LOAD_PC, addi(3, 0, 1)));
-    let unresolved = O3DependencyScopeId::new(7);
-    let first = calendar_plan(
-        &first_runtime,
-        20,
-        [
-            ready(2, O3IssueOpClass::Branch),
-            ready(3, O3IssueOpClass::IntMult),
-            ready(4, O3IssueOpClass::Branch).with_waits_on([unresolved]),
-        ],
-    );
-    assert_eq!(first.resource_blocked().len(), 1);
-    assert_eq!(first.dependency_blocked().len(), 1);
-
-    let mut second_runtime = O3RuntimeState::default();
-    assert!(second_runtime.set_issue_width(2));
-    let second = calendar_plan(&second_runtime, 20, [ready(4, O3IssueOpClass::IntAlu)]);
-    assert!(second.dependency_blocked().is_empty());
-
-    let mut decision = O3LiveIssueTickDecision::default();
-    decision.observe(&first, 1);
-    decision.observe(&second, 1);
-    let sample = decision.take().unwrap();
-
-    assert_eq!(sample.issued_rows(), 2);
-    assert_eq!(sample.resource_blocked_rows(), 0);
-    assert_eq!(sample.dependency_blocked_rows(), 0);
-    assert_eq!(sample.max_rows_at_tick(), 2);
-    assert!(decision.take().is_none());
 }
 
 fn ready(sequence: u64, op_class: O3IssueOpClass) -> O3ScopedReadyInstruction {

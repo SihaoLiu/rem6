@@ -181,15 +181,39 @@ fn live_issue_state_service_accepts_due_generation_once() {
 }
 
 #[test]
-fn live_issue_state_compatibility_cycles_remember_noncontiguous_ticks() {
+fn live_issue_state_active_decision_rebases_same_tick_projection() {
     let mut state = O3LiveIssueState::default();
-    assert!(state.begin_compatibility_cycle_at(20));
-    assert!(state.begin_compatibility_cycle_at(22));
-    assert!(!state.begin_compatibility_cycle_at(20));
-    assert!(state.begin_compatibility_cycle_at(21));
+    state.observe_sequences(20, &[1, 2], &[3], &[4], 4);
+    let first = state.projected_decision().unwrap();
+    assert!(first.new_cycle);
+    assert_eq!(first.issued_rows, 2);
+    assert_eq!(first.resource_blocked_rows, 1);
+    assert_eq!(first.dependency_blocked_rows, 1);
+    assert_eq!(first.max_rows_at_tick, 4);
 
     state.reset_stats_baseline();
-    assert!(state.begin_compatibility_cycle_at(20));
+    assert!(state.projected_decision().is_none());
+    state.observe_sequences(20, &[5], &[3], &[], 3);
+    let rebased = state.projected_decision().unwrap();
+    assert!(rebased.new_cycle);
+    assert_eq!(rebased.issued_rows, 1);
+    assert_eq!(rebased.resource_blocked_rows, 0);
+    assert_eq!(rebased.dependency_blocked_rows, 0);
+    assert_eq!(rebased.max_rows_at_tick, 3);
+}
+
+#[test]
+fn live_issue_state_sealed_same_tick_reentry_reuses_cycle_until_reset() {
+    let mut state = O3LiveIssueState::default();
+    state.observe_sequences(20, &[1], &[], &[], 1);
+    assert!(state.take_current_decision().unwrap().new_cycle);
+
+    state.observe_sequences(20, &[2], &[], &[], 1);
+    assert!(!state.projected_decision().unwrap().new_cycle);
+
+    state.reset_stats_baseline();
+    state.observe_sequences(20, &[3], &[], &[], 1);
+    assert!(state.projected_decision().unwrap().new_cycle);
 }
 
 #[test]

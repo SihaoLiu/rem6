@@ -23,15 +23,6 @@ pub(in crate::o3_runtime) struct O3LiveIssueCyclePlan {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(in crate::o3_runtime) struct O3LiveIssueTickDecision {
-    issued_rows: usize,
-    resource_blocked_rows: usize,
-    dependency_blocked_rows: usize,
-    max_rows_at_tick: usize,
-    observed: bool,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct O3LiveIssueReservations {
     width: usize,
     int_alu: usize,
@@ -163,43 +154,6 @@ impl O3LiveIssueCyclePlan {
     #[cfg(test)]
     pub(in crate::o3_runtime) fn issued_sequences(&self) -> impl Iterator<Item = u64> + '_ {
         self.plan.issued_sequences()
-    }
-}
-
-impl O3LiveIssueTickDecision {
-    pub(in crate::o3_runtime) fn observe(
-        &mut self,
-        plan: &O3LiveIssueCyclePlan,
-        issued_rows: usize,
-    ) {
-        debug_assert!(issued_rows <= plan.issued().len());
-        self.issued_rows = self.issued_rows.saturating_add(issued_rows);
-        self.resource_blocked_rows = plan.resource_blocked().len();
-        self.dependency_blocked_rows = plan.dependency_blocked().len();
-        self.max_rows_at_tick = self
-            .max_rows_at_tick
-            .max(plan.reserved_width().saturating_add(issued_rows));
-        self.observed = true;
-    }
-
-    pub(in crate::o3_runtime) fn take(&mut self) -> Option<Self> {
-        self.observed.then(|| std::mem::take(self))
-    }
-
-    pub(in crate::o3_runtime) const fn issued_rows(self) -> usize {
-        self.issued_rows
-    }
-
-    pub(in crate::o3_runtime) const fn resource_blocked_rows(self) -> usize {
-        self.resource_blocked_rows
-    }
-
-    pub(in crate::o3_runtime) const fn dependency_blocked_rows(self) -> usize {
-        self.dependency_blocked_rows
-    }
-
-    pub(in crate::o3_runtime) const fn max_rows_at_tick(self) -> usize {
-        self.max_rows_at_tick
     }
 }
 

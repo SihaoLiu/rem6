@@ -1103,6 +1103,23 @@ impl O3RuntimeStats {
         dependency_blocked_rows: usize,
         total_rows_at_tick: usize,
     ) {
+        *self = self.project_issue_cycle(
+            new_cycle,
+            issued_rows,
+            resource_blocked_rows,
+            dependency_blocked_rows,
+            total_rows_at_tick,
+        );
+    }
+
+    pub(super) const fn project_issue_cycle(
+        mut self,
+        new_cycle: bool,
+        issued_rows: usize,
+        resource_blocked_rows: usize,
+        dependency_blocked_rows: usize,
+        total_rows_at_tick: usize,
+    ) -> Self {
         self.issue_cycles = self
             .issue_cycles
             .saturating_add(if new_cycle { 1 } else { 0 });
@@ -1113,7 +1130,12 @@ impl O3RuntimeStats {
         self.dependency_blocked_row_cycles = self
             .dependency_blocked_row_cycles
             .saturating_add(dependency_blocked_rows as u64);
-        self.max_rows_per_cycle = self.max_rows_per_cycle.max(total_rows_at_tick as u64);
+        self.max_rows_per_cycle = if self.max_rows_per_cycle > total_rows_at_tick as u64 {
+            self.max_rows_per_cycle
+        } else {
+            total_rows_at_tick as u64
+        };
+        self
     }
 
     pub(crate) fn record_live_retire_gate_wait(&mut self, wait_ticks: u64) {

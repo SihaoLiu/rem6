@@ -5,6 +5,10 @@ use std::{
 
 use rem6_memory::Address;
 
+#[path = "state/decision.rs"]
+mod decision;
+use decision::O3LiveIssueActiveTick;
+
 #[path = "state/rollback.rs"]
 mod rollback;
 pub(in crate::o3_runtime) use rollback::O3LiveIssueStateRollback;
@@ -98,23 +102,6 @@ impl O3LiveIssueTraceRecord {
     copy_getters!(service_tick -> u64, next_wake_tick -> Option<u64>);
     copy_getters!(raw_writeback_tick -> Option<u64>);
     copy_getters!(admitted_writeback_tick -> Option<u64>, cleanup_boundary -> Option<u64>);
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum O3LiveIssueBlockedKind {
-    Resource,
-    Dependency,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct O3LiveIssueActiveTick {
-    tick: u64,
-    issued_sequences: BTreeSet<u64>,
-    blocked_sequences: BTreeMap<u64, O3LiveIssueBlockedKind>,
-    baseline_issued_sequences: BTreeSet<u64>,
-    baseline_blocked_sequences: BTreeMap<u64, O3LiveIssueBlockedKind>,
-    max_rows_after_reset: usize,
-    observed_after_reset: bool,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -276,12 +263,7 @@ impl O3LiveIssueState {
             !self.resident_sequences.is_empty() || self.requested_service_tick.is_some();
         self.resident_sequences.clear();
         self.requested_service_tick = None;
-        if let Some(active) = self.active_tick.as_mut() {
-            changed |= !active.blocked_sequences.is_empty()
-                || !active.baseline_blocked_sequences.is_empty();
-            active.blocked_sequences.clear();
-            active.baseline_blocked_sequences.clear();
-        }
+        changed |= self.clear_active_blocked_sequences();
         if changed {
             self.mark_mutated();
         }
@@ -320,16 +302,7 @@ impl O3LiveIssueState {
         }
         self.last_service_generation = Some(generation);
         self.telemetry.service_turns = self.telemetry.service_turns.saturating_add(1);
-        if self
-            .active_tick
-            .as_ref()
-            .is_none_or(|active| active.tick != tick)
-        {
-            self.active_tick = Some(O3LiveIssueActiveTick {
-                tick,
-                ..O3LiveIssueActiveTick::default()
-            });
-        }
+        self.begin_active_decision_at(tick);
         true
     }
 
@@ -354,23 +327,7 @@ impl O3LiveIssueState {
         };
         self.trace_records.clear();
         self.compatibility_cycle_ticks.clear();
-        if let Some(active) = self.active_tick.as_mut() {
-            active.baseline_issued_sequences = active.issued_sequences.clone();
-            active.baseline_blocked_sequences = active.blocked_sequences.clone();
-            active.max_rows_after_reset = 0;
-            active.observed_after_reset = false;
-        }
-    }
-
-    pub(in crate::o3_runtime) fn begin_compatibility_cycle_at(&mut self, tick: u64) -> bool {
-        self.compatibility_cycle_ticks.insert(tick)
-    }
-
-    fn remove_blocked_sequence(&mut self, sequence: u64) {
-        if let Some(active) = self.active_tick.as_mut() {
-            active.blocked_sequences.remove(&sequence);
-            active.baseline_blocked_sequences.remove(&sequence);
-        }
+        self.reset_active_decision_baseline();
     }
 
     fn take_suffix(&mut self, boundary: u64) -> Vec<u64> {
@@ -381,14 +338,7 @@ impl O3LiveIssueState {
             return Vec::new();
         }
         let removed = self.resident_sequences.split_off(first);
-        if let Some(active) = self.active_tick.as_mut() {
-            active
-                .blocked_sequences
-                .retain(|sequence, _| *sequence < boundary);
-            active
-                .baseline_blocked_sequences
-                .retain(|sequence, _| *sequence < boundary);
-        }
+        self.retain_active_blocked_sequences_before(boundary);
         self.mark_mutated();
         self.update_occupancy();
         if self.resident_sequences.is_empty() {

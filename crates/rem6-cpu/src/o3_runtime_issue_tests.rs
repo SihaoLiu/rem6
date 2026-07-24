@@ -20,6 +20,9 @@ mod calendar;
 #[path = "o3_runtime_issue/queue_tests.rs"]
 mod queue;
 
+#[path = "o3_runtime_issue/service_tests.rs"]
+mod service;
+
 #[path = "o3_runtime_issue/state_tests.rs"]
 mod live_issue_state;
 
@@ -791,6 +794,7 @@ enum ScalarIssueCase {
     CrossResource,
     SameMultiply,
     Dependent,
+    SameTickAluDependency,
     FanIn,
     MixedControls,
     LinkedControls,
@@ -823,6 +827,7 @@ impl ScalarIssueFixture {
             ScalarIssueCase::CrossResource => [branch(), mul(14, 2, 3), addi(15, 4, 1)],
             ScalarIssueCase::SameMultiply => [branch(), mul(14, 2, 3), mul(15, 4, 5)],
             ScalarIssueCase::Dependent => [branch(), mul(14, 2, 3), addi(15, 14, 5)],
+            ScalarIssueCase::SameTickAluDependency => [addi(14, 2, 1), addi(15, 14, 1), branch()],
             ScalarIssueCase::FanIn => [mul(14, 2, 3), mul(15, 4, 5), add(16, 14, 15)],
             ScalarIssueCase::MixedControls => [jal(), branch(), jalr()],
             ScalarIssueCase::LinkedControls => [jal_link(1), addi(14, 2, 3), jalr_return(5)],

@@ -4,7 +4,6 @@ use super::super::*;
 fn live_issue_transaction_state_rollback_preserves_preexisting_histories() {
     let mut state = O3LiveIssueState::default();
     for sequence in 0..512 {
-        assert!(state.begin_compatibility_cycle_at(sequence));
         assert!(state.enqueue_at(
             sequence,
             Address::new(0x8000 + sequence * 4),

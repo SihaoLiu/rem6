@@ -330,28 +330,8 @@ impl O3RuntimeState {
         self.snapshot_with_live_rename_map()
     }
 
-    pub const fn stats(&self) -> O3RuntimeStats {
-        self.stats
-    }
-
     pub fn trace_records(&self) -> &[O3RuntimeTraceRecord] {
         &self.trace_records
-    }
-
-    pub(crate) fn live_issue_service_tick(&self) -> Option<u64> {
-        self.live_issue.requested_service_tick()
-    }
-
-    pub(crate) fn live_issue_is_quiescent(&self) -> bool {
-        self.live_issue.is_quiescent()
-    }
-
-    pub fn live_issue_telemetry(&self) -> O3LiveIssueTelemetry {
-        self.live_issue.telemetry()
-    }
-
-    pub fn live_issue_trace_records(&self) -> &[O3LiveIssueTraceRecord] {
-        self.live_issue.trace_records()
     }
 
     pub fn take_trace_updates(&mut self, start: usize) -> (usize, Vec<O3RuntimeTraceRecord>) {
