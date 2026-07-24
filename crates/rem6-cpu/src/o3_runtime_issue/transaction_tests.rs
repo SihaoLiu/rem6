@@ -256,3 +256,32 @@ fn live_issue_transaction_reserved_recording_rejects_same_sequence_source_mismat
         .unwrap());
     assert!(fixture.runtime.live_speculative_executions.is_empty());
 }
+
+#[test]
+fn live_issue_transaction_reserved_recording_rejects_wrong_sequence_reservation() {
+    let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::CrossResource);
+    let row = prepared_fixed_fu_row(&fixture, 21);
+    let wrong_sequence = row.candidate.sequence().checked_add(1000).unwrap();
+    let reservation = fixture
+        .runtime
+        .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(
+            wrong_sequence,
+            raw_ready_tick(&row),
+        )])
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+
+    assert!(!fixture
+        .runtime
+        .record_live_speculative_execution_with_reservation(
+            &row.candidate,
+            &row.consumed_requests,
+            row.issue_tick,
+            row.execution,
+            Some(reservation),
+        )
+        .unwrap());
+    assert!(fixture.runtime.live_speculative_executions.is_empty());
+}

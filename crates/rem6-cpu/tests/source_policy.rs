@@ -4484,6 +4484,7 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
         "live_issue_transaction_active_error_display_is_stable",
         "live_issue_transaction_reserved_recording_rejects_same_sequence_raw_ready_mismatch",
         "live_issue_transaction_reserved_recording_rejects_same_sequence_source_mismatch",
+        "live_issue_transaction_reserved_recording_rejects_wrong_sequence_reservation",
     ] {
         assert_eq!(
             rust_test_function_definition_count(&transaction_tests, test),
@@ -4510,15 +4511,7 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
             production_defines_exact_named_item(definition, "struct", "O3LiveIssueRollback")
         })
         .expect("missing bounded live issue rollback image");
-    let rollback_fields = rollback
-        .lines()
-        .filter_map(|line| {
-            let (name, _) = line.trim().split_once(':')?;
-            name.chars()
-                .all(|character| character == '_' || character.is_ascii_alphanumeric())
-                .then(|| name.to_string())
-        })
-        .collect::<Vec<_>>();
+    let rollback_fields = production_named_struct_fields(&rollback);
     assert_eq!(
         rollback_fields,
         vec![
@@ -4550,27 +4543,12 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
         );
     }
 
+    assert!(
+        o3_live_issue_transaction_clones_are_bounded(&transaction),
+        "transaction owner contains a clone outside the nine bounded capture owners",
+    );
     let capture = rust_function_definition(&transaction, "capture").unwrap();
-    for owner in [
-        "runtime.snapshot.pending_state.clone()",
-        "runtime.snapshot.reorder_buffer.clone()",
-        "runtime.live_speculative_executions.clone()",
-        "runtime.pending_data_addresses.clone()",
-        "runtime.writeback_calendar.clone()",
-        "runtime.live_writeback_counted_sequences.clone()",
-        "runtime.finalized_writeback_port_stats.clone()",
-        "runtime.live_staged_fetch_identities.clone()",
-        "runtime.live_issue.clone()",
-    ] {
-        assert_eq!(
-            capture.matches(owner).count(),
-            1,
-            "missing bounded clone `{owner}`"
-        );
-    }
-    assert_eq!(capture.matches(".clone()").count(), 9);
     assert!(capture.contains("stats: runtime.stats"));
-    assert!(!capture.contains("runtime.clone()"));
 
     let record = rust_function_definition(&transaction, "record").unwrap();
     assert!(record.contains("O3LiveIssueRollback::capture(runtime)"));
@@ -4581,19 +4559,27 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
 
     let in_place =
         rust_function_definition(&transaction, "record_prepared_batch_in_place").unwrap();
-    assert_eq!(
-        in_place
-            .matches("reserve_writeback_completions(ready)")
-            .count(),
-        1
-    );
+    let reservation_calls = rust_method_call_positions(&in_place, "reserve_writeback_completions");
+    assert_eq!(reservation_calls.len(), 1);
     assert!(!in_place.contains("reserve_fixed_fu_writeback"));
-    let reservation = in_place
-        .find("reserve_writeback_completions(ready)")
-        .unwrap();
-    let recording = in_place.find("for row in prepared").unwrap();
-    let removal = in_place.find("for recorded in recorded_rows").unwrap();
-    assert!(reservation < recording && recording < removal);
+    let recording_calls = [
+        "record_pending_data_address_materialization_without_issue_removal",
+        "record_live_speculative_execution_with_reservation",
+    ]
+    .into_iter()
+    .flat_map(|name| rust_method_call_positions(&in_place, name))
+    .collect::<Vec<_>>();
+    let removal_calls = ["remove_exact_at", "remove_selected_at"]
+        .into_iter()
+        .flat_map(|name| rust_method_call_positions(&in_place, name))
+        .collect::<Vec<_>>();
+    assert_eq!(recording_calls.len(), 2);
+    assert_eq!(removal_calls.len(), 2);
+    let reservation = reservation_calls[0];
+    let first_recording = *recording_calls.iter().min().unwrap();
+    let last_recording = *recording_calls.iter().max().unwrap();
+    let first_removal = *removal_calls.iter().min().unwrap();
+    assert!(reservation < first_recording && last_recording < first_removal);
     assert!(in_place.contains("(reservation.sequence(), reservation)"));
     assert!(in_place.contains("record_live_speculative_execution_with_reservation"));
 
@@ -7911,6 +7897,229 @@ fn rust_function_definition(source: &str, name: &str) -> Option<String> {
     None
 }
 
+const O3_LIVE_ISSUE_ALLOWED_CLONE_RECEIVERS: [&str; 9] = [
+    "runtime.snapshot.pending_state",
+    "runtime.snapshot.reorder_buffer",
+    "runtime.live_speculative_executions",
+    "runtime.pending_data_addresses",
+    "runtime.writeback_calendar",
+    "runtime.live_writeback_counted_sequences",
+    "runtime.finalized_writeback_port_stats",
+    "runtime.live_staged_fetch_identities",
+    "runtime.live_issue",
+];
+
+fn o3_live_issue_transaction_clones_are_bounded(source: &str) -> bool {
+    let production = production_rust_source(source);
+    let Some(capture) = rust_function_definition(&production, "capture") else {
+        return false;
+    };
+    let compact = |code: &str| {
+        code.chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>()
+    };
+    let compact_capture = compact(&capture);
+    let compact_production = compact(&production);
+    if O3_LIVE_ISSUE_ALLOWED_CLONE_RECEIVERS
+        .iter()
+        .any(|receiver| {
+            let operation = format!("{receiver}.clone()");
+            compact_capture.matches(&operation).count() != 1
+                || compact_production.matches(&operation).count() != 1
+        })
+    {
+        return false;
+    }
+    if rust_method_call_positions(&production, "clone").len()
+        != O3_LIVE_ISSUE_ALLOWED_CLONE_RECEIVERS.len()
+    {
+        return false;
+    }
+    for forbidden_call in [
+        "clone_from",
+        "clone_into",
+        "to_owned",
+        "to_vec",
+        "cloned",
+        "into_owned",
+    ] {
+        if !rust_method_call_positions(&production, forbidden_call).is_empty() {
+            return false;
+        }
+    }
+    for forbidden_reference in [
+        "Clone::clone",
+        "Clone::clone_from",
+        "ToOwned::to_owned",
+        "ToOwned::clone_into",
+        "O3RuntimeState::clone",
+    ] {
+        if compact_production.contains(forbidden_reference) {
+            return false;
+        }
+    }
+    true
+}
+
+fn production_named_struct_fields(definition: &str) -> Vec<String> {
+    let code = production_rust_source(definition);
+    let chars = code.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    let body = loop {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            if index >= chars.len() {
+                return Vec::new();
+            }
+            continue;
+        };
+        if identifier != "struct" {
+            index = end;
+            continue;
+        }
+        let name_start = skip_rust_whitespace(&chars, end);
+        let Some((_, name_end)) = rust_identifier_at(&chars, name_start) else {
+            return Vec::new();
+        };
+        let mut body = skip_rust_whitespace(&chars, name_end);
+        while body < chars.len() && !matches!(chars[body], '{' | '(' | ';') {
+            body += 1;
+        }
+        if chars.get(body) != Some(&'{') {
+            return Vec::new();
+        }
+        break body;
+    };
+    let Some(close) = matching_delimiter(&chars, body, '{', '}') else {
+        return Vec::new();
+    };
+    let mut fields = Vec::new();
+    let mut field_start = body + 1;
+    let mut cursor = field_start;
+    while cursor < close {
+        match chars[cursor] {
+            '#' => {
+                let bracket = skip_rust_whitespace(&chars, cursor + 1);
+                if chars.get(bracket) == Some(&'[') {
+                    let Some(attribute_end) = matching_delimiter(&chars, bracket, '[', ']') else {
+                        return Vec::new();
+                    };
+                    cursor = attribute_end + 1;
+                    continue;
+                }
+            }
+            '(' => {
+                let Some(end) = matching_delimiter(&chars, cursor, '(', ')') else {
+                    return Vec::new();
+                };
+                cursor = end + 1;
+                continue;
+            }
+            '[' => {
+                let Some(end) = matching_delimiter(&chars, cursor, '[', ']') else {
+                    return Vec::new();
+                };
+                cursor = end + 1;
+                continue;
+            }
+            '{' => {
+                let Some(end) = matching_delimiter(&chars, cursor, '{', '}') else {
+                    return Vec::new();
+                };
+                cursor = end + 1;
+                continue;
+            }
+            '<' => {
+                let Some(end) = matching_delimiter(&chars, cursor, '<', '>') else {
+                    return Vec::new();
+                };
+                cursor = end + 1;
+                continue;
+            }
+            ',' => {
+                if let Some(field) = named_struct_field_name(&chars[field_start..cursor]) {
+                    fields.push(field);
+                }
+                field_start = cursor + 1;
+            }
+            _ => {}
+        }
+        cursor += 1;
+    }
+    if let Some(field) = named_struct_field_name(&chars[field_start..close]) {
+        fields.push(field);
+    }
+    fields
+}
+
+fn rust_method_call_positions(source: &str, name: &str) -> Vec<usize> {
+    let code = production_rust_source(source);
+    let chars = code.chars().collect::<Vec<_>>();
+    let mut positions = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        if identifier != name || rust_identifier_before(&chars, index).as_deref() == Some("fn") {
+            index = end;
+            continue;
+        }
+        let mut call = skip_rust_whitespace(&chars, end);
+        if chars.get(call) == Some(&':') && chars.get(call + 1) == Some(&':') {
+            let generic = skip_rust_whitespace(&chars, call + 2);
+            if chars.get(generic) == Some(&'<') {
+                let Some(generic_end) = matching_delimiter(&chars, generic, '<', '>') else {
+                    index = end;
+                    continue;
+                };
+                call = skip_rust_whitespace(&chars, generic_end + 1);
+            }
+        }
+        if chars.get(call) == Some(&'(') {
+            positions.push(index);
+        }
+        index = end;
+    }
+    positions
+}
+
+fn named_struct_field_name(field: &[char]) -> Option<String> {
+    let mut index = skip_rust_whitespace(field, 0);
+    while field.get(index) == Some(&'#') {
+        let bracket = skip_rust_whitespace(field, index + 1);
+        if field.get(bracket) != Some(&'[') {
+            return None;
+        }
+        let close = matching_delimiter(field, bracket, '[', ']')?;
+        index = skip_rust_whitespace(field, close + 1);
+    }
+    let (first, first_end) = rust_identifier_at(field, index)?;
+    if first == "pub" {
+        index = skip_rust_whitespace(field, first_end);
+        if field.get(index) == Some(&'(') {
+            let close = matching_delimiter(field, index, '(', ')')?;
+            index = skip_rust_whitespace(field, close + 1);
+        }
+    }
+    let (name, name_end) = rust_identifier_at(field, index)?;
+    (field.get(skip_rust_whitespace(field, name_end)) == Some(&':')).then_some(name)
+}
+
+fn rust_identifier_before(chars: &[char], index: usize) -> Option<String> {
+    let mut end = index;
+    while end > 0 && chars[end - 1].is_whitespace() {
+        end -= 1;
+    }
+    let mut start = end;
+    while start > 0 && (chars[start - 1] == '_' || chars[start - 1].is_ascii_alphanumeric()) {
+        start -= 1;
+    }
+    (start != end).then(|| chars[start..end].iter().collect())
+}
+
 fn materialize_reorder_buffer_accesses_are_point_lookups(source: &str) -> bool {
     let code = rust_code_without_comments_and_literals(source);
     let chars = code.chars().collect::<Vec<_>>();
@@ -8269,6 +8478,101 @@ fn source_policy_helper_rejects_aliased_o3_rob_inventory_scans() {
             "accepted full ROB inventory mutation `{mutation}`",
         );
     }
+}
+
+#[test]
+fn o3_live_issue_transaction_policy_rejects_helper_clone_mutations() {
+    let canonical = r#"
+impl O3LiveIssueRollback {
+    fn capture(runtime: &O3RuntimeState) -> Self {
+        Self {
+            pending_state: runtime.snapshot.pending_state.clone(),
+            reorder_buffer: runtime.snapshot.reorder_buffer.clone(),
+            live_speculative_executions: runtime.live_speculative_executions.clone(),
+            pending_data_addresses: runtime.pending_data_addresses.clone(),
+            writeback_calendar: runtime.writeback_calendar.clone(),
+            live_writeback_counted_sequences: runtime.live_writeback_counted_sequences.clone(),
+            finalized_writeback_port_stats: runtime.finalized_writeback_port_stats.clone(),
+            live_staged_fetch_identities: runtime.live_staged_fetch_identities.clone(),
+            live_issue: runtime.live_issue.clone(),
+        }
+    }
+}
+"#;
+    assert!(o3_live_issue_transaction_clones_are_bounded(canonical));
+    for mutation in [
+        "fn helper(runtime: &O3RuntimeState) { let _staged = runtime.clone(); }",
+        "fn helper(runtime: &O3RuntimeState) { let alias = runtime; let _staged = alias.clone(); }",
+        "fn helper(runtime: &O3RuntimeState) { let _staged = Clone::clone(runtime); }",
+        "fn helper(runtime: &O3RuntimeState) { let _staged = O3RuntimeState::clone(runtime); }",
+        "fn helper(runtime: &O3RuntimeState, staged: &mut O3RuntimeState) { staged.clone_from(runtime); }",
+        "fn helper(runtime: &O3RuntimeState) { let _staged = runtime.to_owned(); }",
+    ] {
+        let mutated = format!("{canonical}\n{mutation}");
+        assert!(
+            !o3_live_issue_transaction_clones_are_bounded(&mutated),
+            "accepted transaction clone mutation `{mutation}`",
+        );
+    }
+}
+
+#[test]
+fn o3_live_issue_transaction_policy_detects_visibility_qualified_rollback_fields() {
+    let mutation = r#"
+struct O3LiveIssueRollback {
+    pending_state: O3PendingStateSnapshot,
+    reorder_buffer: Vec<O3ReorderBufferEntry>,
+    live_speculative_executions: Vec<O3LiveSpeculativeExecution>,
+    pending_data_addresses: O3PendingDataAddresses,
+    writeback_calendar: O3WritebackReservationCalendar,
+    live_writeback_counted_sequences: BTreeSet<u64>,
+    finalized_writeback_port_stats: O3FinalizedWritebackPortStats,
+    live_staged_fetch_identities: BTreeMap<u64, O3LiveStagedFetchIdentity>,
+    stats: O3RuntimeStats,
+    live_issue: O3LiveIssueState,
+    pub forbidden_public: O3RuntimeState,
+    pub(crate) forbidden_crate: O3RuntimeState,
+    pub(in crate::o3_runtime) forbidden_scoped: O3RuntimeState,
+    #[allow(dead_code)]
+    pub(super) forbidden_attributed: O3RuntimeState,
+}
+"#;
+    assert_eq!(
+        production_named_struct_fields(mutation),
+        [
+            "pending_state",
+            "reorder_buffer",
+            "live_speculative_executions",
+            "pending_data_addresses",
+            "writeback_calendar",
+            "live_writeback_counted_sequences",
+            "finalized_writeback_port_stats",
+            "live_staged_fetch_identities",
+            "stats",
+            "live_issue",
+            "forbidden_public",
+            "forbidden_crate",
+            "forbidden_scoped",
+            "forbidden_attributed",
+        ],
+    );
+}
+
+#[test]
+fn o3_live_issue_transaction_policy_counts_renamed_batch_reservation_calls() {
+    let mutation = r#"
+fn record_prepared_batch_in_place(runtime: &mut O3RuntimeState) {
+    runtime
+        .reserve_writeback_completions(
+            ready,
+        );
+    runtime.reserve_writeback_completions(renamed_ready);
+}
+"#;
+    assert_eq!(
+        rust_method_call_positions(mutation, "reserve_writeback_completions").len(),
+        2,
+    );
 }
 
 #[test]
