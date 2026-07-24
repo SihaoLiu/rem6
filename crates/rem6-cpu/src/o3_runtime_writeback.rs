@@ -115,9 +115,14 @@ impl O3WritebackReservation {
         }
     }
 
-    #[cfg(test)]
     pub(crate) const fn sequence(self) -> u64 {
         self.sequence
+    }
+
+    pub(crate) const fn matches_fixed_fu(self, sequence: u64, raw_ready_tick: u64) -> bool {
+        self.sequence == sequence
+            && self.raw_ready_tick == raw_ready_tick
+            && matches!(self.source, O3LiveWritebackReadySource::FixedFu)
     }
 
     #[cfg(test)]
@@ -462,9 +467,9 @@ impl O3RuntimeState {
         sequence: u64,
         raw_ready_tick: u64,
         consumes_slot: bool,
-    ) -> Result<(u64, Option<usize>), O3RuntimeError> {
+    ) -> Result<Option<O3WritebackReservation>, O3RuntimeError> {
         if !consumes_slot {
-            return Ok((raw_ready_tick, None));
+            return Ok(None);
         }
         let reservation = self
             .reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(
@@ -474,7 +479,7 @@ impl O3RuntimeState {
             .into_iter()
             .next()
             .expect("single fixed-FU writeback reservation returns one row");
-        Ok((reservation.admitted_tick(), Some(reservation.slot())))
+        Ok(Some(reservation))
     }
 
     pub(super) fn rebuild_writeback_policy(

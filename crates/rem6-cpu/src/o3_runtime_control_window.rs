@@ -1,5 +1,6 @@
 use rem6_isa_riscv::{Register, RegisterWrite, RiscvExecutionRecord};
 
+use super::o3_runtime_writeback::O3WritebackReservation;
 use super::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -101,10 +102,7 @@ impl O3RuntimeState {
         let sequence = candidate.sequence();
         let pc = candidate.pc();
         let issue_class = live_issue_trace_class(candidate.instruction());
-        if !self
-            .live_staged_issue_packet(sequence)
-            .is_some_and(|packet| packet.matches_execution(&execution, consumed_requests))
-            || !candidate.valid_recorded_execution(&execution)
+        if !self.live_speculative_execution_is_recordable(&candidate, consumed_requests, &execution)
         {
             return Ok(false);
         }
@@ -113,11 +111,65 @@ impl O3RuntimeState {
                 execution.instruction(),
             ))
             .ok_or(O3RuntimeError::WritebackTickOverflow { tick: issue_tick })?;
-        let (admitted_writeback_tick, writeback_slot) = self.reserve_fixed_fu_writeback(
+        let reservation = self.reserve_fixed_fu_writeback(
             sequence,
             raw_ready_tick,
             candidate.consumes_writeback_slot(),
         )?;
+        let admitted_writeback_tick = reservation
+            .map(O3WritebackReservation::admitted_tick)
+            .unwrap_or(raw_ready_tick);
+        let recorded = self.record_live_speculative_execution_with_reservation(
+            &candidate,
+            consumed_requests,
+            issue_tick,
+            execution,
+            reservation,
+        )?;
+        if recorded {
+            if let Some(issue_class) = issue_class {
+                self.live_issue.remove_selected_at(
+                    sequence,
+                    pc,
+                    issue_class,
+                    issue_tick,
+                    raw_ready_tick,
+                    admitted_writeback_tick,
+                );
+            }
+        }
+        Ok(recorded)
+    }
+
+    pub(in crate::o3_runtime) fn record_live_speculative_execution_with_reservation(
+        &mut self,
+        candidate: &O3LiveSpeculativeIssueCandidate,
+        consumed_requests: &[MemoryRequestId],
+        issue_tick: u64,
+        execution: RiscvExecutionRecord,
+        reservation: Option<O3WritebackReservation>,
+    ) -> Result<bool, O3RuntimeError> {
+        let issue_tick = candidate.issue_tick(issue_tick);
+        let sequence = candidate.sequence();
+        if !self.live_speculative_execution_is_recordable(candidate, consumed_requests, &execution)
+        {
+            return Ok(false);
+        }
+        let raw_ready_tick = issue_tick
+            .checked_add(crate::riscv_fu_latency::riscv_execute_wait_cycles(
+                execution.instruction(),
+            ))
+            .ok_or(O3RuntimeError::WritebackTickOverflow { tick: issue_tick })?;
+        let (admitted_writeback_tick, writeback_slot) =
+            match (candidate.consumes_writeback_slot(), reservation) {
+                (true, Some(reservation))
+                    if reservation.matches_fixed_fu(sequence, raw_ready_tick) =>
+                {
+                    (reservation.admitted_tick(), Some(reservation.slot()))
+                }
+                (false, None) => (raw_ready_tick, None),
+                _ => return Ok(false),
+            };
 
         self.live_speculative_executions
             .push(O3LiveSpeculativeExecution {
@@ -131,17 +183,18 @@ impl O3RuntimeState {
                 execution,
             });
         self.record_producer_forwarded_return_descendant();
-        if let Some(issue_class) = issue_class {
-            self.live_issue.remove_selected_at(
-                sequence,
-                pc,
-                issue_class,
-                issue_tick,
-                raw_ready_tick,
-                admitted_writeback_tick,
-            );
-        }
         Ok(true)
+    }
+
+    fn live_speculative_execution_is_recordable(
+        &self,
+        candidate: &O3LiveSpeculativeIssueCandidate,
+        consumed_requests: &[MemoryRequestId],
+        execution: &RiscvExecutionRecord,
+    ) -> bool {
+        self.live_staged_issue_packet(candidate.sequence())
+            .is_some_and(|packet| packet.matches_execution(execution, consumed_requests))
+            && candidate.valid_recorded_execution(execution)
     }
 
     pub(crate) fn live_speculative_execution_ready_tick(

@@ -62,6 +62,7 @@ pub enum O3RuntimeError {
     SelectedIssueCandidateNotExecutable {
         sequence: u64,
     },
+    LiveIssueTransactionAlreadyActive,
     DuplicateWritebackReadySequence {
         sequence: u64,
     },
@@ -202,6 +203,10 @@ impl fmt::Display for O3RuntimeError {
             Self::SelectedIssueCandidateNotExecutable { sequence } => write!(
                 formatter,
                 "O3 selected issue candidate {sequence} could not be materialized"
+            ),
+            Self::LiveIssueTransactionAlreadyActive => write!(
+                formatter,
+                "O3 runtime live issue transaction is already active"
             ),
             Self::DuplicateWritebackReadySequence { sequence } => {
                 write!(formatter, "O3 runtime writeback ready row repeats sequence {sequence}")

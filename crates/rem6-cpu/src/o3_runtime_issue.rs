@@ -1,5 +1,6 @@
 use rem6_isa_riscv::{RiscvExecutionRecord, RiscvHartState, RiscvInstruction};
 
+use super::o3_runtime_writeback::{O3LiveWritebackReady, O3WritebackReservation};
 use super::*;
 use crate::o3_pipeline::{O3IssueOpClass, O3ScopedReadyInstruction};
 
@@ -14,6 +15,8 @@ mod pending_address;
 pub(in crate::o3_runtime) mod queue;
 #[path = "o3_runtime_issue/state.rs"]
 mod state;
+#[path = "o3_runtime_issue/transaction.rs"]
+mod transaction;
 use calendar::{O3LiveIssueCalendar, O3LiveIssueTickDecision};
 pub(crate) use dependency::O3LiveIssueDependencyTable;
 use queue::{
@@ -23,6 +26,7 @@ pub(in crate::o3_runtime) use state::O3LiveIssueState;
 pub use state::{
     O3LiveIssueTelemetry, O3LiveIssueTraceAction, O3LiveIssueTraceClass, O3LiveIssueTraceRecord,
 };
+use transaction::O3LiveIssueTransaction;
 
 #[derive(Clone)]
 pub(crate) struct O3PreparedLiveIssue {
@@ -32,7 +36,25 @@ pub(crate) struct O3PreparedLiveIssue {
     pub(crate) execution: RiscvExecutionRecord,
 }
 
-enum O3PreparedLiveIssueBatch {
+impl O3PreparedLiveIssue {
+    fn fixed_fu_writeback_ready(&self) -> Result<Option<O3LiveWritebackReady>, O3RuntimeError> {
+        if self.candidate.is_pending_data_address() || !self.candidate.consumes_writeback_slot() {
+            return Ok(None);
+        }
+        let issue_tick = self.candidate.issue_tick(self.issue_tick);
+        let raw_ready_tick = issue_tick
+            .checked_add(crate::riscv_fu_latency::riscv_execute_wait_cycles(
+                self.execution.instruction(),
+            ))
+            .ok_or(O3RuntimeError::WritebackTickOverflow { tick: issue_tick })?;
+        Ok(Some(O3LiveWritebackReady::fixed_fu(
+            self.candidate.sequence(),
+            raw_ready_tick,
+        )))
+    }
+}
+
+pub(in crate::o3_runtime) enum O3PreparedLiveIssueBatch {
     Prepared(Vec<O3PreparedLiveIssue>),
     ReplayPending(u64),
 }
@@ -180,11 +202,15 @@ impl O3RuntimeState {
             })?;
         let consumes_writeback_slot = staged_rename_entry(entry).is_some();
         let issue_class = live_issue_trace_class(execution.instruction());
-        let (admitted_writeback_tick, writeback_slot) = self.reserve_fixed_fu_writeback(
+        let writeback_reservation = self.reserve_fixed_fu_writeback(
             head.sequence(),
             raw_ready_tick,
             consumes_writeback_slot,
         )?;
+        let admitted_writeback_tick = writeback_reservation
+            .map(O3WritebackReservation::admitted_tick)
+            .unwrap_or(raw_ready_tick);
+        let writeback_slot = writeback_reservation.map(O3WritebackReservation::slot);
         if let Some(entry) = self
             .snapshot
             .reorder_buffer
@@ -223,38 +249,7 @@ impl O3RuntimeState {
         &mut self,
         prepared: Vec<O3PreparedLiveIssue>,
     ) -> Result<O3LiveIssueBatchOutcome, O3RuntimeError> {
-        let mut staged = self.clone();
-        for row in prepared {
-            let sequence = row.candidate.sequence();
-            let recorded = if row.candidate.is_pending_data_address() {
-                staged.record_pending_data_address_materialization(
-                    row.candidate,
-                    &row.consumed_requests,
-                    row.issue_tick,
-                    row.execution,
-                )?
-            } else {
-                staged.record_live_speculative_execution(
-                    row.candidate,
-                    &row.consumed_requests,
-                    row.issue_tick,
-                    row.execution,
-                )?
-            };
-            if !recorded {
-                if staged
-                    .pending_data_address_sequence_for_replay(sequence)
-                    .is_some()
-                {
-                    staged.discard_pending_data_address_from(sequence);
-                    *self = staged;
-                    return Ok(O3LiveIssueBatchOutcome::ReplayPending(sequence));
-                }
-                return Err(O3RuntimeError::SelectedIssueCandidateNotExecutable { sequence });
-            }
-        }
-        *self = staged;
-        Ok(O3LiveIssueBatchOutcome::Recorded)
+        O3LiveIssueTransaction::record(self, prepared)
     }
 
     pub(crate) fn schedule_live_speculative_issues(
@@ -359,7 +354,7 @@ impl O3RuntimeState {
         Ok(())
     }
 
-    fn prepare_live_issue_batch(
+    pub(in crate::o3_runtime) fn prepare_live_issue_batch(
         &self,
         hart: &RiscvHartState,
         queue: &O3LiveIssueQueue,

@@ -196,6 +196,33 @@ impl O3RuntimeState {
         execution: RiscvExecutionRecord,
     ) -> Result<bool, O3RuntimeError> {
         let sequence = candidate.sequence();
+        let pc = candidate.pc();
+        let recorded = self.record_pending_data_address_materialization_without_issue_removal(
+            &candidate,
+            consumed_requests,
+            issue_tick,
+            execution,
+        )?;
+        if recorded {
+            self.live_issue.remove_exact_at(
+                sequence,
+                O3LiveIssueTraceAction::Selected,
+                pc,
+                O3LiveIssueTraceClass::MemoryAgu,
+                issue_tick,
+            );
+        }
+        Ok(recorded)
+    }
+
+    pub(in crate::o3_runtime) fn record_pending_data_address_materialization_without_issue_removal(
+        &mut self,
+        candidate: &O3LiveSpeculativeIssueCandidate,
+        consumed_requests: &[MemoryRequestId],
+        issue_tick: u64,
+        execution: RiscvExecutionRecord,
+    ) -> Result<bool, O3RuntimeError> {
+        let sequence = candidate.sequence();
         let Some(pending) = self.pending_data_addresses.find_sequence(sequence).cloned() else {
             return Ok(false);
         };
@@ -246,7 +273,6 @@ impl O3RuntimeState {
         {
             return Ok(false);
         }
-        let pc = pending.fetch.pc();
         let event =
             RiscvCpuExecutionEvent::new(pending.fetch, pending.decoded.instruction(), execution);
         {
@@ -260,13 +286,6 @@ impl O3RuntimeState {
             stored.selected_issue_tick = Some(issue_tick);
             stored.materialized = Some(event);
         }
-        self.live_issue.remove_exact_at(
-            sequence,
-            O3LiveIssueTraceAction::Selected,
-            pc,
-            O3LiveIssueTraceClass::MemoryAgu,
-            issue_tick,
-        );
         Ok(true)
     }
 

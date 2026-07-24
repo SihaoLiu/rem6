@@ -23,6 +23,9 @@ mod queue;
 #[path = "o3_runtime_issue/state_tests.rs"]
 mod live_issue_state;
 
+#[path = "o3_runtime_issue/transaction_tests.rs"]
+mod transaction;
+
 #[test]
 fn scoped_issue_reserves_head_width() {
     let mut fixture = ScalarIssueFixture::new(1, ScalarIssueCase::CrossResource);

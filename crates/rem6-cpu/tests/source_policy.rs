@@ -1021,6 +1021,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let pending_set_path = crate_dir.join("src/o3_runtime_pending_address_set.rs");
     let pending_staging_path = crate_dir.join("src/o3_runtime_pending_address_staging.rs");
     let issue_root_path = crate_dir.join("src/o3_runtime_issue.rs");
+    let issue_transaction_path = crate_dir.join("src/o3_runtime_issue/transaction.rs");
     let issue_calendar_path = crate_dir.join("src/o3_runtime_issue/calendar.rs");
     let issue_pending_path = crate_dir.join("src/o3_runtime_issue/pending_address.rs");
     let writeback_wake_path = crate_dir.join("src/riscv_o3_writeback_wake.rs");
@@ -1040,6 +1041,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         &pending_set_path,
         &pending_staging_path,
         &issue_root_path,
+        &issue_transaction_path,
         &issue_calendar_path,
         &issue_pending_path,
         &writeback_wake_path,
@@ -1066,6 +1068,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let pending_set = fs::read_to_string(&pending_set_path).unwrap();
     let pending_staging = fs::read_to_string(&pending_staging_path).unwrap();
     let issue_root = fs::read_to_string(&issue_root_path).unwrap();
+    let issue_transaction = fs::read_to_string(&issue_transaction_path).unwrap();
     let issue_calendar = fs::read_to_string(&issue_calendar_path).unwrap();
     let issue_pending = fs::read_to_string(&issue_pending_path).unwrap();
     let writeback_wake = fs::read_to_string(&writeback_wake_path).unwrap();
@@ -1283,6 +1286,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let pending_set_code = production_rust_source(&pending_set);
     let pending_staging_code = production_rust_source(&pending_staging);
     let issue_root_code = production_rust_source(&issue_root);
+    let issue_transaction_code = production_rust_source(&issue_transaction);
     let issue_calendar_code = production_rust_source(&issue_calendar);
     let issue_pending_code = production_rust_source(&issue_pending);
     let writeback_wake_code = production_rust_source(&writeback_wake);
@@ -1406,11 +1410,18 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "runtime state must hold exactly one pending-address collection"
     );
     assert_eq!(
-        production_code
+        issue_transaction_code
             .matches("pending_data_addresses: O3PendingDataAddresses,")
             .count(),
         1,
-        "production source must contain exactly one pending-address collection field"
+        "bounded issue rollback must hold exactly one pending-address collection"
+    );
+    assert_eq!(
+        production_code
+            .matches("pending_data_addresses: O3PendingDataAddresses,")
+            .count(),
+        2,
+        "production source must contain only the runtime and bounded rollback collection fields"
     );
     assert!(
         !production_code.contains("Option<O3PendingDataAddress>")
@@ -1537,6 +1548,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     for helper in [
         "issue_matches",
         "record_pending_data_address_materialization",
+        "record_pending_data_address_materialization_without_issue_removal",
     ] {
         assert!(
             production_defines_exact_function(&pending_code, helper),
@@ -1546,9 +1558,11 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
             assert!(!production_defines_exact_function(source, helper));
         }
     }
-    let materialization =
-        rust_function_definition(&pending_code, "record_pending_data_address_materialization")
-            .unwrap();
+    let materialization = rust_function_definition(
+        &pending_code,
+        "record_pending_data_address_materialization_without_issue_removal",
+    )
+    .unwrap();
     for anchor in [
         "let sequence = candidate.sequence();",
         "find_sequence(sequence)",
@@ -1564,6 +1578,12 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         !materialization.contains("pending_data_addresses.first()")
             && !materialization.contains("pending_data_addresses.first_mut()")
     );
+    let materialization_wrapper =
+        rust_function_definition(&pending_code, "record_pending_data_address_materialization")
+            .unwrap();
+    assert!(materialization_wrapper
+        .contains("record_pending_data_address_materialization_without_issue_removal"));
+    assert!(materialization_wrapper.contains("self.live_issue.remove_exact_at("));
     let pending_raw_code = rust_code_without_comments_and_literals(&pending);
     let pending_set_raw_code = rust_code_without_comments_and_literals(&pending_set);
     for helper in [
@@ -1672,13 +1692,22 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         assert!(prepare_batch.contains(anchor));
     }
     for anchor in [
-        "pending_data_address_sequence_for_replay(sequence)",
         "O3LiveIssueQueueCapture::ReplayPending(sequence)",
         "discard_pending_data_address_from(sequence)",
     ] {
         assert!(
             issue_root_code.contains(anchor),
             "pending replay owner is missing `{anchor}`"
+        );
+    }
+    for anchor in [
+        "pending_data_address_sequence_for_replay(sequence)",
+        "rollback.restore(runtime)",
+        "runtime.discard_pending_data_address_from(sequence)",
+    ] {
+        assert!(
+            issue_transaction_code.contains(anchor),
+            "pending replay transaction is missing `{anchor}`"
         );
     }
     assert!(!production_defines_exact_function(
@@ -2275,6 +2304,7 @@ fn task8_dependent_result_address_production_ownership_is_final() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let source_root = crate_dir.join("src");
     let runtime_owner_path = Path::new("src/o3_runtime.rs");
+    let transaction_owner_path = Path::new("src/o3_runtime_issue/transaction.rs");
     let issue_root_path = Path::new("src/o3_runtime_issue.rs");
     let calendar_owner_path = Path::new("src/o3_runtime_issue/calendar.rs");
     let pending_owner_path = Path::new("src/o3_runtime_pending_address.rs");
@@ -2444,8 +2474,11 @@ fn task8_dependent_result_address_production_ownership_is_final() {
     );
     assert_eq!(
         production_struct_named_type_storage(&production, "O3PendingDataAddresses"),
-        [(runtime_owner_path.to_path_buf(), 1)],
-        "O3PendingDataAddresses struct-field storage must be exactly the canonical runtime field"
+        [
+            (runtime_owner_path.to_path_buf(), 1),
+            (transaction_owner_path.to_path_buf(), 1),
+        ],
+        "O3PendingDataAddresses storage must be limited to runtime and bounded issue rollback"
     );
     assert_eq!(
         runtime_owner
@@ -2458,8 +2491,8 @@ fn task8_dependent_result_address_production_ownership_is_final() {
         production_code
             .matches("pending_data_addresses: O3PendingDataAddresses,")
             .count(),
-        1,
-        "production must contain exactly one pending-address collection field"
+        2,
+        "production must contain only runtime and bounded rollback collection fields"
     );
     let singleton_owners = production
         .iter()
@@ -3873,8 +3906,11 @@ fn o3_persistent_live_issue_state_owns_membership() {
         .collect::<Vec<_>>();
     assert_eq!(
         production_struct_named_type_storage(&production_sources, "O3LiveIssueState"),
-        vec![(PathBuf::from("src/o3_runtime.rs"), 1)],
-        "O3RuntimeState must be the sole persistent O3LiveIssueState owner",
+        vec![
+            (PathBuf::from("src/o3_runtime.rs"), 1),
+            (PathBuf::from("src/o3_runtime_issue/transaction.rs"), 1),
+        ],
+        "O3LiveIssueState storage must be limited to runtime and bounded issue rollback",
     );
     let runtime_state = source_section(
         &root,
@@ -4084,7 +4120,10 @@ fn o3_persistent_live_issue_state_owns_candidate_inventory() {
         .collect::<Vec<_>>();
     assert_eq!(
         production_struct_named_type_storage(&production_sources, "O3LiveIssueState"),
-        vec![(PathBuf::from("src/o3_runtime.rs"), 1)],
+        vec![
+            (PathBuf::from("src/o3_runtime.rs"), 1),
+            (PathBuf::from("src/o3_runtime_issue/transaction.rs"), 1),
+        ],
     );
     assert!(!queue_source.contains("fn capture("));
     assert!(!queue.contains("for (index, rob) in runtime.snapshot.reorder_buffer"));
@@ -4392,6 +4431,192 @@ fn o3_persistent_live_issue_state_owns_candidate_inventory() {
         ),
         1,
     );
+}
+
+#[test]
+fn o3_live_issue_transaction_bounds_batch_rollback() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let issue_path = crate_dir.join("src/o3_runtime_issue.rs");
+    let transaction_path = crate_dir.join("src/o3_runtime_issue/transaction.rs");
+    let transaction_tests_path = crate_dir.join("src/o3_runtime_issue/transaction_tests.rs");
+    let issue_tests_path = crate_dir.join("src/o3_runtime_issue_tests.rs");
+    let control_path = crate_dir.join("src/o3_runtime_control_window.rs");
+    let writeback_path = crate_dir.join("src/o3_runtime_writeback.rs");
+    let error_path = crate_dir.join("src/o3_runtime_error.rs");
+    let issue_source = fs::read_to_string(&issue_path).unwrap();
+    let issue = production_rust_source(&issue_source);
+    let transaction_source = fs::read_to_string(&transaction_path).unwrap();
+    let transaction = production_rust_source(&transaction_source);
+    let transaction_tests = fs::read_to_string(&transaction_tests_path).unwrap();
+    let issue_tests_source = fs::read_to_string(&issue_tests_path).unwrap();
+    let control = production_rust_source(&fs::read_to_string(&control_path).unwrap());
+    let writeback = production_rust_source(&fs::read_to_string(&writeback_path).unwrap());
+    let error_source = fs::read_to_string(&error_path).unwrap();
+    let error = production_rust_source(&error_source);
+
+    assert!(line_count(&transaction_path) <= MAX_O3_RUNTIME_ISSUE_TRANSACTION_LINES);
+    assert!(line_count(&transaction_tests_path) <= MAX_O3_RUNTIME_ISSUE_TRANSACTION_TEST_LINES);
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &issue_source,
+            "o3_runtime_issue/transaction.rs",
+            "transaction",
+        ),
+        1,
+        "issue owner must attach the transaction owner exactly once",
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &issue_tests_source,
+            "o3_runtime_issue/transaction_tests.rs",
+            "transaction",
+        ),
+        1,
+        "issue tests must attach the transaction tests exactly once",
+    );
+
+    for test in [
+        "live_issue_transaction_failure_records_no_partial_runtime_or_queue_state",
+        "live_issue_transaction_writeback_replan_rollback_restores_ports_and_descendants",
+        "live_issue_transaction_pending_replay_commits_only_exact_suffix_cleanup",
+        "live_issue_transaction_commit_removes_only_durable_selected_sequences",
+        "live_issue_transaction_rejects_an_already_active_transaction",
+        "live_issue_transaction_active_error_display_is_stable",
+        "live_issue_transaction_reserved_recording_rejects_same_sequence_raw_ready_mismatch",
+        "live_issue_transaction_reserved_recording_rejects_same_sequence_source_mismatch",
+    ] {
+        assert_eq!(
+            rust_test_function_definition_count(&transaction_tests, test),
+            1,
+            "missing exact compiled transaction test `{test}`",
+        );
+    }
+
+    let batch = rust_function_definition(&issue, "record_live_issue_batch").unwrap();
+    assert!(!batch.contains("self.clone()"));
+    assert!(batch.contains("O3LiveIssueTransaction::record(self, prepared)"));
+    let transaction_storage = production_struct_named_type_storage(
+        &[(
+            PathBuf::from("src/o3_runtime_issue/transaction.rs"),
+            transaction.clone(),
+        )],
+        "O3RuntimeState",
+    );
+    assert!(transaction_storage.is_empty());
+
+    let rollback = production_struct_definitions(&transaction)
+        .into_iter()
+        .find(|definition| {
+            production_defines_exact_named_item(definition, "struct", "O3LiveIssueRollback")
+        })
+        .expect("missing bounded live issue rollback image");
+    let rollback_fields = rollback
+        .lines()
+        .filter_map(|line| {
+            let (name, _) = line.trim().split_once(':')?;
+            name.chars()
+                .all(|character| character == '_' || character.is_ascii_alphanumeric())
+                .then(|| name.to_string())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rollback_fields,
+        vec![
+            "pending_state",
+            "reorder_buffer",
+            "live_speculative_executions",
+            "pending_data_addresses",
+            "writeback_calendar",
+            "live_writeback_counted_sequences",
+            "finalized_writeback_port_stats",
+            "live_staged_fetch_identities",
+            "stats",
+            "live_issue",
+        ],
+    );
+    for forbidden in [
+        "live_data_accesses",
+        "trace_records",
+        "live_control_lineages",
+        "invalidated_live_staged_fetch_identities",
+        "published_writeback_sequences",
+        "scalar_memory_window_limit",
+        "issue_width",
+        "next_sequence",
+    ] {
+        assert!(
+            !rollback.contains(forbidden),
+            "rollback image must not retain `{forbidden}`",
+        );
+    }
+
+    let capture = rust_function_definition(&transaction, "capture").unwrap();
+    for owner in [
+        "runtime.snapshot.pending_state.clone()",
+        "runtime.snapshot.reorder_buffer.clone()",
+        "runtime.live_speculative_executions.clone()",
+        "runtime.pending_data_addresses.clone()",
+        "runtime.writeback_calendar.clone()",
+        "runtime.live_writeback_counted_sequences.clone()",
+        "runtime.finalized_writeback_port_stats.clone()",
+        "runtime.live_staged_fetch_identities.clone()",
+        "runtime.live_issue.clone()",
+    ] {
+        assert_eq!(
+            capture.matches(owner).count(),
+            1,
+            "missing bounded clone `{owner}`"
+        );
+    }
+    assert_eq!(capture.matches(".clone()").count(), 9);
+    assert!(capture.contains("stats: runtime.stats"));
+    assert!(!capture.contains("runtime.clone()"));
+
+    let record = rust_function_definition(&transaction, "record").unwrap();
+    assert!(record.contains("O3LiveIssueRollback::capture(runtime)"));
+    assert!(record.contains("runtime.live_issue.begin_transaction()"));
+    assert!(record.contains("LiveIssueTransactionAlreadyActive"));
+    assert!(record.contains("rollback.restore(runtime)"));
+    assert!(record.contains("runtime.discard_pending_data_address_from(sequence)"));
+
+    let in_place =
+        rust_function_definition(&transaction, "record_prepared_batch_in_place").unwrap();
+    assert_eq!(
+        in_place
+            .matches("reserve_writeback_completions(ready)")
+            .count(),
+        1
+    );
+    assert!(!in_place.contains("reserve_fixed_fu_writeback"));
+    let reservation = in_place
+        .find("reserve_writeback_completions(ready)")
+        .unwrap();
+    let recording = in_place.find("for row in prepared").unwrap();
+    let removal = in_place.find("for recorded in recorded_rows").unwrap();
+    assert!(reservation < recording && recording < removal);
+    assert!(in_place.contains("(reservation.sequence(), reservation)"));
+    assert!(in_place.contains("record_live_speculative_execution_with_reservation"));
+
+    let wrapper = rust_function_definition(&control, "record_live_speculative_execution").unwrap();
+    let reserved = rust_function_definition(
+        &control,
+        "record_live_speculative_execution_with_reservation",
+    )
+    .unwrap();
+    assert!(wrapper.contains("reserve_fixed_fu_writeback"));
+    assert!(reserved.contains("reservation: Option<O3WritebackReservation>"));
+    assert!(reserved.contains("reservation.matches_fixed_fu(sequence, raw_ready_tick)"));
+    assert!(!reserved.contains("reserve_fixed_fu_writeback"));
+    assert!(!reserved.contains("reserve_writeback_completions"));
+
+    let reservation_impl = source_section(
+        &writeback,
+        "impl O3WritebackReservation {",
+        "#[derive(Clone, Debug, Default, Eq, PartialEq)]",
+    );
+    assert!(reservation_impl.contains("pub(crate) const fn sequence(self) -> u64"));
+    assert!(error.contains("LiveIssueTransactionAlreadyActive,"));
+    assert!(error_source.contains("O3 runtime live issue transaction is already active"));
 }
 
 #[test]

@@ -91,7 +91,7 @@ fn live_issue_head_recording_accepts_exact_bound_packet() {
     assert_live_issue_head_recording(true, 4, true);
 }
 
-fn materialized_queue(runtime: &O3RuntimeState) -> O3LiveIssueQueue {
+pub(super) fn materialized_queue(runtime: &O3RuntimeState) -> O3LiveIssueQueue {
     match O3LiveIssueQueue::materialize(runtime, runtime.live_issue.resident_sequences()).unwrap() {
         O3LiveIssueQueueCapture::Ready(queue) => queue,
         O3LiveIssueQueueCapture::ReplayPending(sequence) => {
@@ -231,7 +231,7 @@ fn queue_row_sequences(runtime: &O3RuntimeState) -> [u64; 3] {
     })
 }
 
-fn stage_queue_pending_row(runtime: &mut O3RuntimeState) -> u64 {
+pub(super) fn stage_queue_pending_row(runtime: &mut O3RuntimeState) -> u64 {
     assert!(runtime.set_window_depths(4, 4));
     let load = queue_load_event(LOAD_PC, 10, 12, 10, 0x9000);
     assert!(runtime.stage_live_data_access_issue(
