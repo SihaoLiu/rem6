@@ -7,6 +7,8 @@ mod live_issue_durable_cleanup;
 mod live_issue_raw_removal;
 #[path = "source_policy/live_issue_scheduler_contract.rs"]
 mod live_issue_scheduler_contract;
+#[path = "source_policy/task6_issue_migration.rs"]
+mod task6_issue_migration;
 
 const MAX_FACADE_LINES: usize = 1300;
 const MAX_O3_RUNTIME_DEEP_CLEANUP_TEST_LINES: usize = 350;
@@ -115,6 +117,7 @@ const MAX_SOURCE_LINES: usize = 1800;
 const MAX_SOURCE_POLICY_LIVE_ISSUE_DURABLE_CLEANUP_LINES: usize = 320;
 const MAX_SOURCE_POLICY_LIVE_ISSUE_RAW_REMOVAL_LINES: usize = 360;
 const MAX_SOURCE_POLICY_LIVE_ISSUE_SCHEDULER_CONTRACT_LINES: usize = 280;
+const MAX_SOURCE_POLICY_TASK6_ISSUE_MIGRATION_LINES: usize = 300;
 
 #[test]
 fn o3_persistent_iq_cpu_files_stay_focused() {
@@ -211,6 +214,10 @@ fn o3_persistent_iq_cpu_files_stay_focused() {
         (
             "tests/source_policy/live_issue_scheduler_contract.rs",
             MAX_SOURCE_POLICY_LIVE_ISSUE_SCHEDULER_CONTRACT_LINES,
+        ),
+        (
+            "tests/source_policy/task6_issue_migration.rs",
+            MAX_SOURCE_POLICY_TASK6_ISSUE_MIGRATION_LINES,
         ),
     ] {
         let path = crate_dir.join(relative);

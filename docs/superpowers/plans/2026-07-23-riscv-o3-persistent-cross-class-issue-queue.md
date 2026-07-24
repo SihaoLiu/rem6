@@ -1805,7 +1805,19 @@ Expected: all selected tests PASS. Existing top-level behavior remains green thr
 - Modify: `crates/rem6-cpu/src/o3_runtime_issue/state.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_issue.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_issue/service.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_issue_tests.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_issue/service_tests.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_issue/service_tests/scheduler_request.rs`
+- Create: `crates/rem6-cpu/src/o3_runtime_issue/service_tests/legacy_driver.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_pending_address_tests/lifecycle.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_pending_address_tests/multiple.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_pending_address_tests/scheduling.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_pending_address_tests/three_pending.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_memory_result_tests.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_memory_result_tests/replan.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_writeback_tests/deep_scalar_cleanup.rs`
 - Modify: `crates/rem6-cpu/tests/source_policy.rs`
+- Modify: `crates/rem6-cpu/tests/source_policy/live_issue_scheduler_contract.rs`
 
 - [ ] **Step 1: Write wake aggregation and fired-order RED tests**
 
@@ -2021,7 +2033,26 @@ fn schedule_o3_live_speculative_younger_executions(
 }
 ```
 
-Remove the now-unused head argument from this helper and its call sites. Remove `schedule_live_speculative_issues` entirely. Production callers must not call `service_live_issue_queue_at`; only the O3 wake callback and focused tests may call it.
+Remove the now-unused head argument from `schedule_o3_live_speculative_younger_executions` and its
+call sites. Remove the production `schedule_live_speculative_issues` function and its future-tick loop.
+Production callers must not call `service_live_issue_queue_at`; the O3 wake callback reaches it
+only through `service_live_issue_scheduler_at`.
+
+Migrate the test surface in the same Task 6 increment:
+
+- Create `service_live_issue_queue_until_boundary_for_test` in
+  `service_tests/legacy_driver.rs`, retaining the old driver body and the same `(hart, head, earliest_tick)` arguments so broad legacy fixtures can be renamed mechanically.
+  Declare its module and helper with `#[cfg(test)]`. The helper may retain the future-tick loop for
+  legacy tests, but it must not appear in `production_rust_source` or be callable from production.
+- `scheduler_request.rs` must use explicit real scheduler-facing turns and must not call the legacy
+  helper. Each modeled wake uses `request_service_at(tick)` followed by `service_live_issue_scheduler_at`; a later returned tick is serviced only by an explicit second
+  modeled wake. Rename its `compatibility_*` tests to scheduler-turn names.
+- In `service_tests.rs`, delete the duplicate compatibility no-wake test because the direct
+  `service_live_issue_queue_at` regression already owns that contract. Rename the replay assertion
+  that still needs looped legacy behavior to name the test-only driver explicitly.
+- Mechanically replace every other legacy test call to `schedule_live_speculative_issues` with
+  `service_live_issue_queue_until_boundary_for_test` in the issue, pending-address, memory-result,
+  and deep-scalar-cleanup test files listed above. Do not move this loop back into production.
 
 - [ ] **Step 5: Add source-policy enforcement for sole event ownership**
 
@@ -2046,6 +2077,18 @@ Only `mark_o3_writeback_wake_fired` calls `service_live_issue_scheduler_at` in p
 only `service_live_issue_scheduler_at` calls `service_live_issue_queue_at` directly after the
 temporary compatibility driver is removed.
 
+Transition the existing Task 5 policies in the same commit:
+
+- Remove `o3_live_issue_compatibility_driver_fails_closed` from root `source_policy.rs`.
+- Remove `o3_live_issue_service_compatibility_policy_rejects_silent_result_mutations` from root
+  `source_policy.rs`, and remove compatibility anchors and required compatibility test names from the one-tick, scheduler-entry,
+  and focused-test inventories. Require zero production definitions/references of
+  `schedule_live_speculative_issues`.
+- In `live_issue_scheduler_contract.rs`, remove compatibility extraction, seed, lookahead, and
+  mutation requirements. Replace them with final checks that the scheduler wrapper is the sole production scheduler entry and direct-service owner.
+- Scan all production Rust sources for the helper name and require no matches. Structurally prove
+  the `service_tests.rs` module declaration and helper are `#[cfg(test)]`, so the legacy helper is cfg-gated and test-only.
+
 Also scan production structs and assert that only `RiscvO3WritebackWakeState` stores scheduler event identity for this path.
 
 - [ ] **Step 6: Run wake, CPU, and scheduler regressions, then commit**
@@ -2053,10 +2096,24 @@ Also scan production structs and assert that only `RiscvO3WritebackWakeState` st
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib o3_writeback_wake_ -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib writeback_replan_moves_live_issue_wake_earlier -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib o3_runtime_issue_tests -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib scheduler_facing_ -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib service_live_issue_queue_at_ -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib scoped_issue_ -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib replay -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib o3_runtime_pending_address_tests -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib o3_runtime_memory_result_tests -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib deep_scalar_cleanup -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib riscv_live_retire_window -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --test source_policy o3_writeback_wake_paths_share_live_issue_desired_tick -- --nocapture
-git add crates/rem6-cpu/src/riscv_o3_writeback_wake.rs crates/rem6-cpu/src/riscv_o3_writeback_wake/desired.rs crates/rem6-cpu/src/riscv_live_retire_window.rs crates/rem6-cpu/src/o3_runtime_writeback.rs crates/rem6-cpu/src/o3_runtime_issue/state.rs crates/rem6-cpu/src/o3_runtime_issue.rs crates/rem6-cpu/src/o3_runtime_issue/service.rs crates/rem6-cpu/tests/source_policy.rs
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --test source_policy task6_issue_migration -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --test source_policy o3_live_issue_ -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --test source_policy
+TMPDIR=$PWD/target/tmp cargo check -p rem6-cpu --all-targets
+cargo fmt --all -- --check
+git diff --check
+git add crates/rem6-cpu/src/riscv_o3_writeback_wake.rs crates/rem6-cpu/src/riscv_o3_writeback_wake/desired.rs crates/rem6-cpu/src/riscv_live_retire_window.rs crates/rem6-cpu/src/o3_runtime_writeback.rs crates/rem6-cpu/src/o3_runtime_issue/state.rs crates/rem6-cpu/src/o3_runtime_issue.rs crates/rem6-cpu/src/o3_runtime_issue/service.rs crates/rem6-cpu/src/o3_runtime_issue_tests.rs crates/rem6-cpu/src/o3_runtime_issue/service_tests.rs crates/rem6-cpu/src/o3_runtime_issue/service_tests/scheduler_request.rs crates/rem6-cpu/src/o3_runtime_issue/service_tests/legacy_driver.rs crates/rem6-cpu/src/o3_runtime_pending_address_tests/lifecycle.rs crates/rem6-cpu/src/o3_runtime_pending_address_tests/multiple.rs crates/rem6-cpu/src/o3_runtime_pending_address_tests/scheduling.rs crates/rem6-cpu/src/o3_runtime_pending_address_tests/three_pending.rs crates/rem6-cpu/src/o3_runtime_memory_result_tests.rs crates/rem6-cpu/src/o3_runtime_memory_result_tests/replan.rs crates/rem6-cpu/src/o3_runtime_writeback_tests/deep_scalar_cleanup.rs crates/rem6-cpu/tests/source_policy.rs crates/rem6-cpu/tests/source_policy/live_issue_scheduler_contract.rs
 TMPDIR=$PWD/target/tmp git commit -m "feat: drive O3 issue through scheduler wake"
 ```
 
