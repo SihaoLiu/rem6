@@ -163,7 +163,8 @@ impl O3RuntimeState {
         let (admitted_writeback_tick, writeback_slot) =
             match (candidate.consumes_writeback_slot(), reservation) {
                 (true, Some(reservation))
-                    if reservation.matches_fixed_fu(sequence, raw_ready_tick) =>
+                    if reservation.matches_fixed_fu(sequence, raw_ready_tick)
+                        && self.writeback_calendar.reservation(sequence) == Some(reservation) =>
                 {
                     (reservation.admitted_tick(), Some(reservation.slot()))
                 }

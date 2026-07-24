@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 
-#[derive(Clone)]
 struct O3LiveIssueRollback {
     pending_state: O3PendingStateSnapshot,
     reorder_buffer: Vec<O3ReorderBufferEntry>,
@@ -13,7 +12,7 @@ struct O3LiveIssueRollback {
     finalized_writeback_port_stats: O3FinalizedWritebackPortStats,
     live_staged_fetch_identities: BTreeMap<u64, O3LiveStagedFetchIdentity>,
     stats: O3RuntimeStats,
-    live_issue: O3LiveIssueState,
+    live_issue: O3LiveIssueStateRollback,
 }
 
 impl O3LiveIssueRollback {
@@ -28,7 +27,7 @@ impl O3LiveIssueRollback {
             finalized_writeback_port_stats: runtime.finalized_writeback_port_stats.clone(),
             live_staged_fetch_identities: runtime.live_staged_fetch_identities.clone(),
             stats: runtime.stats,
-            live_issue: runtime.live_issue.clone(),
+            live_issue: runtime.live_issue.capture_rollback(),
         }
     }
 
@@ -42,7 +41,7 @@ impl O3LiveIssueRollback {
         runtime.finalized_writeback_port_stats = self.finalized_writeback_port_stats;
         runtime.live_staged_fetch_identities = self.live_staged_fetch_identities;
         runtime.stats = self.stats;
-        runtime.live_issue = self.live_issue;
+        runtime.live_issue.restore_rollback(self.live_issue);
     }
 }
 
@@ -64,14 +63,26 @@ enum O3RecordedLiveIssue {
 
 pub(in crate::o3_runtime) struct O3LiveIssueTransaction;
 
+#[derive(Debug, Eq, PartialEq)]
+pub(in crate::o3_runtime) enum O3LiveIssueTransactionError {
+    AlreadyActive,
+    Runtime(O3RuntimeError),
+}
+
+impl From<O3RuntimeError> for O3LiveIssueTransactionError {
+    fn from(error: O3RuntimeError) -> Self {
+        Self::Runtime(error)
+    }
+}
+
 impl O3LiveIssueTransaction {
     pub(in crate::o3_runtime) fn record(
         runtime: &mut O3RuntimeState,
         prepared: Vec<O3PreparedLiveIssue>,
-    ) -> Result<O3LiveIssueBatchOutcome, O3RuntimeError> {
+    ) -> Result<O3LiveIssueBatchOutcome, O3LiveIssueTransactionError> {
         let rollback = O3LiveIssueRollback::capture(runtime);
         if !runtime.live_issue.begin_transaction() {
-            return Err(O3RuntimeError::LiveIssueTransactionAlreadyActive);
+            return Err(O3LiveIssueTransactionError::AlreadyActive);
         }
         let result = record_prepared_batch_in_place(runtime, prepared);
         match result {
@@ -86,7 +97,7 @@ impl O3LiveIssueTransaction {
             }
             Err(error) => {
                 rollback.restore(runtime);
-                Err(error)
+                Err(error.into())
             }
         }
     }

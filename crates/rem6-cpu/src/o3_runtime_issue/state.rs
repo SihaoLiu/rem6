@@ -5,6 +5,10 @@ use std::{
 
 use rem6_memory::Address;
 
+#[path = "state/rollback.rs"]
+mod rollback;
+pub(in crate::o3_runtime) use rollback::O3LiveIssueStateRollback;
+
 macro_rules! copy_getters {
     ($($name:ident -> $value:ty),+ $(,)?) => {
         $(pub const fn $name(self) -> $value { self.$name })+

@@ -1,3 +1,4 @@
+use super::super::o3_runtime_issue::O3LiveIssueTransactionError;
 use super::*;
 
 fn sequence_at(fixture: &ScalarIssueFixture, pc: u64) -> u64 {
@@ -100,7 +101,9 @@ fn selected_issue_batch_failure_records_no_partial_state() {
     let before = fixture.runtime.clone();
     assert!(matches!(
         fixture.runtime.record_live_issue_batch(prepared),
-        Err(O3RuntimeError::SelectedIssueCandidateNotExecutable { .. })
+        Err(O3LiveIssueTransactionError::Runtime(
+            O3RuntimeError::SelectedIssueCandidateNotExecutable { .. }
+        ))
     ));
     assert_eq!(fixture.runtime, before);
 }

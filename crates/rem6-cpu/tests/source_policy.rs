@@ -11,6 +11,8 @@ const MAX_O3_RUNTIME_LIVE_ISSUE_IDENTITY_LINES: usize = 350;
 const MAX_RISCV_O3_WRITEBACK_WAKE_DESIRED_LINES: usize = 220;
 const MAX_O3_RUNTIME_ISSUE_STATE_LINES: usize = 450;
 const MAX_O3_RUNTIME_ISSUE_STATE_TEST_LINES: usize = 500;
+const MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_LINES: usize = 180;
+const MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_TEST_LINES: usize = 180;
 const MAX_O3_RUNTIME_ISSUE_SERVICE_LINES: usize = 600;
 const MAX_O3_RUNTIME_ISSUE_SERVICE_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_ISSUE_TRANSACTION_LINES: usize = 450;
@@ -114,6 +116,14 @@ fn o3_persistent_iq_cpu_files_stay_focused() {
         (
             "src/o3_runtime_issue/state_tests.rs",
             MAX_O3_RUNTIME_ISSUE_STATE_TEST_LINES,
+        ),
+        (
+            "src/o3_runtime_issue/state/rollback.rs",
+            MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_LINES,
+        ),
+        (
+            "src/o3_runtime_issue/state/rollback_tests.rs",
+            MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_TEST_LINES,
         ),
         (
             "src/o3_runtime_issue/service.rs",
@@ -3906,11 +3916,8 @@ fn o3_persistent_live_issue_state_owns_membership() {
         .collect::<Vec<_>>();
     assert_eq!(
         production_struct_named_type_storage(&production_sources, "O3LiveIssueState"),
-        vec![
-            (PathBuf::from("src/o3_runtime.rs"), 1),
-            (PathBuf::from("src/o3_runtime_issue/transaction.rs"), 1),
-        ],
-        "O3LiveIssueState storage must be limited to runtime and bounded issue rollback",
+        vec![(PathBuf::from("src/o3_runtime.rs"), 1)],
+        "O3LiveIssueState must have exactly one persistent runtime owner",
     );
     let runtime_state = source_section(
         &root,
@@ -3929,8 +3936,11 @@ fn o3_persistent_live_issue_state_owns_membership() {
         production_struct_named_type_storage(&production_sources, "O3LiveIssueResidentSequences");
     assert_eq!(
         resident_inventory_owners,
-        vec![(PathBuf::from("src/o3_runtime_issue/state.rs"), 1)],
-        "persistent live issue resident storage must have one dedicated owner",
+        vec![
+            (PathBuf::from("src/o3_runtime_issue/state/rollback.rs"), 1,),
+            (PathBuf::from("src/o3_runtime_issue/state.rs"), 1),
+        ],
+        "resident membership storage must be limited to persistent state and bounded rollback",
     );
 
     let packet_inventory_owners = production_sources
@@ -4120,10 +4130,7 @@ fn o3_persistent_live_issue_state_owns_candidate_inventory() {
         .collect::<Vec<_>>();
     assert_eq!(
         production_struct_named_type_storage(&production_sources, "O3LiveIssueState"),
-        vec![
-            (PathBuf::from("src/o3_runtime.rs"), 1),
-            (PathBuf::from("src/o3_runtime_issue/transaction.rs"), 1),
-        ],
+        vec![(PathBuf::from("src/o3_runtime.rs"), 1)],
     );
     assert!(!queue_source.contains("fn capture("));
     assert!(!queue.contains("for (index, rob) in runtime.snapshot.reorder_buffer"));
@@ -4437,6 +4444,9 @@ fn o3_persistent_live_issue_state_owns_candidate_inventory() {
 fn o3_live_issue_transaction_bounds_batch_rollback() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let issue_path = crate_dir.join("src/o3_runtime_issue.rs");
+    let state_path = crate_dir.join("src/o3_runtime_issue/state.rs");
+    let state_rollback_path = crate_dir.join("src/o3_runtime_issue/state/rollback.rs");
+    let state_rollback_tests_path = crate_dir.join("src/o3_runtime_issue/state/rollback_tests.rs");
     let transaction_path = crate_dir.join("src/o3_runtime_issue/transaction.rs");
     let transaction_tests_path = crate_dir.join("src/o3_runtime_issue/transaction_tests.rs");
     let issue_tests_path = crate_dir.join("src/o3_runtime_issue_tests.rs");
@@ -4445,6 +4455,10 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
     let error_path = crate_dir.join("src/o3_runtime_error.rs");
     let issue_source = fs::read_to_string(&issue_path).unwrap();
     let issue = production_rust_source(&issue_source);
+    let state_source = fs::read_to_string(&state_path).unwrap();
+    let state_rollback_source = fs::read_to_string(&state_rollback_path).unwrap();
+    let state_rollback = production_rust_source(&state_rollback_source);
+    let state_rollback_tests = fs::read_to_string(&state_rollback_tests_path).unwrap();
     let transaction_source = fs::read_to_string(&transaction_path).unwrap();
     let transaction = production_rust_source(&transaction_source);
     let transaction_tests = fs::read_to_string(&transaction_tests_path).unwrap();
@@ -4456,6 +4470,10 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
 
     assert!(line_count(&transaction_path) <= MAX_O3_RUNTIME_ISSUE_TRANSACTION_LINES);
     assert!(line_count(&transaction_tests_path) <= MAX_O3_RUNTIME_ISSUE_TRANSACTION_TEST_LINES);
+    assert!(line_count(&state_rollback_path) <= MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_LINES);
+    assert!(
+        line_count(&state_rollback_tests_path) <= MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_TEST_LINES
+    );
     assert_eq!(
         path_owned_module_declaration_count(
             &issue_source,
@@ -4474,6 +4492,16 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
         1,
         "issue tests must attach the transaction tests exactly once",
     );
+    assert_eq!(
+        path_owned_module_declaration_count(&state_source, "state/rollback.rs", "rollback",),
+        1,
+        "live issue state must attach its rollback child exactly once",
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(&state_rollback_source, "rollback_tests.rs", "tests",),
+        1,
+        "state rollback owner must attach its tests exactly once",
+    );
 
     for test in [
         "live_issue_transaction_failure_records_no_partial_runtime_or_queue_state",
@@ -4481,10 +4509,10 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
         "live_issue_transaction_pending_replay_commits_only_exact_suffix_cleanup",
         "live_issue_transaction_commit_removes_only_durable_selected_sequences",
         "live_issue_transaction_rejects_an_already_active_transaction",
-        "live_issue_transaction_active_error_display_is_stable",
         "live_issue_transaction_reserved_recording_rejects_same_sequence_raw_ready_mismatch",
         "live_issue_transaction_reserved_recording_rejects_same_sequence_source_mismatch",
         "live_issue_transaction_reserved_recording_rejects_wrong_sequence_reservation",
+        "live_issue_transaction_reserved_recording_rejects_stale_replanned_reservation",
     ] {
         assert_eq!(
             rust_test_function_definition_count(&transaction_tests, test),
@@ -4492,6 +4520,18 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
             "missing exact compiled transaction test `{test}`",
         );
     }
+    assert_eq!(
+        rust_test_function_definition_count(
+            &state_rollback_tests,
+            "live_issue_transaction_state_rollback_preserves_preexisting_histories",
+        ),
+        1,
+        "missing bounded live issue state rollback history test",
+    );
+    assert!(
+        transaction_replan_test_exercises_descendant_invalidation(&transaction_tests),
+        "writeback rollback coverage must prove descendant invalidation without cloning runtime",
+    );
 
     let batch = rust_function_definition(&issue, "record_live_issue_batch").unwrap();
     assert!(!batch.contains("self.clone()"));
@@ -4504,6 +4544,28 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
         "O3RuntimeState",
     );
     assert!(transaction_storage.is_empty());
+    assert!(
+        production_struct_named_type_storage(
+            &[(
+                PathBuf::from("src/o3_runtime_issue/transaction.rs"),
+                transaction.clone(),
+            )],
+            "O3LiveIssueState",
+        )
+        .is_empty(),
+        "transaction rollback must not store the full live issue state",
+    );
+    assert_eq!(
+        production_struct_named_type_storage(
+            &[(
+                PathBuf::from("src/o3_runtime_issue/transaction.rs"),
+                transaction.clone(),
+            )],
+            "O3LiveIssueStateRollback",
+        ),
+        vec![(PathBuf::from("src/o3_runtime_issue/transaction.rs"), 1,)],
+        "transaction must store exactly one bounded live issue rollback image",
+    );
 
     let rollback = production_struct_definitions(&transaction)
         .into_iter()
@@ -4543,9 +4605,47 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
         );
     }
 
+    let state_rollback_definition = production_struct_definitions(&state_rollback)
+        .into_iter()
+        .find(|definition| {
+            production_defines_exact_named_item(definition, "struct", "O3LiveIssueStateRollback")
+        })
+        .expect("missing bounded live issue state rollback image");
+    assert!(live_issue_state_rollback_definition_is_bounded(
+        &state_rollback_definition
+    ));
+    assert_eq!(
+        production_named_struct_fields(&state_rollback_definition),
+        vec![
+            "resident_sequences",
+            "requested_service_tick",
+            "active_tick",
+            "transaction_active",
+            "mutation_generation",
+            "last_service_generation",
+            "telemetry",
+            "trace_records_len",
+        ],
+    );
+    for forbidden in [
+        "compatibility_cycle_ticks",
+        "trace_records:",
+        "Vec<O3LiveIssueTraceRecord>",
+    ] {
+        assert!(
+            !state_rollback_definition.contains(forbidden),
+            "state rollback image must not retain `{forbidden}`",
+        );
+    }
+    let state_capture = rust_function_definition(&state_rollback, "capture_rollback").unwrap();
+    let state_restore = rust_function_definition(&state_rollback, "restore_rollback").unwrap();
+    assert!(!state_capture.contains("compatibility_cycle_ticks"));
+    assert!(!state_capture.contains("trace_records.clone"));
+    assert!(state_restore.contains("truncate"));
+
     assert!(
         o3_live_issue_transaction_clones_are_bounded(&transaction),
-        "transaction owner contains a clone outside the nine bounded capture owners",
+        "transaction owner contains a clone outside the eight bounded capture owners",
     );
     let capture = rust_function_definition(&transaction, "capture").unwrap();
     assert!(capture.contains("stats: runtime.stats"));
@@ -4553,7 +4653,7 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
     let record = rust_function_definition(&transaction, "record").unwrap();
     assert!(record.contains("O3LiveIssueRollback::capture(runtime)"));
     assert!(record.contains("runtime.live_issue.begin_transaction()"));
-    assert!(record.contains("LiveIssueTransactionAlreadyActive"));
+    assert!(record.contains("O3LiveIssueTransactionError::AlreadyActive"));
     assert!(record.contains("rollback.restore(runtime)"));
     assert!(record.contains("runtime.discard_pending_data_address_from(sequence)"));
 
@@ -4592,6 +4692,9 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
     assert!(wrapper.contains("reserve_fixed_fu_writeback"));
     assert!(reserved.contains("reservation: Option<O3WritebackReservation>"));
     assert!(reserved.contains("reservation.matches_fixed_fu(sequence, raw_ready_tick)"));
+    assert!(reserved_recording_requires_current_calendar_reservation(
+        &reserved
+    ));
     assert!(!reserved.contains("reserve_fixed_fu_writeback"));
     assert!(!reserved.contains("reserve_writeback_completions"));
 
@@ -4601,8 +4704,29 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
         "#[derive(Clone, Debug, Default, Eq, PartialEq)]",
     );
     assert!(reservation_impl.contains("pub(crate) const fn sequence(self) -> u64"));
-    assert!(error.contains("LiveIssueTransactionAlreadyActive,"));
-    assert!(error_source.contains("O3 runtime live issue transaction is already active"));
+    assert!(!error.contains("LiveIssueTransactionAlreadyActive"));
+    assert!(!error_source.contains("O3 runtime live issue transaction is already active"));
+    assert!(transaction.contains("enum O3LiveIssueTransactionError"));
+    assert!(transaction.contains("AlreadyActive"));
+    assert!(transaction.contains("Runtime(O3RuntimeError)"));
+    assert!(transaction.contains("impl From<O3RuntimeError> for O3LiveIssueTransactionError"));
+    let scheduler = rust_function_definition(&issue, "schedule_live_speculative_issues").unwrap();
+    assert!(scheduler.contains("O3LiveIssueTransactionError::Runtime"));
+    assert!(scheduler.contains("O3LiveIssueTransactionError::AlreadyActive"));
+}
+
+#[test]
+fn o3_live_issue_transaction_keeps_active_guard_private() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let transaction = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/o3_runtime_issue/transaction.rs")).unwrap(),
+    );
+    let error = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/o3_runtime_error.rs")).unwrap(),
+    );
+    assert!(!error.contains("LiveIssueTransactionAlreadyActive"));
+    assert!(transaction.contains("enum O3LiveIssueTransactionError"));
+    assert!(transaction.contains("Runtime(O3RuntimeError)"));
 }
 
 #[test]
@@ -7897,7 +8021,7 @@ fn rust_function_definition(source: &str, name: &str) -> Option<String> {
     None
 }
 
-const O3_LIVE_ISSUE_ALLOWED_CLONE_RECEIVERS: [&str; 9] = [
+const O3_LIVE_ISSUE_ALLOWED_CLONE_RECEIVERS: [&str; 8] = [
     "runtime.snapshot.pending_state",
     "runtime.snapshot.reorder_buffer",
     "runtime.live_speculative_executions",
@@ -7906,7 +8030,6 @@ const O3_LIVE_ISSUE_ALLOWED_CLONE_RECEIVERS: [&str; 9] = [
     "runtime.live_writeback_counted_sequences",
     "runtime.finalized_writeback_port_stats",
     "runtime.live_staged_fetch_identities",
-    "runtime.live_issue",
 ];
 
 fn o3_live_issue_transaction_clones_are_bounded(source: &str) -> bool {
@@ -7960,6 +8083,38 @@ fn o3_live_issue_transaction_clones_are_bounded(source: &str) -> bool {
         }
     }
     true
+}
+
+fn reserved_recording_requires_current_calendar_reservation(source: &str) -> bool {
+    let production = production_rust_source(source);
+    let compact = production
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    rust_method_call_positions(&production, "reservation").len() == 1
+        && (compact.contains("writeback_calendar.reservation(sequence)==Some(reservation)")
+            || compact.contains("Some(reservation)==writeback_calendar.reservation(sequence)"))
+}
+
+fn transaction_replan_test_exercises_descendant_invalidation(source: &str) -> bool {
+    let Some(fixture) = rust_function_definition(source, "writeback_replan_rollback_fixture")
+    else {
+        return false;
+    };
+    let Some(test) = rust_function_definition(
+        source,
+        "live_issue_transaction_writeback_replan_rollback_restores_ports_and_descendants",
+    ) else {
+        return false;
+    };
+    rust_method_call_positions(&test, "writeback_replan_rollback_fixture").len() == 2
+        && rust_method_call_positions(&test, "reserve_writeback_completions").len() == 1
+        && rust_method_call_positions(&test, "resident_sequences").len() == 1
+        && rust_method_call_positions(&test, "trace_records").len() == 2
+        && rust_method_call_positions(&fixture, "clone").is_empty()
+        && rust_method_call_positions(&test, "clone").is_empty()
+        && fixture.contains("producer_sequences")
+        && test.contains("child_sequence")
 }
 
 fn production_named_struct_fields(definition: &str) -> Vec<String> {
@@ -8051,6 +8206,23 @@ fn production_named_struct_fields(definition: &str) -> Vec<String> {
         fields.push(field);
     }
     fields
+}
+
+fn live_issue_state_rollback_definition_is_bounded(definition: &str) -> bool {
+    production_named_struct_fields(definition)
+        == [
+            "resident_sequences",
+            "requested_service_tick",
+            "active_tick",
+            "transaction_active",
+            "mutation_generation",
+            "last_service_generation",
+            "telemetry",
+            "trace_records_len",
+        ]
+        && !definition.contains("compatibility_cycle_ticks")
+        && !definition.contains("trace_records:")
+        && !definition.contains("Vec<O3LiveIssueTraceRecord>")
 }
 
 fn rust_method_call_positions(source: &str, name: &str) -> Vec<usize> {
@@ -8494,7 +8666,7 @@ impl O3LiveIssueRollback {
             live_writeback_counted_sequences: runtime.live_writeback_counted_sequences.clone(),
             finalized_writeback_port_stats: runtime.finalized_writeback_port_stats.clone(),
             live_staged_fetch_identities: runtime.live_staged_fetch_identities.clone(),
-            live_issue: runtime.live_issue.clone(),
+            live_issue: runtime.live_issue.capture_rollback(),
         }
     }
 }
@@ -8529,7 +8701,7 @@ struct O3LiveIssueRollback {
     finalized_writeback_port_stats: O3FinalizedWritebackPortStats,
     live_staged_fetch_identities: BTreeMap<u64, O3LiveStagedFetchIdentity>,
     stats: O3RuntimeStats,
-    live_issue: O3LiveIssueState,
+    live_issue: O3LiveIssueStateRollback,
     pub forbidden_public: O3RuntimeState,
     pub(crate) forbidden_crate: O3RuntimeState,
     pub(in crate::o3_runtime) forbidden_scoped: O3RuntimeState,
@@ -8556,6 +8728,86 @@ struct O3LiveIssueRollback {
             "forbidden_attributed",
         ],
     );
+}
+
+#[test]
+fn o3_live_issue_transaction_policy_rejects_unbounded_state_rollback_fields() {
+    let canonical = r#"
+struct O3LiveIssueStateRollback {
+    resident_sequences: O3LiveIssueResidentSequences,
+    requested_service_tick: Option<u64>,
+    active_tick: Option<O3LiveIssueActiveTick>,
+    transaction_active: bool,
+    mutation_generation: u64,
+    last_service_generation: Option<(u64, u64)>,
+    telemetry: O3LiveIssueTelemetry,
+    trace_records_len: usize,
+}
+"#;
+    assert!(live_issue_state_rollback_definition_is_bounded(canonical));
+    for mutation in [
+        canonical.replace(
+            "trace_records_len: usize,",
+            "trace_records: Vec<O3LiveIssueTraceRecord>,",
+        ),
+        canonical.replace(
+            "trace_records_len: usize,",
+            "trace_records_len: usize, pub(crate) compatibility_cycle_ticks: BTreeSet<u64>,",
+        ),
+        canonical.replace(
+            "trace_records_len: usize,",
+            "trace_records_len: usize, #[allow(dead_code)] pub(in crate) extra: O3RuntimeState,",
+        ),
+    ] {
+        assert!(!live_issue_state_rollback_definition_is_bounded(&mutation));
+    }
+}
+
+#[test]
+fn o3_live_issue_transaction_policy_rejects_stale_reservation_validation_mutations() {
+    let canonical = r#"
+fn record_live_speculative_execution_with_reservation(
+    &mut self,
+    sequence: u64,
+    reservation: O3WritebackReservation,
+) {
+    let valid = reservation.matches_fixed_fu(sequence, 42)
+        && self.writeback_calendar.reservation(sequence) == Some(reservation);
+}
+"#;
+    assert!(reserved_recording_requires_current_calendar_reservation(
+        canonical
+    ));
+    for mutation in [
+        canonical.replace(
+            "self.writeback_calendar.reservation(sequence) == Some(reservation)",
+            "true",
+        ),
+        canonical.replace(
+            "self.writeback_calendar.reservation(sequence) == Some(reservation)",
+            "self.writeback_calendar.reservation(sequence).is_some()",
+        ),
+    ] {
+        assert!(!reserved_recording_requires_current_calendar_reservation(
+            &mutation
+        ));
+    }
+}
+
+#[test]
+fn o3_live_issue_transaction_policy_rejects_weak_replan_rollback_coverage() {
+    let weak = r#"
+fn live_issue_transaction_writeback_replan_rollback_restores_ports_and_descendants() {
+    let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::CrossResource);
+    let prepared = prepared_rows(&fixture, 21);
+    let calendar = fixture.runtime.writeback_calendar.clone();
+    assert!(fixture.runtime.record_live_issue_batch(prepared).is_err());
+    assert_eq!(fixture.runtime.writeback_calendar, calendar);
+}
+"#;
+    assert!(!transaction_replan_test_exercises_descendant_invalidation(
+        weak
+    ));
 }
 
 #[test]

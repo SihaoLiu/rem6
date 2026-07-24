@@ -22,11 +22,12 @@ pub(crate) use dependency::O3LiveIssueDependencyTable;
 use queue::{
     live_issue_op_class, O3LiveIssueQueue, O3LiveIssueQueueCapture, O3LiveSpeculativeIssueCandidate,
 };
-pub(in crate::o3_runtime) use state::O3LiveIssueState;
+pub(in crate::o3_runtime) use state::{O3LiveIssueState, O3LiveIssueStateRollback};
 pub use state::{
     O3LiveIssueTelemetry, O3LiveIssueTraceAction, O3LiveIssueTraceClass, O3LiveIssueTraceRecord,
 };
 use transaction::O3LiveIssueTransaction;
+pub(in crate::o3_runtime) use transaction::O3LiveIssueTransactionError;
 
 #[derive(Clone)]
 pub(crate) struct O3PreparedLiveIssue {
@@ -245,10 +246,10 @@ impl O3RuntimeState {
         Ok(true)
     }
 
-    pub(crate) fn record_live_issue_batch(
+    pub(in crate::o3_runtime) fn record_live_issue_batch(
         &mut self,
         prepared: Vec<O3PreparedLiveIssue>,
-    ) -> Result<O3LiveIssueBatchOutcome, O3RuntimeError> {
+    ) -> Result<O3LiveIssueBatchOutcome, O3LiveIssueTransactionError> {
         O3LiveIssueTransaction::record(self, prepared)
     }
 
@@ -294,7 +295,13 @@ impl O3RuntimeState {
                 let prepared = self.prepare_live_issue_batch(hart, &queue, plan.issued(), tick)?;
                 let outcome = match prepared {
                     O3PreparedLiveIssueBatch::Prepared(prepared) => {
-                        self.record_live_issue_batch(prepared)?
+                        match self.record_live_issue_batch(prepared) {
+                            Ok(outcome) => outcome,
+                            Err(O3LiveIssueTransactionError::Runtime(error)) => return Err(error),
+                            Err(O3LiveIssueTransactionError::AlreadyActive) => {
+                                unreachable!("live issue scheduler cannot nest issue transactions")
+                            }
+                        }
                     }
                     O3PreparedLiveIssueBatch::ReplayPending(sequence) => {
                         let mut staged = self.clone();
