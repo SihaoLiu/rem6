@@ -315,6 +315,42 @@ fn scheduler_entry_seals_future_active_decision_before_earlier_tick() {
 }
 
 #[test]
+fn scheduler_facing_service_finalizes_prior_decisions_without_pruning_lookahead() {
+    let mut fixture = ScalarIssueFixture::new(1, ScalarIssueCase::CrossResource);
+    fixture
+        .runtime
+        .live_issue
+        .observe_sequences(18, &[], &[900], &[], 1);
+    fixture.runtime.seal_live_issue_decision();
+    fixture
+        .runtime
+        .live_issue
+        .observe_sequences(30, &[], &[], &[901], 1);
+    fixture.runtime.seal_live_issue_decision();
+    assert_eq!(
+        fixture.runtime.live_issue.counted_cycle_ticks_for_test(),
+        [18, 30]
+    );
+
+    let outcome = fixture
+        .runtime
+        .service_live_issue_scheduler_at(&fixture.hart, 21)
+        .unwrap();
+
+    assert_eq!(outcome.issued_rows(), 1);
+    assert_eq!(
+        fixture.runtime.live_issue.scheduler_entry_tick_for_test(),
+        Some(21)
+    );
+    assert_eq!(
+        fixture.runtime.live_issue.counted_cycle_ticks_for_test(),
+        [21, 30]
+    );
+    assert_eq!(fixture.runtime.stats().resource_blocked_row_cycles(), 3);
+    assert_eq!(fixture.runtime.stats().dependency_blocked_row_cycles(), 1);
+}
+
+#[test]
 fn stats_reset_clears_cycle_evidence_without_delaying_issue_timing() {
     let mut fixture = dependency_lookahead_fixture();
     fixture

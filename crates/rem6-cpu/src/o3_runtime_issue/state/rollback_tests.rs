@@ -27,6 +27,8 @@ fn live_issue_transaction_state_rollback_preserves_preexisting_histories() {
     ));
     assert!(state.begin_service_at(600));
     state.request_service_at(700);
+    state.observe_sequences(700, &[], &[resident], &[], 1);
+    state.seal_current_decision();
     state.trace_records.reserve(8);
     let before = state.clone();
     let trace_records_ptr = state.trace_records.as_ptr();

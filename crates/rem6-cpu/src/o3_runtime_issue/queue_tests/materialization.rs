@@ -21,7 +21,7 @@ fn live_issue_queue_materialization_is_sequence_ordered_and_requires_bound_packe
 fn live_issue_queue_materializes_resident_sequences_without_rob_inventory_scan() {
     let (mut runtime, instructions, sequences) = queue_rows();
     bind_queue_rows(&mut runtime, instructions);
-    assert!(runtime.live_issue.remove_exact_at(
+    assert!(runtime.live_issue.remove_exact_at_for_test(
         sequences[1],
         O3LiveIssueTraceAction::Retired,
         Address::new(SECOND_PC),

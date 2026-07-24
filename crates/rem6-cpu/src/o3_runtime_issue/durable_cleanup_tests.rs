@@ -119,6 +119,35 @@ fn durable_pending_address_issue_clears_only_current_and_future_blocking() {
     assert_durable_cleanup(&runtime, sequence);
 }
 
+#[test]
+fn durable_removal_rejects_active_transaction_before_queue_mutation() {
+    let mut runtime = O3RuntimeState::default();
+    let sequence = 1;
+    assert!(runtime.live_issue.enqueue_at(
+        sequence,
+        Address::new(BRANCH_PC),
+        O3LiveIssueTraceClass::ScalarInteger,
+        DURABLE_ISSUE_TICK,
+    ));
+    assert!(runtime.live_issue.begin_transaction());
+    let before = runtime.live_issue.clone();
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runtime
+            .remove_durable_live_issue_at(
+                sequence,
+                Address::new(BRANCH_PC),
+                O3LiveIssueTraceClass::ScalarInteger,
+                DURABLE_ISSUE_TICK,
+                None,
+            )
+            .unwrap();
+    }));
+
+    assert!(rejected.is_err());
+    assert_eq!(runtime.live_issue, before);
+}
+
 fn retain_blocked_decisions(runtime: &mut O3RuntimeState, sequence: u64) {
     runtime
         .live_issue

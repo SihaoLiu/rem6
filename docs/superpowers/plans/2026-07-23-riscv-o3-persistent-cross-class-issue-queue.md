@@ -1887,7 +1887,7 @@ fn o3_writeback_wake_fired_services_pending_address_before_issue_queue() {
         .find("wake_ready_o3_data_access_younger_window(now, &fetch_events)")
         .unwrap();
     let issue = fired
-        .find("service_live_issue_queue_at(&hart, now)")
+        .find("service_live_issue_scheduler_at(&hart, now)")
         .unwrap();
     let refresh = fired.find("refresh_o3_writeback_wake(now)").unwrap();
     assert!(mark < pending && pending < issue && issue < refresh);
@@ -1970,7 +1970,10 @@ pub fn mark_o3_writeback_wake_fired(&self, now: Tick) {
         state.wake_ready_o3_data_access_younger_window(now, &fetch_events);
     }
     let hart = state.hart.clone();
-    if let Err(error) = state.o3_runtime.service_live_issue_queue_at(&hart, now) {
+    if let Err(error) = state
+        .o3_runtime
+        .service_live_issue_scheduler_at(&hart, now)
+    {
         state
             .pending_callback_error
             .get_or_insert(RiscvCpuError::O3Runtime(error));
@@ -1978,6 +1981,12 @@ pub fn mark_o3_writeback_wake_fired(&self, now: Tick) {
     state.refresh_o3_writeback_wake(now);
 }
 ```
+
+`service_live_issue_scheduler_at` is the sole scheduler-facing queue entry: it advances the real
+scheduler frontier through `enter_live_issue_scheduler_at(now)` and then services exactly `now`.
+The temporary compatibility driver may use this wrapper only for its real `earliest_tick`; any
+later compatibility lookahead continues through `service_live_issue_queue_at` directly and must
+not advance the real frontier.
 
 - [ ] **Step 4: Stop live-window callers from simulating future issue**
 
@@ -2017,11 +2026,17 @@ Assert:
 ```rust
 assert!(!issue.contains("fn schedule_live_speculative_issues("));
 assert!(!retire.contains("service_live_issue_queue_at("));
-assert_eq!(wake.matches("service_live_issue_queue_at(&hart, now)").count(), 1);
+assert_eq!(wake.matches("service_live_issue_scheduler_at(&hart, now)").count(), 1);
+assert!(!wake.contains("service_live_issue_queue_at(&hart, now)"));
+assert_eq!(service.matches("service_live_issue_queue_at(hart, now)").count(), 1);
 assert_eq!(desired.matches("live_issue_service_tick()").count(), 1);
 assert_eq!(wake.matches("desired_o3_writeback_wake(").count(), 2);
 assert!(writeback.contains("request_live_issue_after_writeback_change("));
 ```
+
+Only `mark_o3_writeback_wake_fired` calls `service_live_issue_scheduler_at` in production, and
+only `service_live_issue_scheduler_at` calls `service_live_issue_queue_at` directly after the
+temporary compatibility driver is removed.
 
 Also scan production structs and assert that only `RiscvO3WritebackWakeState` stores scheduler event identity for this path.
 
@@ -3129,7 +3144,8 @@ O3LiveIssueDependencyTable and O3LiveIssueCalendar are not persistent fields.
 service_live_issue_queue_at contains no later-tick loop.
 record_live_issue_batch contains no self.clone() or O3RuntimeState clone.
 Both wake entry points call desired_o3_writeback_wake.
-Only mark_o3_writeback_wake_fired calls service_live_issue_queue_at in production.
+Only mark_o3_writeback_wake_fired calls service_live_issue_scheduler_at in production, and only
+the scheduler-facing service owner calls service_live_issue_queue_at directly.
 O3RuntimeCheckpointPayload contains neither O3LiveIssueState nor O3LiveIssueTelemetry.
 O3RT current version remains 23 and O3DH current version remains 7.
 Canonical retirement, suffix, replay, memory, reset, and teardown paths delegate queue cleanup.

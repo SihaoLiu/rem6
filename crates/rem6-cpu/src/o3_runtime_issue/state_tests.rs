@@ -119,7 +119,7 @@ fn live_issue_state_removes_exact_and_suffix_rows_atomically() {
             31,
         ));
     }
-    assert!(state.remove_exact_at(
+    assert!(state.remove_exact_at_for_test(
         2,
         O3LiveIssueTraceAction::Retired,
         Address::new(0x8008),

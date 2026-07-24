@@ -3,6 +3,10 @@ use std::path::{Path, PathBuf};
 
 #[path = "source_policy/live_issue_durable_cleanup.rs"]
 mod live_issue_durable_cleanup;
+#[path = "source_policy/live_issue_raw_removal.rs"]
+mod live_issue_raw_removal;
+#[path = "source_policy/live_issue_scheduler_contract.rs"]
+mod live_issue_scheduler_contract;
 
 const MAX_FACADE_LINES: usize = 1300;
 const MAX_O3_RUNTIME_DEEP_CLEANUP_TEST_LINES: usize = 350;
@@ -23,6 +27,7 @@ const MAX_O3_RUNTIME_ISSUE_STATE_DECISION_WINDOW_TEST_LINES: usize = 160;
 const MAX_O3_RUNTIME_ISSUE_STATE_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_LINES: usize = 180;
 const MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_TEST_LINES: usize = 180;
+const MAX_O3_RUNTIME_ISSUE_STATE_TEST_SUPPORT_LINES: usize = 80;
 const MAX_O3_RUNTIME_ISSUE_SERVICE_LINES: usize = 600;
 const MAX_O3_RUNTIME_ISSUE_SERVICE_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_ISSUE_TRANSACTION_LINES: usize = 450;
@@ -107,6 +112,8 @@ const MAX_RISCV_FAILURE_DIAGNOSTIC_LINES: usize = 300;
 const MAX_RISCV_PRODUCER_FORWARDED_DESCENDANT_LINES: usize = 120;
 const MAX_SOURCE_LINES: usize = 1800;
 const MAX_SOURCE_POLICY_LIVE_ISSUE_DURABLE_CLEANUP_LINES: usize = 320;
+const MAX_SOURCE_POLICY_LIVE_ISSUE_RAW_REMOVAL_LINES: usize = 360;
+const MAX_SOURCE_POLICY_LIVE_ISSUE_SCHEDULER_CONTRACT_LINES: usize = 280;
 
 #[test]
 fn o3_persistent_iq_cpu_files_stay_focused() {
@@ -165,6 +172,10 @@ fn o3_persistent_iq_cpu_files_stay_focused() {
             MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_TEST_LINES,
         ),
         (
+            "src/o3_runtime_issue/state/test_support_tests.rs",
+            MAX_O3_RUNTIME_ISSUE_STATE_TEST_SUPPORT_LINES,
+        ),
+        (
             "src/o3_runtime_issue/service.rs",
             MAX_O3_RUNTIME_ISSUE_SERVICE_LINES,
         ),
@@ -187,6 +198,14 @@ fn o3_persistent_iq_cpu_files_stay_focused() {
         (
             "tests/source_policy/live_issue_durable_cleanup.rs",
             MAX_SOURCE_POLICY_LIVE_ISSUE_DURABLE_CLEANUP_LINES,
+        ),
+        (
+            "tests/source_policy/live_issue_raw_removal.rs",
+            MAX_SOURCE_POLICY_LIVE_ISSUE_RAW_REMOVAL_LINES,
+        ),
+        (
+            "tests/source_policy/live_issue_scheduler_contract.rs",
+            MAX_SOURCE_POLICY_LIVE_ISSUE_SCHEDULER_CONTRACT_LINES,
         ),
     ] {
         let path = crate_dir.join(relative);
@@ -1644,7 +1663,8 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
             .unwrap();
     assert!(materialization_wrapper
         .contains("record_pending_data_address_materialization_without_issue_removal"));
-    assert!(materialization_wrapper.contains("self.live_issue.remove_exact_at("));
+    assert!(materialization_wrapper.contains("self.remove_durable_live_issue_at("));
+    assert!(!materialization_wrapper.contains("self.live_issue.remove_exact_at("));
     let pending_raw_code = rust_code_without_comments_and_literals(&pending);
     let pending_set_raw_code = rust_code_without_comments_and_literals(&pending_set);
     for helper in [
@@ -4955,6 +4975,7 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
         "prepare_live_issue_batch",
         "schedule_live_speculative_issues",
         "enter_live_issue_scheduler_at",
+        "service_live_issue_scheduler_at",
         "seal_live_issue_decision_before",
         "seal_live_issue_decision",
     ] {
@@ -4992,6 +5013,10 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
         rust_method_call_positions(&compatibility, "service_live_issue_queue_at").len(),
         1,
     );
+    assert_eq!(
+        rust_method_call_positions(&compatibility, "service_live_issue_scheduler_at").len(),
+        1,
+    );
     assert!(o3_live_issue_compatibility_driver_fails_closed(&service));
     for forbidden in [
         "O3LiveIssueQueue::materialize",
@@ -5006,7 +5031,9 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
             "compatibility driver retains planning authority `{forbidden}`",
         );
     }
-    assert!(compatibility.contains("let outcome = self.service_live_issue_queue_at(hart, tick)?;"));
+    assert!(compatibility
+        .contains("let mut outcome = self.service_live_issue_scheduler_at(hart, tick)?;"));
+    assert!(compatibility.contains("outcome = self.service_live_issue_queue_at(hart, tick)?;"));
     assert!(compatibility
         .contains("outcome.waits_for_pending_dependency() && next_tick > earliest_tick"));
     assert!(compatibility.contains("self.pending_data_address_wake_tick() == Some(next_tick)"));
@@ -5090,6 +5117,7 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
         "postplan_replay_with_empty_survivors_preserves_arbitration_max_rows",
         "compatibility_scheduler_entry_issues_independent_work_before_retained_lookahead",
         "scheduler_entry_seals_future_active_decision_before_earlier_tick",
+        "scheduler_facing_service_finalizes_prior_decisions_without_pruning_lookahead",
         "stats_reset_clears_cycle_evidence_without_delaying_issue_timing",
         "live_issue_stats_same_tick_reentry_projects_once",
         "live_issue_stats_reset_rebases_unsealed_decision",
@@ -9464,7 +9492,8 @@ fn o3_live_issue_service_is_exactly_one_tick(source: &str) -> bool {
     .into_iter()
     .all(|anchor| rust_anchor_occurs_at_brace_depth(&service, anchor, 1));
     let protected_identifier_counts = [
-        ("service_live_issue_queue_at", 2),
+        ("service_live_issue_queue_at", 3),
+        ("service_live_issue_scheduler_at", 2),
         ("enter_live_issue_scheduler_at", 2),
         ("plan_at", 2),
         ("prepare_live_issue_batch", 2),
@@ -9494,7 +9523,8 @@ fn o3_live_issue_service_is_exactly_one_tick(source: &str) -> bool {
         && rust_method_call_positions(&service, "service_live_issue_queue_at").is_empty()
         && rust_method_call_positions(&production, "plan_at").len() == 2
         && compact_production.matches(".plan_at(now,").count() == 2
-        && rust_method_call_positions(&production, "service_live_issue_queue_at").len() == 1
+        && rust_method_call_positions(&production, "service_live_issue_queue_at").len() == 2
+        && rust_method_call_positions(&production, "service_live_issue_scheduler_at").len() == 1
         && rust_method_call_positions(&production, "prepare_live_issue_batch").len() == 1
         && rust_method_call_positions(&production, "finish_live_issue_replay_at").len() == 4
         && rust_method_call_positions(&production, "finish_live_issue_service_at").len() == 2
@@ -9520,13 +9550,12 @@ fn o3_live_issue_compatibility_driver_fails_closed(source: &str) -> bool {
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect::<String>();
-    compact.contains("self.enter_live_issue_scheduler_at(earliest_tick);")
-        && compact.contains("letmuttick=earliest_tick;")
-        && compact
-            .matches("letoutcome=self.service_live_issue_queue_at(hart,tick)?;")
-            .count()
-            == 1
+    compact.contains("letmuttick=earliest_tick;")
+        && compact.contains("letmutoutcome=self.service_live_issue_scheduler_at(hart,tick)?;")
+        && compact.contains("outcome=self.service_live_issue_queue_at(hart,tick)?;")
+        && rust_method_call_positions(&compatibility, "service_live_issue_scheduler_at").len() == 1
         && rust_method_call_positions(&compatibility, "service_live_issue_queue_at").len() == 1
+        && !compatibility.contains("enter_live_issue_scheduler_at")
         && ![
             "matchself.service_live_issue_queue_at",
             "unwrap_or(",
@@ -9618,6 +9647,11 @@ fn o3_live_issue_scheduler_entry_is_pruned(
     else {
         return false;
     };
+    let Some(scheduler_service) =
+        rust_function_definition(service_source, "service_live_issue_scheduler_at")
+    else {
+        return false;
+    };
     let Some(request) = rust_function_definition(state_source, "request_service_at") else {
         return false;
     };
@@ -9633,6 +9667,7 @@ fn o3_live_issue_scheduler_entry_is_pruned(
     };
     let compatibility = compact_rust_code(&compatibility);
     let runtime_entry = compact_rust_code(&runtime_entry);
+    let scheduler_service = compact_rust_code(&scheduler_service);
     let request = compact_rust_code(&request);
     let begin = compact_rust_code(&begin);
     let state_entry = compact_rust_code(&state_entry);
@@ -9656,7 +9691,20 @@ fn o3_live_issue_scheduler_entry_is_pruned(
     let checks = [
         (
             "compatibility entry",
-            compatibility.contains("self.enter_live_issue_scheduler_at(earliest_tick);"),
+            compatibility.contains("self.service_live_issue_scheduler_at(hart,tick)?"),
+        ),
+        (
+            "scheduler service entry",
+            scheduler_service.contains("self.enter_live_issue_scheduler_at(now);")
+                && scheduler_service.contains("self.service_live_issue_queue_at(hart,now)"),
+        ),
+        (
+            "lookahead keeps real frontier",
+            compatibility.contains("outcome=self.service_live_issue_queue_at(hart,tick)?;")
+                && compatibility
+                    .matches("service_live_issue_scheduler_at(hart,tick)")
+                    .count()
+                    == 1,
         ),
         ("compatibility tick", compatibility.contains("letmuttick=earliest_tick;")),
         ("no compatibility start", !compatibility.contains("start_tick")),
@@ -9664,6 +9712,10 @@ fn o3_live_issue_scheduler_entry_is_pruned(
         (
             "entry visibility",
             production_function_is_visible(service_source, "enter_live_issue_scheduler_at"),
+        ),
+        (
+            "scheduler service visibility",
+            production_function_is_visible(service_source, "service_live_issue_scheduler_at"),
         ),
         (
             "entry order",
@@ -9901,7 +9953,7 @@ fn o3_live_issue_delayed_stats_are_projected(
         && seal_current.contains("self.live_issue.seal_current_decision()")
         && !seal_current.contains("self.stats.record_issue")
         && service_source
-            .contains("complete_durable_live_issue_removal_at(now,&issued_sequences)")
+            .contains("complete_committed_live_issue_removals_at(now,&issued_sequences)")
 }
 
 #[test]
@@ -10182,37 +10234,38 @@ fn o3_live_issue_service_compatibility_policy_rejects_silent_result_mutations() 
     let service = fs::read_to_string(crate_dir.join("src/o3_runtime_issue/service.rs")).unwrap();
     assert!(o3_live_issue_compatibility_driver_fails_closed(&service));
 
-    let direct = "let outcome = self.service_live_issue_queue_at(hart, tick)?;";
+    let entry = "let mut outcome = self.service_live_issue_scheduler_at(hart, tick)?;";
+    let lookahead = "outcome = self.service_live_issue_queue_at(hart, tick)?;";
     for (description, mutation) in [
         (
             "scheduler entry wrapper bypassed",
             service.replacen(
-                "self.enter_live_issue_scheduler_at(earliest_tick);",
-                "self.live_issue.request_service_at(earliest_tick);",
+                entry,
+                "self.enter_live_issue_scheduler_at(tick);\n        let mut outcome = self.service_live_issue_queue_at(hart, tick)?;",
                 1,
             ),
         ),
         (
             "defaulted error",
             service.replacen(
-                direct,
-                "let outcome = self.service_live_issue_queue_at(hart, tick).unwrap_or_default();",
+                entry,
+                "let mut outcome = self.service_live_issue_scheduler_at(hart, tick).unwrap_or_default();",
                 1,
             ),
         ),
         (
             "discarded error",
             service.replacen(
-                direct,
-                "let outcome = self.service_live_issue_queue_at(hart, tick).ok().unwrap_or_default();",
+                entry,
+                "let mut outcome = self.service_live_issue_scheduler_at(hart, tick).ok().unwrap_or_default();",
                 1,
             ),
         ),
         (
-            "silent break",
+            "silent lookahead break",
             service.replacen(
-                direct,
-                "let outcome = match self.service_live_issue_queue_at(hart, tick) { Ok(outcome) => outcome, Err(_) => break };",
+                lookahead,
+                "outcome = match self.service_live_issue_queue_at(hart, tick) { Ok(outcome) => outcome, Err(_) => break };",
                 1,
             ),
         ),
@@ -10317,6 +10370,17 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
             service.replacen(
                 "pub(crate) fn enter_live_issue_scheduler_at",
                 "fn enter_live_issue_scheduler_at",
+                1,
+            ),
+            state.clone(),
+            decision_state.clone(),
+            decision_window.clone(),
+        ),
+        (
+            "Task 6 scheduler service is private",
+            service.replacen(
+                "pub(crate) fn service_live_issue_scheduler_at",
+                "fn service_live_issue_scheduler_at",
                 1,
             ),
             state.clone(),
@@ -10440,7 +10504,7 @@ fn o3_live_issue_stats_policy_rejects_projection_and_rebase_mutations() {
         1,
     );
     let future_cleanup = service.replacen(
-        "self.complete_durable_live_issue_removal_at(now, &issued_sequences);",
+        "self.complete_committed_live_issue_removals_at(now, &issued_sequences);",
         "let _ = &issued_sequences;",
         1,
     );

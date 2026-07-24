@@ -204,14 +204,13 @@ impl O3RuntimeState {
             execution,
         )?;
         if recorded {
-            self.live_issue.remove_exact_at(
+            self.remove_durable_live_issue_at(
                 sequence,
-                O3LiveIssueTraceAction::Selected,
                 pc,
                 O3LiveIssueTraceClass::MemoryAgu,
                 issue_tick,
-            );
-            self.complete_durable_live_issue_removal_at(issue_tick, &[sequence]);
+                None,
+            )?;
         }
         Ok(recorded)
     }

@@ -94,6 +94,15 @@ impl O3RuntimeState {
         self.live_issue.request_service_at(earliest_tick);
     }
 
+    pub(crate) fn service_live_issue_scheduler_at(
+        &mut self,
+        hart: &RiscvHartState,
+        now: u64,
+    ) -> Result<O3LiveIssueServiceOutcome, O3RuntimeError> {
+        self.enter_live_issue_scheduler_at(now);
+        self.service_live_issue_queue_at(hart, now)
+    }
+
     pub(crate) fn service_live_issue_queue_at(
         &mut self,
         hart: &RiscvHartState,
@@ -156,7 +165,7 @@ impl O3RuntimeState {
             .iter()
             .map(O3ScopedReadyInstruction::sequence)
             .collect::<Vec<_>>();
-        self.complete_durable_live_issue_removal_at(now, &issued_sequences);
+        self.complete_committed_live_issue_removals_at(now, &issued_sequences);
         let max_rows_at_tick = reserved_width.saturating_add(issued_rows);
         let post = self.classify_live_issue_queue_after_service(now)?;
         if let Some(sequence) = post.replay_boundary {
@@ -407,10 +416,9 @@ impl O3RuntimeState {
         {
             return Ok(());
         }
-        self.enter_live_issue_scheduler_at(earliest_tick);
         let mut tick = earliest_tick;
+        let mut outcome = self.service_live_issue_scheduler_at(hart, tick)?;
         loop {
-            let outcome = self.service_live_issue_queue_at(hart, tick)?;
             if outcome.replay_boundary().is_some() {
                 break;
             }
@@ -424,6 +432,7 @@ impl O3RuntimeState {
                 break;
             }
             tick = next_tick;
+            outcome = self.service_live_issue_queue_at(hart, tick)?;
         }
         if self.live_issue_is_quiescent() {
             self.seal_live_issue_decision();

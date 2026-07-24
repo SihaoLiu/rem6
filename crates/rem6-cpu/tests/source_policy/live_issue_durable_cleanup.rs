@@ -11,79 +11,67 @@ fn o3_live_issue_durable_cleanup_policy_rejects_mutations() {
     let canonical = DurableCleanupSources::read();
     assert!(durable_cleanup_policy_holds(&canonical));
 
-    let mut mutated = canonical.clone();
-    mutated.issue = mutated.issue.replacen(
-        "self.complete_durable_live_issue_removal_at(head.issue_tick, &[head.sequence()]);",
-        "let _ = head.issue_tick;",
-        1,
-    );
-    assert_rejected("head cleanup removed", &canonical, mutated);
-
-    let mut mutated = canonical.clone();
-    mutated.control = mutated.control.replacen(
-        "self.complete_durable_live_issue_removal_at(issue_tick, &[sequence]);",
-        "let _ = issue_tick;",
-        1,
-    );
-    assert_rejected("control cleanup removed", &canonical, mutated);
-
-    let mut mutated = canonical.clone();
-    mutated.pending = mutated.pending.replacen(
-        "self.complete_durable_live_issue_removal_at(issue_tick, &[sequence]);",
-        "let _ = issue_tick;",
-        1,
-    );
-    assert_rejected("pending cleanup removed", &canonical, mutated);
-
-    let mut mutated = canonical.clone();
-    mutated.service = mutated.service.replacen(
-        "self.complete_durable_live_issue_removal_at(now, &issued_sequences);",
+    let mut mutation = canonical.clone();
+    mutation.service = mutation.service.replacen(
+        "self.complete_committed_live_issue_removals_at(now, &issued_sequences);",
         "let _ = &issued_sequences;",
         1,
     );
-    assert_rejected("service post-commit cleanup removed", &canonical, mutated);
+    assert_rejected("service post-commit cleanup removed", &canonical, mutation);
 
-    let mut mutated = canonical.clone();
-    mutated.service = mutated
+    let mut mutation = canonical.clone();
+    mutation.service = mutation
         .service
         .replacen(
             "Ok(O3LiveIssueBatchOutcome::Recorded) => recorded_rows,",
-            "Ok(O3LiveIssueBatchOutcome::Recorded) => {\n                        self.complete_durable_live_issue_removal_at(now, &[]);\n                        recorded_rows\n                    },",
+            "Ok(O3LiveIssueBatchOutcome::Recorded) => {\n                        self.complete_committed_live_issue_removals_at(now, &[]);\n                        recorded_rows\n                    },",
             1,
         )
         .replacen(
-            "self.complete_durable_live_issue_removal_at(now, &issued_sequences);",
+            "self.complete_committed_live_issue_removals_at(now, &issued_sequences);",
             "let _ = &issued_sequences;",
             1,
         );
     assert_rejected(
-        "service cleanup moved before commit exit",
+        "cleanup moved inside transaction result",
         &canonical,
-        mutated,
+        mutation,
     );
 
-    let mut mutated = canonical.clone();
-    mutated.transaction = mutated.transaction.replacen(
+    let mut mutation = canonical.clone();
+    mutation.transaction = mutation.transaction.replacen(
         "debug_assert!(reservations.is_empty());",
-        "debug_assert!(reservations.is_empty());\n    runtime.complete_durable_live_issue_removal_at(0, &[]);",
+        "debug_assert!(reservations.is_empty());\n    runtime.complete_committed_live_issue_removals_at(0, &[]);",
         1,
     );
     assert_rejected(
         "transaction mutates retained decisions",
         &canonical,
-        mutated,
+        mutation,
     );
 
-    let mut mutated = canonical.clone();
-    mutated.owner = mutated.owner.replacen(
-        "debug_assert!(!self.live_issue.transaction_active());",
-        "let _ = self.live_issue.transaction_active();",
+    let mut mutation = canonical.clone();
+    mutation.owner = mutation.owner.replacen(
+        "self.live_issue\n            .remove_durable_blocked_sequences_at_or_after(tick, sequences);",
+        "let _ = (tick, sequences);",
         1,
     );
-    assert_rejected("transaction guard removed", &canonical, mutated);
+    assert_rejected("committed cleanup delegate removed", &canonical, mutation);
 
-    let mut mutated = canonical.clone();
-    mutated.state = mutated.state.replacen(
+    let mut mutation = canonical.clone();
+    mutation.owner = mutation.owner.replacen(
+        "if !removed {\n            return Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence });\n        }",
+        "let _ = removed;",
+        1,
+    );
+    assert_rejected(
+        "failed raw removal no longer fails closed",
+        &canonical,
+        mutation,
+    );
+
+    let mut mutation = canonical.clone();
+    mutation.state = mutation.state.replacen(
         "self.remove_active_blocked_sequence_at_or_after(tick, sequence);",
         "self.remove_durable_blocked_sequences_at_or_after(tick, &[sequence]);",
         1,
@@ -91,31 +79,28 @@ fn o3_live_issue_durable_cleanup_policy_rejects_mutations() {
     assert_rejected(
         "rollbackable removal mutates retained window",
         &canonical,
-        mutated,
+        mutation,
     );
 
-    let mut mutated = canonical.clone();
-    mutated.decision_state = mutated.decision_state.replacen(
+    let mut mutation = canonical.clone();
+    mutation.decision_state = mutation.decision_state.replacen(
         ".filter(|active| active.tick() >= tick)",
         ".filter(|active| active.tick() > tick)",
         1,
     );
-    assert_rejected("same-tick active cleanup skipped", &canonical, mutated);
+    assert_rejected("same-tick active cleanup skipped", &canonical, mutation);
 
-    let mut mutated = canonical.clone();
-    mutated.decision_window = mutated.decision_window.replacen(
+    let mut mutation = canonical.clone();
+    mutation.decision_window = mutation.decision_window.replacen(
         "self.ticks.range_mut(tick..)",
         "self.ticks.range_mut(tick.saturating_add(1)..)",
         1,
     );
-    assert_rejected("same-tick retained cleanup skipped", &canonical, mutated);
+    assert_rejected("same-tick retained cleanup skipped", &canonical, mutation);
 }
 
 #[derive(Clone)]
 struct DurableCleanupSources {
-    issue: String,
-    control: String,
-    pending: String,
     service: String,
     transaction: String,
     state: String,
@@ -131,9 +116,6 @@ impl DurableCleanupSources {
             production_rust_source(&fs::read_to_string(root.join(relative)).unwrap())
         };
         Self {
-            issue: read("src/o3_runtime_issue.rs"),
-            control: read("src/o3_runtime_control_window.rs"),
-            pending: read("src/o3_runtime_pending_address.rs"),
             service: read("src/o3_runtime_issue/service.rs"),
             transaction: read("src/o3_runtime_issue/transaction.rs"),
             state: read("src/o3_runtime_issue/state.rs"),
@@ -147,23 +129,20 @@ impl DurableCleanupSources {
 fn assert_rejected(
     description: &str,
     canonical: &DurableCleanupSources,
-    mutated: DurableCleanupSources,
+    mutation: DurableCleanupSources,
 ) {
     assert!(
-        sources_differ(canonical, &mutated),
+        sources_differ(canonical, &mutation),
         "durable-cleanup mutation did not apply: {description}",
     );
     assert!(
-        !durable_cleanup_policy_holds(&mutated),
+        !durable_cleanup_policy_holds(&mutation),
         "accepted weakened durable-cleanup mutation: {description}",
     );
 }
 
 fn sources_differ(left: &DurableCleanupSources, right: &DurableCleanupSources) -> bool {
-    left.issue != right.issue
-        || left.control != right.control
-        || left.pending != right.pending
-        || left.service != right.service
+    left.service != right.service
         || left.transaction != right.transaction
         || left.state != right.state
         || left.decision_state != right.decision_state
@@ -172,21 +151,6 @@ fn sources_differ(left: &DurableCleanupSources, right: &DurableCleanupSources) -
 }
 
 fn durable_cleanup_policy_holds(sources: &DurableCleanupSources) -> bool {
-    let Some(head) = rust_function_definition(&sources.issue, "record_live_issue_head_execution")
-    else {
-        return false;
-    };
-    let Some(control) =
-        rust_function_definition(&sources.control, "record_live_speculative_execution")
-    else {
-        return false;
-    };
-    let Some(pending) = rust_function_definition(
-        &sources.pending,
-        "record_pending_data_address_materialization",
-    ) else {
-        return false;
-    };
     let Some(service) = rust_function_definition(&sources.service, "service_live_issue_queue_at")
     else {
         return false;
@@ -211,62 +175,52 @@ fn durable_cleanup_policy_holds(sources: &DurableCleanupSources) -> bool {
     else {
         return false;
     };
-    let Some(owner) =
-        rust_function_definition(&sources.owner, "complete_durable_live_issue_removal_at")
+    let Some(finish) =
+        rust_function_definition(&sources.owner, "finish_durable_live_issue_removal_at")
+    else {
+        return false;
+    };
+    let Some(committed) =
+        rust_function_definition(&sources.owner, "complete_committed_live_issue_removals_at")
     else {
         return false;
     };
 
-    let compact = |source: &str| compact_rust_code(source);
-    let head = compact(&head);
-    let control = compact(&control);
-    let pending = compact(&pending);
-    let service = compact(&service);
-    let remove_exact = compact(&remove_exact);
-    let remove_active = compact(&remove_active);
-    let remove_durable = compact(&remove_durable);
-    let remove_window = compact(&remove_window);
-    let owner = compact(&owner);
-    let transaction = compact(&sources.transaction);
+    let service = compact_rust_code(&service);
+    let remove_exact = compact_rust_code(&remove_exact);
+    let remove_active = compact_rust_code(&remove_active);
+    let remove_durable = compact_rust_code(&remove_durable);
+    let remove_window = compact_rust_code(&remove_window);
+    let finish = compact_rust_code(&finish);
+    let committed = compact_rust_code(&committed);
+    let transaction = compact_rust_code(&sources.transaction);
+    let cleanup = "self.complete_committed_live_issue_removals_at(now,&issued_sequences);";
 
-    ordered_once(
-        &head,
-        "self.live_issue.remove_selected_at(",
-        "self.complete_durable_live_issue_removal_at(head.issue_tick,&[head.sequence()]);",
-    ) && ordered_once(
-        &control,
-        "self.live_issue.remove_selected_at(",
-        "self.complete_durable_live_issue_removal_at(issue_tick,&[sequence]);",
-    ) && ordered_once(
-        &pending,
-        "self.live_issue.remove_exact_at(",
-        "self.complete_durable_live_issue_removal_at(issue_tick,&[sequence]);",
-    ) && service.contains("self.complete_durable_live_issue_removal_at(now,&issued_sequences);")
-        && rust_anchor_occurs_at_brace_depth(
-            &service,
-            "self.complete_durable_live_issue_removal_at(now,&issued_sequences);",
-            1,
-        )
+    service.matches(cleanup).count() == 1
+        && rust_anchor_occurs_at_brace_depth(&service, cleanup, 1)
         && ordered_once(
             &service,
             "O3LiveIssueTransaction::record(self,rows)",
-            "self.complete_durable_live_issue_removal_at(now,&issued_sequences);",
+            cleanup,
         )
-        && !transaction.contains("complete_durable_live_issue_removal_at")
+        && !transaction.contains("complete_committed_live_issue_removals_at")
         && !transaction.contains("remove_durable_blocked_sequences_at_or_after")
-        && owner.contains("debug_assert!(!self.live_issue.transaction_active());")
-        && owner.contains(
+        && committed.contains("self.assert_durable_live_issue_removal_boundary();")
+        && committed.contains(
             "self.live_issue.remove_durable_blocked_sequences_at_or_after(tick,sequences);",
+        )
+        && finish.contains(
+            "if!removed{returnErr(O3RuntimeError::InvalidLiveIssueQueueEntry{sequence});}",
+        )
+        && finish.contains(
+            "self.live_issue.remove_durable_blocked_sequences_at_or_after(tick,&[sequence]);",
         )
         && remove_exact.contains("self.remove_active_blocked_sequence_at_or_after(tick,sequence);")
         && !remove_exact.contains("remove_durable_blocked_sequences_at_or_after")
         && remove_active.contains(".filter(|active|active.tick()>=tick)")
-        && remove_active.contains("active.remove_blocked(sequence);")
         && remove_durable.contains("forsequenceinsequences")
         && remove_durable
             .contains("self.remove_active_blocked_sequence_at_or_after(tick,*sequence);")
-        && remove_durable
-            .contains("self.decision_window.remove_blocked_at_or_after(tick,sequences);")
         && remove_window.contains("self.ticks.range_mut(tick..)")
         && remove_window.contains("decision.remove_blocked(*sequence);")
 }
