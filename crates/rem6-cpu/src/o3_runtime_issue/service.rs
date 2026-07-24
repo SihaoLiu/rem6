@@ -36,6 +36,7 @@ impl O3LiveIssueServiceOutcome {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct O3LiveIssuePostService {
+    observed_decision: bool,
     resource_blocked_sequences: Vec<u64>,
     dependency_blocked_sequences: Vec<u64>,
     max_rows_at_tick: usize,
@@ -112,7 +113,7 @@ impl O3RuntimeState {
         {
             O3LiveIssueQueueCapture::Ready(queue) => queue,
             O3LiveIssueQueueCapture::ReplayPending(sequence) => {
-                return self.finish_live_issue_replay_at(now, sequence, &[], 0, 0);
+                return self.finish_live_issue_replay_at(now, sequence, &[], 0, false, 0);
             }
         };
         if queue.entries().is_empty() {
@@ -127,13 +128,21 @@ impl O3RuntimeState {
             .iter()
             .map(O3ScopedReadyInstruction::sequence)
             .collect::<Vec<_>>();
+        let max_rows_at_tick = plan.reserved_width().saturating_add(plan.issued().len());
         let prepared = self.prepare_live_issue_batch(hart, &queue, plan.issued(), now)?;
         let issued_rows = match prepared {
             O3PreparedLiveIssueBatch::Prepared(rows) => {
                 match O3LiveIssueTransaction::record(self, rows) {
                     Ok(O3LiveIssueBatchOutcome::Recorded) => plan.issued().len(),
                     Ok(O3LiveIssueBatchOutcome::ReplayPending(sequence)) => {
-                        return self.finish_live_issue_replay_at(now, sequence, &[], 0, 0);
+                        return self.finish_live_issue_replay_at(
+                            now,
+                            sequence,
+                            &[],
+                            0,
+                            true,
+                            max_rows_at_tick,
+                        );
                     }
                     Err(O3LiveIssueTransactionError::Runtime(error)) => return Err(error),
                     Err(O3LiveIssueTransactionError::AlreadyActive) => {
@@ -142,17 +151,24 @@ impl O3RuntimeState {
                 }
             }
             O3PreparedLiveIssueBatch::ReplayPending(sequence) => {
-                return self.finish_live_issue_replay_at(now, sequence, &[], 0, 0);
+                return self.finish_live_issue_replay_at(
+                    now,
+                    sequence,
+                    &[],
+                    0,
+                    true,
+                    max_rows_at_tick,
+                );
             }
         };
         let post = self.classify_live_issue_queue_after_service(now)?;
-        let max_rows_at_tick = plan.reserved_width().saturating_add(issued_rows);
         if let Some(sequence) = post.replay_boundary {
             return self.finish_live_issue_replay_at(
                 now,
                 sequence,
                 &issued_sequences,
                 issued_rows,
+                true,
                 max_rows_at_tick,
             );
         }
@@ -161,6 +177,7 @@ impl O3RuntimeState {
             &issued_sequences,
             issued_rows,
             None,
+            true,
             max_rows_at_tick,
             post,
         )
@@ -172,6 +189,7 @@ impl O3RuntimeState {
         sequence: u64,
         issued_sequences: &[u64],
         issued_rows: usize,
+        arbitrated: bool,
         max_rows_at_tick: usize,
     ) -> Result<O3LiveIssueServiceOutcome, O3RuntimeError> {
         self.discard_pending_data_address_from(sequence);
@@ -184,6 +202,7 @@ impl O3RuntimeState {
             issued_sequences,
             issued_rows,
             Some(sequence),
+            arbitrated,
             max_rows_at_tick,
             post,
         )
@@ -195,17 +214,20 @@ impl O3RuntimeState {
         issued_sequences: &[u64],
         issued_rows: usize,
         replay_boundary: Option<u64>,
+        arbitrated: bool,
         max_rows_at_tick: usize,
         mut post: O3LiveIssuePostService,
     ) -> Result<O3LiveIssueServiceOutcome, O3RuntimeError> {
         post.max_rows_at_tick = post.max_rows_at_tick.max(max_rows_at_tick);
-        self.live_issue.observe_sequences(
-            now,
-            issued_sequences,
-            &post.resource_blocked_sequences,
-            &post.dependency_blocked_sequences,
-            post.max_rows_at_tick,
-        );
+        if arbitrated || post.observed_decision {
+            self.live_issue.observe_sequences(
+                now,
+                issued_sequences,
+                &post.resource_blocked_sequences,
+                &post.dependency_blocked_sequences,
+                post.max_rows_at_tick,
+            );
+        }
         if let Some(tick) = post.next_service_tick {
             self.live_issue.request_service_at(tick);
         }
@@ -291,6 +313,7 @@ impl O3RuntimeState {
         let no_wake_sequence = (next_service_tick.is_none() && !waits_for_external_dependency)
             .then(|| self.live_issue.resident_sequences()[0]);
         Ok(O3LiveIssuePostService {
+            observed_decision: true,
             resource_blocked_sequences: post_plan
                 .resource_blocked()
                 .iter()
@@ -389,8 +412,12 @@ impl O3RuntimeState {
         {
             return Ok(());
         }
-        self.live_issue.request_service_at(earliest_tick);
-        let mut tick = earliest_tick;
+        let start_tick = self
+            .live_issue
+            .service_floor_tick()
+            .map_or(earliest_tick, |floor| earliest_tick.max(floor));
+        self.live_issue.request_service_at(start_tick);
+        let mut tick = start_tick;
         loop {
             let outcome = self.service_live_issue_queue_at(hart, tick)?;
             if outcome.replay_boundary().is_some() {
@@ -399,7 +426,7 @@ impl O3RuntimeState {
             let Some(next_tick) = outcome.next_service_tick() else {
                 break;
             };
-            if outcome.waits_for_pending_dependency() && next_tick > earliest_tick {
+            if outcome.waits_for_pending_dependency() && next_tick > start_tick {
                 break;
             }
             if self.pending_data_address_wake_tick() == Some(next_tick) {

@@ -274,6 +274,9 @@ impl O3LiveIssueState {
         let requested = self
             .requested_service_tick
             .map_or(tick, |current| current.min(tick));
+        let requested = self
+            .service_floor_tick()
+            .map_or(requested, |floor| requested.max(floor));
         if self.requested_service_tick != Some(requested) {
             self.requested_service_tick = Some(requested);
             self.telemetry.wake_requests = self.telemetry.wake_requests.saturating_add(1);
@@ -292,6 +295,9 @@ impl O3LiveIssueState {
         let Some(requested) = self.requested_service_tick else {
             return false;
         };
+        if self.service_floor_tick().is_some_and(|floor| tick < floor) {
+            return false;
+        }
         if requested > tick {
             return false;
         }

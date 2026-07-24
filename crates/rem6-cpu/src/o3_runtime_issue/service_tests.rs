@@ -166,6 +166,83 @@ fn two_pending_replay_reclassifies_older_resident_and_preserves_compatibility_wa
 }
 
 #[test]
+fn preplan_replay_with_empty_survivors_records_no_issue_decision() {
+    let (mut runtime, hart, _, _, _) = replay_survivor_fixture();
+    let replay = runtime.pending_data_address_sequences_for_test()[0];
+    assert!(runtime.remove_live_staged_issue_identity_for_test(replay));
+
+    let outcome = runtime
+        .service_live_issue_queue_at(&hart, REPLAY_SERVICE_TICK)
+        .unwrap();
+    assert_eq!(outcome.replay_boundary(), Some(replay));
+    assert!(runtime.live_issue.resident_sequences().is_empty());
+    assert_eq!(runtime.stats().issue_cycles(), 0);
+    assert_eq!(runtime.stats().issued_rows(), 0);
+    assert_eq!(runtime.stats().max_rows_per_cycle(), 0);
+}
+
+#[test]
+fn postplan_replay_with_empty_survivors_preserves_arbitration_max_rows() {
+    let (mut runtime, hart, _) = ready_two_pending_issue(2, false);
+    let replay = runtime.pending_data_address_sequences_for_test()[0];
+    runtime.corrupt_pending_data_address_lsq_bytes_for_test(4);
+
+    let outcome = runtime
+        .service_live_issue_queue_at(&hart, REPLAY_SERVICE_TICK)
+        .unwrap();
+    assert_eq!(outcome.replay_boundary(), Some(replay));
+    assert!(runtime.live_issue.resident_sequences().is_empty());
+    assert!(runtime.live_speculative_executions.is_empty());
+    assert_eq!(runtime.stats().issue_cycles(), 1);
+    assert_eq!(runtime.stats().issued_rows(), 0);
+    assert_eq!(runtime.stats().max_rows_per_cycle(), 2);
+}
+
+#[test]
+fn compatibility_service_floor_preserves_newer_projection_and_clamps_regression() {
+    let mut fixture = ScalarIssueFixture::new(1, ScalarIssueCase::CrossResource);
+    fixture
+        .runtime
+        .service_live_issue_queue_at(&fixture.hart, 20)
+        .unwrap();
+    fixture.runtime.live_issue.clear_requested_service_tick();
+    fixture.runtime.live_issue.request_service_at(30);
+    fixture
+        .runtime
+        .service_live_issue_queue_at(&fixture.hart, 30)
+        .unwrap();
+    let before = fixture.runtime.stats();
+    assert_eq!(before.issue_cycles(), 2);
+    assert_eq!(before.issued_rows(), 1);
+    assert_eq!(fixture.runtime.live_issue.service_floor_tick(), Some(30));
+
+    fixture.runtime.live_issue.request_service_at(21);
+    assert_eq!(fixture.runtime.live_issue_service_tick(), Some(30));
+    let regressed = fixture
+        .runtime
+        .service_live_issue_queue_at(&fixture.hart, 21)
+        .unwrap();
+    assert_eq!(regressed.issued_rows(), 0);
+    assert_eq!(regressed.next_service_tick(), None);
+    assert_eq!(regressed.replay_boundary(), None);
+    assert_eq!(fixture.runtime.stats(), before);
+    assert_eq!(fixture.runtime.live_issue_service_tick(), Some(30));
+
+    let issued_before = fixture.runtime.live_speculative_executions.len();
+    fixture
+        .runtime
+        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 21)
+        .unwrap();
+    let after = fixture.runtime.stats();
+    assert_eq!(after.issue_cycles(), 4);
+    assert_eq!(after.issued_rows(), 3);
+    assert!(fixture.runtime.live_issue.resident_sequences().is_empty());
+    assert!(fixture.runtime.live_speculative_executions[issued_before..]
+        .iter()
+        .all(|issued| issued.issue_tick >= 30));
+}
+
+#[test]
 fn live_issue_stats_same_tick_reentry_projects_once() {
     let mut fixture = ScalarIssueFixture::new(4, ScalarIssueCase::SameTickAluDependency);
     fixture

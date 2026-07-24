@@ -191,6 +191,16 @@ impl O3LiveIssueState {
         }
     }
 
+    pub(in crate::o3_runtime) fn service_floor_tick(&self) -> Option<u64> {
+        let active_tick = self.active_tick.as_ref().map(|active| active.tick);
+        match (active_tick, self.last_counted_cycle_tick) {
+            (Some(active), Some(counted)) => Some(active.max(counted)),
+            (Some(active), None) => Some(active),
+            (None, Some(counted)) => Some(counted),
+            (None, None) => None,
+        }
+    }
+
     pub(super) fn begin_active_decision_at(&mut self, tick: u64) {
         if self
             .active_tick

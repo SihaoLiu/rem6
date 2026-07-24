@@ -4867,6 +4867,9 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
     }
     assert!(o3_live_issue_service_is_exactly_one_tick(&service));
     assert!(o3_live_issue_replay_finalization_is_shared(&service));
+    assert!(o3_live_issue_service_floor_is_monotonic(
+        &service, &state, &decision,
+    ));
     assert!(o3_live_issue_delayed_stats_are_projected(
         &service, &state, &decision, &stats,
     ));
@@ -4893,8 +4896,9 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
         );
     }
     assert!(compatibility.contains("let outcome = self.service_live_issue_queue_at(hart, tick)?;"));
-    assert!(compatibility
-        .contains("outcome.waits_for_pending_dependency() && next_tick > earliest_tick"));
+    assert!(
+        compatibility.contains("outcome.waits_for_pending_dependency() && next_tick > start_tick")
+    );
     assert!(compatibility.contains("self.pending_data_address_wake_tick() == Some(next_tick)"));
     assert!(compatibility.contains("if self.live_issue_is_quiescent()"));
     assert!(compatibility.contains("self.seal_live_issue_decision();"));
@@ -4944,6 +4948,10 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
     assert!(live_issue_state.contains("last_counted_cycle_tick: Option<u64>"));
     assert!(!live_issue_state.contains("BTreeSet"));
     assert!(!state.contains("compatibility_cycle_ticks"));
+    assert!(production_defines_exact_function(
+        &decision,
+        "service_floor_tick",
+    ));
 
     let delta = production_struct_definitions(&decision)
         .into_iter()
@@ -4970,6 +4978,9 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
         "service_live_issue_queue_at_translates_no_wake_to_runtime_error",
         "schedule_live_speculative_issues_translates_no_wake_and_preserves_diagnostics",
         "two_pending_replay_reclassifies_older_resident_and_preserves_compatibility_wake",
+        "preplan_replay_with_empty_survivors_records_no_issue_decision",
+        "postplan_replay_with_empty_survivors_preserves_arbitration_max_rows",
+        "compatibility_service_floor_preserves_newer_projection_and_clamps_regression",
         "live_issue_stats_same_tick_reentry_projects_once",
         "live_issue_stats_reset_rebases_unsealed_decision",
     ] {
@@ -9229,6 +9240,27 @@ fn rust_identifier_is_assigned(source: &str, target: &str) -> bool {
     false
 }
 
+fn rust_anchor_occurs_at_brace_depth(source: &str, anchor: &str, expected_depth: usize) -> bool {
+    let mut positions = source.match_indices(anchor).map(|(position, _)| position);
+    let Some(position) = positions.next() else {
+        return false;
+    };
+    positions.next().is_none()
+        && rust_brace_depth_at(source, position).is_some_and(|depth| depth == expected_depth)
+}
+
+fn rust_brace_depth_at(source: &str, position: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for character in source.get(..position)?.chars() {
+        match character {
+            '{' => depth = depth.checked_add(1)?,
+            '}' => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+    }
+    Some(depth)
+}
+
 fn o3_live_issue_service_is_exactly_one_tick(source: &str) -> bool {
     let production = production_rust_source(source);
     let Some(service) = rust_function_definition(&production, "service_live_issue_queue_at") else {
@@ -9263,6 +9295,8 @@ fn o3_live_issue_service_is_exactly_one_tick(source: &str) -> bool {
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect::<String>();
+    let service_chars = service.chars().collect::<Vec<_>>();
+    let production_chars = production.chars().collect::<Vec<_>>();
     let anchors = [
         "self.seal_live_issue_decision_before(now)",
         "self.live_issue.begin_service_at(now)",
@@ -9283,7 +9317,40 @@ fn o3_live_issue_service_is_exactly_one_tick(source: &str) -> bool {
                 .flatten()
         })
         .collect::<Option<Vec<_>>>();
+    let core_depths_are_stable = [
+        "self.seal_live_issue_decision_before(now)",
+        "self.live_issue.begin_service_at(now)",
+        "O3LiveIssueQueue::materialize",
+        "O3LiveIssueDependencyTable::new",
+        "O3LiveIssueCalendar::capture",
+        "calendar.plan_at",
+        "self.prepare_live_issue_batch",
+        "self.classify_live_issue_queue_after_service",
+        "self.finish_live_issue_service_at",
+    ]
+    .into_iter()
+    .all(|anchor| rust_anchor_occurs_at_brace_depth(&service, anchor, 1));
+    let protected_identifier_counts = [
+        ("service_live_issue_queue_at", 2),
+        ("plan_at", 2),
+        ("prepare_live_issue_batch", 2),
+        ("finish_live_issue_replay_at", 5),
+        ("finish_live_issue_service_at", 3),
+        ("classify_live_issue_queue_after_service", 3),
+        ("observe_sequences", 1),
+        ("record_live_issue_batch", 0),
+        ("record", 1),
+    ]
+    .into_iter()
+    .all(|(identifier, count)| rust_identifier_count(&production_chars, identifier) == count);
     positions.is_some_and(|positions| positions.windows(2).all(|pair| pair[0] < pair[1]))
+        && core_depths_are_stable
+        && protected_identifier_counts
+        && rust_identifier_count(&service_chars, "return") == 7
+        && compact
+            .matches("returnOk(O3LiveIssueServiceOutcome::default());")
+            .count()
+            == 2
         && rust_method_call_positions(&service, "plan_at").len() == 1
         && rust_method_call_positions(&service, "service_live_issue_queue_at").is_empty()
         && rust_method_call_positions(&production, "plan_at").len() == 2
@@ -9298,7 +9365,7 @@ fn o3_live_issue_service_is_exactly_one_tick(source: &str) -> bool {
         && rust_method_call_positions(&production, "record_live_issue_batch").is_empty()
         && rust_method_call_positions(&production, "record").len() == 1
         && compact_production
-            .matches("O3LiveIssueTransaction::record(self,rows)")
+            .matches("O3LiveIssueTransaction::record")
             .count()
             == 1
 }
@@ -9315,9 +9382,15 @@ fn o3_live_issue_compatibility_driver_fails_closed(source: &str) -> bool {
         .filter(|character| !character.is_whitespace())
         .collect::<String>();
     compact
-        .matches("letoutcome=self.service_live_issue_queue_at(hart,tick)?;")
-        .count()
-        == 1
+        .contains(
+            "letstart_tick=self.live_issue.service_floor_tick().map_or(earliest_tick,|floor|earliest_tick.max(floor));",
+        )
+        && compact.contains("self.live_issue.request_service_at(start_tick);")
+        && compact.contains("letmuttick=start_tick;")
+        && compact
+            .matches("letoutcome=self.service_live_issue_queue_at(hart,tick)?;")
+            .count()
+            == 1
         && rust_method_call_positions(&compatibility, "service_live_issue_queue_at").len() == 1
         && ![
             "matchself.service_live_issue_queue_at",
@@ -9329,6 +9402,9 @@ fn o3_live_issue_compatibility_driver_fails_closed(source: &str) -> bool {
         ]
         .into_iter()
         .any(|mutation| compact.contains(mutation))
+        && compact.contains(
+            "outcome.waits_for_pending_dependency()&&next_tick>start_tick",
+        )
         && compact.contains("ifself.live_issue_is_quiescent(){self.seal_live_issue_decision();}")
 }
 
@@ -9345,6 +9421,13 @@ fn o3_live_issue_replay_finalization_is_shared(source: &str) -> bool {
     else {
         return false;
     };
+    let Some(finish) = rust_function_definition(&production, "finish_live_issue_service_at") else {
+        return false;
+    };
+    let service_compact = compact_rust_code(&service);
+    let replay_compact = compact_rust_code(&replay);
+    let finish_compact = compact_rust_code(&finish);
+    let classify_compact = compact_rust_code(&classify);
     let compact = replay
         .chars()
         .filter(|character| !character.is_whitespace())
@@ -9369,6 +9452,59 @@ fn o3_live_issue_replay_finalization_is_shared(source: &str) -> bool {
         && rust_method_call_positions(&replay, "finish_live_issue_service_at").len() == 1
         && rust_method_call_positions(&production, "discard_pending_data_address_from").len() == 1
         && !classify.contains("discard_pending_data_address_from")
+        && service_compact.contains(
+            "returnself.finish_live_issue_replay_at(now,sequence,&[],0,false,0);",
+        )
+        && service_compact
+            .contains("letmax_rows_at_tick=plan.reserved_width().saturating_add(plan.issued().len());")
+        && service_compact.matches("true,max_rows_at_tick").count() == 4
+        && replay_compact.contains("arbitrated:bool")
+        && replay_compact.contains(
+            "self.finish_live_issue_service_at(now,issued_sequences,issued_rows,Some(sequence),arbitrated,max_rows_at_tick,post",
+        )
+        && finish_compact.contains("ifarbitrated||post.observed_decision{")
+        && classify_compact.contains("observed_decision:true")
+}
+
+fn o3_live_issue_service_floor_is_monotonic(
+    service_source: &str,
+    state_source: &str,
+    decision_source: &str,
+) -> bool {
+    let Some(compatibility) =
+        rust_function_definition(service_source, "schedule_live_speculative_issues")
+    else {
+        return false;
+    };
+    let Some(request) = rust_function_definition(state_source, "request_service_at") else {
+        return false;
+    };
+    let Some(begin) = rust_function_definition(state_source, "begin_service_at") else {
+        return false;
+    };
+    let Some(floor) = rust_function_definition(decision_source, "service_floor_tick") else {
+        return false;
+    };
+    let compatibility = compact_rust_code(&compatibility);
+    let request = compact_rust_code(&request);
+    let begin = compact_rust_code(&begin);
+    let floor = compact_rust_code(&floor);
+    let guard = "ifself.service_floor_tick().is_some_and(|floor|tick<floor){returnfalse;}";
+    let consume = "self.requested_service_tick=None;";
+
+    floor.contains("letactive_tick=self.active_tick.as_ref().map(|active|active.tick);")
+        && floor.contains("match(active_tick,self.last_counted_cycle_tick)")
+        && floor.contains("Some(active.max(counted))")
+        && request.contains(
+            "self.service_floor_tick().map_or(requested,|floor|requested.max(floor))",
+        )
+        && begin.contains(guard)
+        && begin.find(guard) < begin.find(consume)
+        && compatibility.contains(
+            "letstart_tick=self.live_issue.service_floor_tick().map_or(earliest_tick,|floor|earliest_tick.max(floor));",
+        )
+        && compatibility.contains("self.live_issue.request_service_at(start_tick);")
+        && compatibility.contains("letmuttick=start_tick;")
 }
 
 fn o3_live_issue_delayed_stats_are_projected(
@@ -9568,6 +9704,24 @@ fn o3_live_issue_service_policy_rejects_later_tick_mutations() {
             ),
         ),
         (
+            "aliased future service",
+            format!(
+                "{service}\nimpl O3RuntimeState {{\n    fn task5_mutant_aliased_service(&mut self, hart: &RiscvHartState, now: u64) -> Result<(), O3RuntimeError> {{\n        let service = O3RuntimeState::service_live_issue_queue_at;\n        let _ = service(self, hart, now.saturating_add(1))?;\n        Ok(())\n    }}\n}}\n"
+            ),
+        ),
+        (
+            "aliased iterator future service",
+            format!(
+                "{service}\nimpl O3RuntimeState {{\n    fn task5_mutant_aliased_iterated_service(&mut self, hart: &RiscvHartState, now: u64) -> Result<(), O3RuntimeError> {{\n        let service = O3RuntimeState::service_live_issue_queue_at;\n        [now.saturating_add(1)].into_iter().try_for_each(|future_tick| service(self, hart, future_tick).map(|_| ()))\n    }}\n}}\n"
+            ),
+        ),
+        (
+            "aliased future plan",
+            format!(
+                "{service}\nimpl O3RuntimeState {{\n    fn task5_mutant_aliased_plan(&self, now: u64, dependencies: &O3LiveIssueDependencyTable, queue: &O3LiveIssueQueue) -> Result<(), O3RuntimeError> {{\n        let plan_at = O3LiveIssueCalendar::plan_at;\n        let calendar = O3LiveIssueCalendar::capture(self);\n        let _ = plan_at(&calendar, now.saturating_add(1), dependencies, queue.entries())?;\n        Ok(())\n    }}\n}}\n"
+            ),
+        ),
+        (
             "helper future preparation",
             format!(
                 "{service}\nimpl O3RuntimeState {{\n    fn task5_mutant_extra_prepare(&self, hart: &RiscvHartState, queue: &O3LiveIssueQueue, issued: &[O3ScopedReadyInstruction], now: u64) -> Result<(), O3RuntimeError> {{\n        let _ = self.prepare_live_issue_batch(hart, queue, issued, now.saturating_add(1))?;\n        Ok(())\n    }}\n}}\n"
@@ -9584,6 +9738,22 @@ fn o3_live_issue_service_policy_rejects_later_tick_mutations() {
             service.replacen(
                 "self.classify_live_issue_queue_after_service(now)?",
                 "O3LiveIssuePostService::default()",
+                1,
+            ),
+        ),
+        (
+            "conditional core wrap",
+            service.replacen(
+                "let calendar = O3LiveIssueCalendar::capture(self);",
+                "let calendar = if now == now {\n            O3LiveIssueCalendar::capture(self)\n        } else {\n            return Ok(O3LiveIssueServiceOutcome::default());\n        };",
+                1,
+            ),
+        ),
+        (
+            "early successful return",
+            service.replacen(
+                "self.seal_live_issue_decision_before(now);",
+                "self.seal_live_issue_decision_before(now);\n        if now == u64::MAX {\n            return Ok(O3LiveIssueServiceOutcome::default());\n        }",
                 1,
             ),
         ),
@@ -9618,7 +9788,7 @@ fn o3_live_issue_replay_policy_rejects_unclassified_survivor_mutations() {
         (
             "replay exit bypasses shared finalizer",
             service.replacen(
-                "return self.finish_live_issue_replay_at(now, sequence, &[], 0, 0);",
+                "return self.finish_live_issue_replay_at(now, sequence, &[], 0, false, 0);",
                 "return Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence });",
                 1,
             ),
@@ -9647,6 +9817,34 @@ fn o3_live_issue_replay_policy_rejects_unclassified_survivor_mutations() {
                 2,
             ),
         ),
+        (
+            "preplan replay marked arbitrated",
+            service.replacen(
+                "self.finish_live_issue_replay_at(now, sequence, &[], 0, false, 0)",
+                "self.finish_live_issue_replay_at(now, sequence, &[], 0, true, 0)",
+                1,
+            ),
+        ),
+        (
+            "plan maximum discarded",
+            service.replacen(
+                "let max_rows_at_tick = plan.reserved_width().saturating_add(plan.issued().len());",
+                "let max_rows_at_tick = 0;",
+                1,
+            ),
+        ),
+        (
+            "post-cleanup classification not observed",
+            service.replacen("observed_decision: true,", "observed_decision: false,", 1),
+        ),
+        (
+            "observation inferred from nonzero maximum",
+            service.replacen(
+                "if arbitrated || post.observed_decision {",
+                "if max_rows_at_tick != 0 || post.observed_decision {",
+                1,
+            ),
+        ),
     ] {
         assert_ne!(
             mutation, service,
@@ -9667,6 +9865,14 @@ fn o3_live_issue_service_compatibility_policy_rejects_silent_result_mutations() 
 
     let direct = "let outcome = self.service_live_issue_queue_at(hart, tick)?;";
     for (description, mutation) in [
+        (
+            "service floor removed",
+            service.replacen(
+                "let start_tick = self\n            .live_issue\n            .service_floor_tick()\n            .map_or(earliest_tick, |floor| earliest_tick.max(floor));",
+                "let start_tick = earliest_tick;",
+                1,
+            ),
+        ),
         (
             "defaulted error",
             service.replacen(
@@ -9699,6 +9905,71 @@ fn o3_live_issue_service_compatibility_policy_rejects_silent_result_mutations() 
         assert!(
             !o3_live_issue_compatibility_driver_fails_closed(&mutation),
             "accepted weakened compatibility result mutation: {description}",
+        );
+    }
+}
+
+#[test]
+fn o3_live_issue_service_floor_policy_rejects_regressions() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let service = fs::read_to_string(crate_dir.join("src/o3_runtime_issue/service.rs")).unwrap();
+    let state = fs::read_to_string(crate_dir.join("src/o3_runtime_issue/state.rs")).unwrap();
+    let decision =
+        fs::read_to_string(crate_dir.join("src/o3_runtime_issue/state/decision.rs")).unwrap();
+    assert!(o3_live_issue_service_floor_is_monotonic(
+        &service, &state, &decision,
+    ));
+
+    let mutations = [
+        (
+            "active tick omitted from floor",
+            service.clone(),
+            state.clone(),
+            decision.replacen("Some(active.max(counted))", "Some(counted)", 1),
+        ),
+        (
+            "request floor clamp removed",
+            service.clone(),
+            state.replacen(
+                "let requested = self\n            .service_floor_tick()\n            .map_or(requested, |floor| requested.max(floor));",
+                "let requested = requested;",
+                1,
+            ),
+            decision.clone(),
+        ),
+        (
+            "direct regression guard removed",
+            service.clone(),
+            state.replacen(
+                "if self.service_floor_tick().is_some_and(|floor| tick < floor) {\n            return false;\n        }",
+                "",
+                1,
+            ),
+            decision.clone(),
+        ),
+        (
+            "compatibility floor removed",
+            service.replacen(
+                "let start_tick = self\n            .live_issue\n            .service_floor_tick()\n            .map_or(earliest_tick, |floor| earliest_tick.max(floor));",
+                "let start_tick = earliest_tick;",
+                1,
+            ),
+            state.clone(),
+            decision.clone(),
+        ),
+    ];
+    for (description, mutated_service, mutated_state, mutated_decision) in mutations {
+        assert!(
+            mutated_service != service || mutated_state != state || mutated_decision != decision,
+            "service-floor mutation did not apply: {description}",
+        );
+        assert!(
+            !o3_live_issue_service_floor_is_monotonic(
+                &mutated_service,
+                &mutated_state,
+                &mutated_decision,
+            ),
+            "accepted weakened service-floor mutation: {description}",
         );
     }
 }
