@@ -15,7 +15,8 @@ impl O3RuntimeState {
         Vec<RiscvCompletedPartialScalarLoadHandoff>,
         usize,
     )> {
-        if self.deferred_live_data_access_execution.is_some()
+        if !self.live_issue.resident_sequences().is_empty()
+            || self.deferred_live_data_access_execution.is_some()
             || self.live_data_accesses.is_empty()
             || self.has_pending_data_address()
         {
@@ -118,7 +119,35 @@ mod tests {
     use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
     use super::*;
-    use crate::{CpuFetchEvent, CpuFetchRecord, RiscvCpuExecutionEvent, RiscvDataAccessEventKind};
+    use crate::{
+        o3_runtime::O3LiveIssueTraceClass, CpuFetchEvent, CpuFetchRecord, RiscvCpuExecutionEvent,
+        RiscvDataAccessEventKind,
+    };
+
+    #[test]
+    fn live_scalar_memory_handoff_rejects_nonempty_issue_queue_without_mutation() {
+        for with_live_data in [false, true] {
+            let mut runtime = O3RuntimeState::default();
+            if with_live_data {
+                let load = scalar_load_event(0x8000, 10, 0x9000);
+                assert!(runtime.stage_live_data_access_issue_for_test(
+                    &load,
+                    memory_request(20),
+                    31,
+                ));
+            }
+            assert!(runtime.live_issue.enqueue_at(
+                99,
+                Address::new(0x8010),
+                O3LiveIssueTraceClass::Control,
+                32,
+            ));
+            let before = runtime.clone();
+
+            assert!(runtime.live_scalar_memory_handoff().is_none());
+            assert_eq!(runtime, before);
+        }
+    }
 
     #[test]
     fn completed_partial_overlay_becomes_live_handoff_authority() {

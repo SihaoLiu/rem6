@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "state_tests/lifecycle.rs"]
+mod lifecycle;
+
 #[test]
 fn live_issue_state_enqueues_supported_bound_rows_once_and_orders_by_sequence() {
     let mut fixture = ScalarIssueFixture::new_unbound(2, ScalarIssueCase::CrossResource);
@@ -71,15 +74,17 @@ fn live_issue_full_discard_clears_persistent_state_without_trace() {
     ));
     assert_eq!(runtime.live_issue.resident_sequences().len(), 1);
     assert_eq!(runtime.live_issue_service_tick(), Some(31));
-    let trace_records = runtime.live_issue_trace_records().to_vec();
 
     runtime.discard_live_staged_instructions();
 
     assert!(runtime.live_issue.resident_sequences().is_empty());
-    assert_eq!(runtime.live_issue_telemetry().current_occupancy(), 0);
+    assert_eq!(
+        runtime.live_issue_telemetry(),
+        O3LiveIssueTelemetry::default()
+    );
     assert_eq!(runtime.live_issue_service_tick(), None);
     assert!(runtime.live_issue_is_quiescent());
-    assert_eq!(runtime.live_issue_trace_records(), trace_records);
+    assert!(runtime.live_issue_trace_records().is_empty());
 }
 
 #[test]
@@ -97,15 +102,17 @@ fn live_issue_timed_full_discard_clears_persistent_state_without_trace() {
     ));
     assert_eq!(runtime.live_issue.resident_sequences().len(), 1);
     assert_eq!(runtime.live_issue_service_tick(), Some(31));
-    let trace_records = runtime.live_issue_trace_records().to_vec();
 
     runtime.discard_live_staged_instructions_at(32);
 
     assert!(runtime.live_issue.resident_sequences().is_empty());
-    assert_eq!(runtime.live_issue_telemetry().current_occupancy(), 0);
+    assert_eq!(
+        runtime.live_issue_telemetry(),
+        O3LiveIssueTelemetry::default()
+    );
     assert_eq!(runtime.live_issue_service_tick(), None);
     assert!(runtime.live_issue_is_quiescent());
-    assert_eq!(runtime.live_issue_trace_records(), trace_records);
+    assert!(runtime.live_issue_trace_records().is_empty());
 }
 
 #[test]
@@ -135,7 +142,7 @@ fn live_issue_state_removes_exact_and_suffix_rows_atomically() {
         (4, Address::new(0x8010), O3LiveIssueTraceClass::Control),
     ];
     assert_eq!(
-        state.remove_suffix_at(3, O3LiveIssueTraceAction::Squashed, &suffix, 33,),
+        state.remove_suffix_at_for_test(3, O3LiveIssueTraceAction::Squashed, &suffix, 33,),
         2,
     );
     assert_eq!(state.resident_sequences(), [1]);

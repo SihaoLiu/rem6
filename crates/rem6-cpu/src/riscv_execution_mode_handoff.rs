@@ -1,17 +1,14 @@
-use std::collections::BTreeMap;
-use std::error::Error;
-use std::fmt;
-
-use rem6_kernel::{PartitionId, Tick};
-use rem6_memory::{Address, AgentId, MemoryRequestId};
-use rem6_mmio::MmioRoute;
-use rem6_transport::MemoryRouteId;
-
 use crate::riscv_defaults::{
     MAX_RISCV_O3_SCALAR_LIVE_WINDOW_DEPTH, MAX_RISCV_O3_SCALAR_MEMORY_DEPTH,
 };
 use crate::{RiscvCore, RiscvCoreState};
-
+use rem6_kernel::{PartitionId, Tick};
+use rem6_memory::{Address, AgentId, MemoryRequestId};
+use rem6_mmio::MmioRoute;
+use rem6_transport::MemoryRouteId;
+use std::collections::BTreeMap;
+use std::error::Error;
+use std::fmt;
 mod codec;
 #[cfg(test)]
 #[path = "riscv_execution_mode_handoff/completed_partial_overlay_tests.rs"]
@@ -807,6 +804,9 @@ impl RiscvCore {
 
     pub fn capture_o3_live_data_handoff_status(&self) -> RiscvO3LiveDataHandoffCapture {
         let state = self.state.lock().expect("riscv core lock");
+        if !state.o3_runtime.live_issue_is_quiescent() {
+            return RiscvO3LiveDataHandoffCapture::Rejected;
+        }
         if !Self::has_o3_live_data_authority(&state) {
             return RiscvO3LiveDataHandoffCapture::NoLiveDataAuthority;
         }

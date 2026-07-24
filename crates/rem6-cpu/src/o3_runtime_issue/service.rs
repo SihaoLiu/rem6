@@ -65,7 +65,6 @@ impl O3RuntimeState {
         self.live_issue.requested_service_tick()
     }
 
-    #[cfg(test)]
     pub(crate) fn live_issue_is_quiescent(&self) -> bool {
         self.live_issue.is_quiescent()
     }
@@ -84,9 +83,42 @@ impl O3RuntimeState {
         self.live_issue.seal_decision_before(tick);
     }
 
-    #[cfg(test)]
     pub(crate) fn seal_live_issue_decision(&mut self) {
         self.live_issue.seal_current_decision();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn observe_live_issue_decision_for_test(
+        &mut self,
+        tick: u64,
+        issued: &[u64],
+        resource_blocked: &[u64],
+        dependency_blocked: &[u64],
+        max_rows_at_tick: usize,
+    ) {
+        self.live_issue.observe_sequences(
+            tick,
+            issued,
+            resource_blocked,
+            dependency_blocked,
+            max_rows_at_tick,
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_active_live_issue_decision_for_test(&self) -> bool {
+        self.live_issue.projected_decision().is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn enqueue_live_issue_for_test(
+        &mut self,
+        sequence: u64,
+        pc: Address,
+        issue_class: O3LiveIssueTraceClass,
+        tick: u64,
+    ) -> bool {
+        self.live_issue.enqueue_at(sequence, pc, issue_class, tick)
     }
 
     pub(crate) fn enter_live_issue_scheduler_at(&mut self, earliest_tick: u64) {
@@ -137,7 +169,7 @@ impl O3RuntimeState {
         let issued_rows = match prepared {
             O3PreparedLiveIssueBatch::Prepared(rows) => {
                 let recorded_rows = rows.len();
-                match O3LiveIssueTransaction::record(self, rows) {
+                match O3LiveIssueTransaction::record(self, rows, now) {
                     Ok(O3LiveIssueBatchOutcome::Recorded) => recorded_rows,
                     Ok(O3LiveIssueBatchOutcome::ReplayPending(sequence)) => {
                         return self.finish_live_issue_replay_at(
@@ -204,7 +236,7 @@ impl O3RuntimeState {
         arbitrated: bool,
         max_rows_at_tick: usize,
     ) -> Result<O3LiveIssueServiceOutcome, O3RuntimeError> {
-        self.discard_pending_data_address_from(sequence);
+        self.discard_pending_data_address_at_internal(sequence, Some(now));
         let post = self.classify_live_issue_queue_after_service(now)?;
         if let Some(sequence) = post.replay_boundary {
             return Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence });

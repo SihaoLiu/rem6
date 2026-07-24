@@ -1807,6 +1807,7 @@ Expected: all selected tests PASS. Existing top-level behavior remains green thr
 - Modify: `crates/rem6-cpu/src/o3_runtime_issue/pending_address.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_issue/state.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_issue/state/rollback.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_issue/state/test_support_tests.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_issue/service.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_pending_address.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_issue_tests.rs`
@@ -2161,7 +2162,33 @@ Expected: all selected tests PASS and no production future-tick driver remains.
 - Modify: `crates/rem6-cpu/src/lib.rs:438-470`
 - Modify: focused lifecycle/checkpoint/handoff tests
 
-- [ ] **Step 1: Write lifecycle boundary RED tests**
+Task 7 touched in this pass:
+- Modify: `crates/rem6-cpu/src/lib.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_control_window.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_handoff.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_issue.rs`
+- Add: `crates/rem6-cpu/src/o3_runtime_issue/lifecycle_cleanup.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_issue/service.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_issue/state.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_issue/state/rollback.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_issue/state_tests.rs`
+- Add: `crates/rem6-cpu/src/o3_runtime_issue/state_tests/lifecycle.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_issue/transaction.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_live_window.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_memory.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_pending_address_set.rs`
+- Modify: `crates/rem6-cpu/src/riscv_execution_mode_handoff.rs`
+- Modify: `crates/rem6-cpu/src/riscv_data_issue/prepared.rs`
+- Modify: `crates/rem6-cpu/src/riscv_data_issue_tests.rs`
+- Modify: `crates/rem6-cpu/src/riscv_data_issue_tests/dependent_result_address_multiple.rs`
+- Modify: `crates/rem6-cpu/src/riscv_live_retire_gate.rs`
+- Modify: `crates/rem6-cpu/src/riscv_o3_writeback_wake.rs`
+- Modify: `crates/rem6-cpu/tests/source_policy.rs`
+- Modify: `crates/rem6-cpu/tests/source_policy/live_issue_durable_cleanup.rs`
+- Modify: `crates/rem6-cpu/tests/source_policy/live_issue_raw_removal.rs`
+- Modify: `docs/superpowers/plans/2026-07-23-riscv-o3-persistent-cross-class-issue-queue.md`
+
+- [x] **Step 1: Write lifecycle boundary RED tests**
 
 Add the first three tests to `state_tests.rs`:
 
@@ -2358,9 +2385,9 @@ TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib live_scalar_memory_handoff_r
 
 Expected: FAIL because canonical cleanup and quiescence do not yet include live issue state.
 
-- [ ] **Step 2: Add runtime-owned exact, suffix, and clear delegates**
+- [x] **Step 2: Add runtime-owned exact, suffix, and clear delegates**
 
-Implement in `state.rs`:
+Implement in `o3_runtime_issue/lifecycle_cleanup.rs`:
 
 ```rust
 impl O3RuntimeState {
@@ -2400,7 +2427,7 @@ impl O3RuntimeState {
 
 This deliberately requests a stale-early current tick for remaining rows rather than retaining a possibly stale-late tick derived from a removed producer.
 
-- [ ] **Step 3: Call cleanup from canonical sequence boundaries**
+- [x] **Step 3: Call cleanup from canonical sequence boundaries**
 
 Wire the delegates before canonical metadata is removed:
 
@@ -2413,7 +2440,7 @@ Wire the delegates before canonical metadata is removed:
 
 Cleanup is idempotent; a second call finds no resident row and emits no second trace event.
 
-- [ ] **Step 4: Add quiescence and stats-only finalization**
+- [x] **Step 4: Add quiescence and stats-only finalization**
 
 In `RiscvCore::data_access_lifecycle_is_quiescent`, add:
 
@@ -2429,7 +2456,7 @@ state.o3_runtime.seal_live_issue_decision();
 
 Then finalize writeback reservations and detached wakes as before. A stats-only active decision does not make `live_issue_is_quiescent` false.
 
-- [ ] **Step 5: Keep O3RT v23 and restore transient state empty**
+- [x] **Step 5: Keep O3RT v23 and restore transient state empty**
 
 Do not add queue fields to `O3RuntimeCheckpointPayload`. Keep:
 
@@ -2447,7 +2474,7 @@ assert!(restored.live_issue_trace_records().is_empty());
 assert!(restored.live_issue_is_quiescent());
 ```
 
-- [ ] **Step 6: Reject nonempty IQ handoff before mutation**
+- [x] **Step 6: Reject nonempty IQ handoff before mutation**
 
 Add this first guard to `live_scalar_memory_handoff`:
 
@@ -2459,7 +2486,7 @@ if !self.live_issue.resident_sequences().is_empty() {
 
 Make `capture_o3_live_data_handoff_status` reject a nonempty issue queue even when no live-data row exists. Keep O3DH schema version 7 and do not add an IQ chunk.
 
-- [ ] **Step 7: Run boundary tests and commit**
+- [x] **Step 7: Run boundary tests and commit**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib live_issue_cleanup_ -- --nocapture
@@ -2467,7 +2494,13 @@ TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib checkpoint_finalization_ -- 
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib o3_runtime_restore_clears_live_issue -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib live_scalar_memory_handoff_rejects_nonempty_issue_queue -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --test source_policy o3_persistent_live_issue_cleanup -- --nocapture
-git add crates/rem6-cpu/src/o3_runtime_issue/state.rs crates/rem6-cpu/src/o3_runtime_live_window.rs crates/rem6-cpu/src/o3_runtime_control_window.rs crates/rem6-cpu/src/o3_runtime_memory.rs crates/rem6-cpu/src/o3_runtime_pending_address.rs crates/rem6-cpu/src/o3_runtime_pending_address_set.rs crates/rem6-cpu/src/o3_runtime.rs crates/rem6-cpu/src/o3_runtime_handoff.rs crates/rem6-cpu/src/riscv_execution_mode_handoff.rs crates/rem6-cpu/src/riscv_o3_writeback_wake.rs crates/rem6-cpu/src/riscv_live_retire_gate.rs crates/rem6-cpu/src/lib.rs crates/rem6-cpu/tests/source_policy.rs
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --test source_policy
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --all-targets
+TMPDIR=$PWD/target/tmp cargo check -p rem6-cpu --all-targets
+TMPDIR=$PWD/target/tmp cargo fmt --all -- --check
+git diff --check
+git add crates/rem6-cpu/src/lib.rs crates/rem6-cpu/src/o3_runtime_control_window.rs crates/rem6-cpu/src/o3_runtime_handoff.rs crates/rem6-cpu/src/o3_runtime_issue.rs crates/rem6-cpu/src/o3_runtime_issue/lifecycle_cleanup.rs crates/rem6-cpu/src/o3_runtime_issue/service.rs crates/rem6-cpu/src/o3_runtime_issue/state.rs crates/rem6-cpu/src/o3_runtime_issue/state/rollback.rs crates/rem6-cpu/src/o3_runtime_issue/state/test_support_tests.rs crates/rem6-cpu/src/o3_runtime_issue/state_tests.rs crates/rem6-cpu/src/o3_runtime_issue/state_tests/lifecycle.rs crates/rem6-cpu/src/o3_runtime_issue/transaction.rs crates/rem6-cpu/src/o3_runtime_live_window.rs crates/rem6-cpu/src/o3_runtime_memory.rs crates/rem6-cpu/src/o3_runtime_pending_address_set.rs crates/rem6-cpu/src/riscv_data_issue/prepared.rs crates/rem6-cpu/src/riscv_data_issue_tests.rs crates/rem6-cpu/src/riscv_data_issue_tests/dependent_result_address_multiple.rs crates/rem6-cpu/src/riscv_execution_mode_handoff.rs crates/rem6-cpu/src/riscv_live_retire_gate.rs crates/rem6-cpu/src/riscv_o3_writeback_wake.rs crates/rem6-cpu/tests/source_policy.rs crates/rem6-cpu/tests/source_policy/live_issue_durable_cleanup.rs crates/rem6-cpu/tests/source_policy/live_issue_raw_removal.rs docs/superpowers/plans/2026-07-23-riscv-o3-persistent-cross-class-issue-queue.md
 TMPDIR=$PWD/target/tmp git commit -m "feat: enforce persistent IQ lifecycle boundaries"
 ```
 

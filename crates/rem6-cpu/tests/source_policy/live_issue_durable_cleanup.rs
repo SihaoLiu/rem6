@@ -200,7 +200,7 @@ fn durable_cleanup_policy_holds(sources: &DurableCleanupSources) -> bool {
         && rust_anchor_occurs_at_brace_depth(&service, cleanup, 1)
         && ordered_once(
             &service,
-            "O3LiveIssueTransaction::record(self,rows)",
+            "O3LiveIssueTransaction::record(self,rows,now)",
             cleanup,
         )
         && !transaction.contains("complete_committed_live_issue_removals_at")

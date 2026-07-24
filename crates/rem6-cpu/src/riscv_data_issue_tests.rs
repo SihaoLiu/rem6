@@ -17,8 +17,9 @@ use rem6_transport::{
 
 use super::*;
 use crate::{
-    CpuCore, CpuDataConfig, CpuFetchConfig, CpuFetchEvent, CpuFetchRecord, CpuResetState,
-    CpuTranslationFrontend, RiscvCluster, RiscvClusterError, RiscvCpuExecutionEvent,
+    o3_runtime::O3LiveIssueTraceAction, CpuCore, CpuDataConfig, CpuFetchConfig, CpuFetchEvent,
+    CpuFetchRecord, CpuResetState, CpuTranslationFrontend, RiscvCluster, RiscvClusterError,
+    RiscvCpuExecutionEvent,
 };
 
 #[path = "riscv_data_issue_tests/atomic.rs"]
@@ -51,6 +52,18 @@ mod store_store_load;
 mod translated;
 #[path = "riscv_data_issue_tests/translated_mmio_result_pair.rs"]
 mod translated_mmio_result_pair;
+
+fn assert_live_issue_replay_cleanup_tick(core: &RiscvCore, tick: u64) {
+    let state = core.state.lock().expect("riscv core lock");
+    let replayed = state
+        .o3_runtime
+        .live_issue_trace_records()
+        .iter()
+        .filter(|record| record.action() == O3LiveIssueTraceAction::Replayed)
+        .collect::<Vec<_>>();
+    assert!(!replayed.is_empty());
+    assert!(replayed.iter().all(|record| record.service_tick() == tick));
+}
 
 #[test]
 fn scalar_memory_classification_keeps_load_store_only_semantics() {

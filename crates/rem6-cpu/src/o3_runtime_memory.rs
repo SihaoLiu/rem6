@@ -913,7 +913,7 @@ impl O3RuntimeState {
                 self.pending_data_accesses.remove(&stale.fetch_request);
             }
             self.live_data_accesses.truncate(index + 1);
-            self.discard_live_data_access_window_rows(sequence);
+            self.discard_terminal_live_data_access_window_rows_at(sequence, response_tick);
         }
         Ok(true)
     }
@@ -1103,6 +1103,15 @@ impl O3RuntimeState {
 
     pub(super) fn discard_live_data_access_window_rows_at(&mut self, sequence: u64, now: u64) {
         self.discard_live_staged_window_from_at(sequence, now);
+        self.snapshot
+            .load_store_queue
+            .retain(|entry| entry.sequence() < sequence);
+    }
+
+    fn discard_terminal_live_data_access_window_rows_at(&mut self, sequence: u64, now: u64) {
+        self.discard_live_writeback_from_sequence(sequence);
+        self.discard_live_staged_window_rows_from_at(sequence, Some(now));
+        let _ = self.pending_data_addresses.take_from(sequence);
         self.snapshot
             .load_store_queue
             .retain(|entry| entry.sequence() < sequence);

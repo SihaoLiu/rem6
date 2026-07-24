@@ -322,6 +322,7 @@ impl RiscvCore {
         let mut state = self.state.lock().expect("riscv core lock");
         state.live_retire_gate.set_policy(policy);
         if !detailed {
+            state.o3_runtime.discard_all_live_issue_transient_state();
             let younger_result_fetches = state
                 .memory_result_window_authorizations
                 .iter()

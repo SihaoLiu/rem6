@@ -10,6 +10,9 @@ mod dependency;
 #[path = "o3_runtime_issue/durable_cleanup.rs"]
 mod durable_cleanup;
 
+#[path = "o3_runtime_issue/lifecycle_cleanup.rs"]
+mod lifecycle_cleanup;
+
 #[path = "o3_runtime_issue/calendar.rs"]
 pub(in crate::o3_runtime) mod calendar;
 #[path = "o3_runtime_issue/pending_address.rs"]
@@ -252,6 +255,11 @@ impl O3RuntimeState {
         &mut self,
         prepared: Vec<O3PreparedLiveIssue>,
     ) -> Result<O3LiveIssueBatchOutcome, O3LiveIssueTransactionError> {
-        O3LiveIssueTransaction::record(self, prepared)
+        let now = prepared
+            .iter()
+            .map(|row| row.candidate.issue_tick(row.issue_tick))
+            .min()
+            .unwrap_or_default();
+        O3LiveIssueTransaction::record(self, prepared, now)
     }
 }

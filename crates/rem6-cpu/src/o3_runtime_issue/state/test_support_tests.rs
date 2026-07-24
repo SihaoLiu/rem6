@@ -11,4 +11,14 @@ impl O3LiveIssueState {
     ) -> bool {
         self.remove_exact_at(sequence, action, pc, issue_class, tick)
     }
+
+    pub(in crate::o3_runtime) fn remove_suffix_at_for_test(
+        &mut self,
+        boundary: u64,
+        action: O3LiveIssueTraceAction,
+        rows: &[(u64, Address, O3LiveIssueTraceClass)],
+        tick: u64,
+    ) -> usize {
+        self.remove_suffix_at(boundary, action, rows, tick)
+    }
 }

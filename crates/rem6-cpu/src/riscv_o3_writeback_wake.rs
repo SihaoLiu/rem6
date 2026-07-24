@@ -217,7 +217,8 @@ impl RiscvCore {
 
     pub fn finalize_quiescent_o3_writeback_for_checkpoint(&self) {
         let mut state = self.state.lock().expect("riscv core lock");
-        if state.o3_runtime.has_live_writeback_owner()
+        if !state.o3_runtime.live_issue_is_quiescent()
+            || state.o3_runtime.has_live_writeback_owner()
             || state
                 .o3_runtime
                 .earliest_unpublished_memory_result_writeback_tick()
@@ -227,6 +228,7 @@ impl RiscvCore {
         {
             return;
         }
+        state.o3_runtime.seal_live_issue_decision();
         if let Err(error) = state.o3_runtime.finalize_all_writeback_reservations() {
             state
                 .pending_callback_error
@@ -256,9 +258,12 @@ mod tests {
 
     use super::*;
     use crate::{
-        o3_runtime::O3LiveRetireGateCheckpointPayload, CpuCore, CpuFetchConfig, CpuFetchEvent,
-        CpuFetchRecord, CpuId, CpuResetState, O3RuntimeError, RiscvCpuExecutionEvent,
-        RiscvDataAccessEventKind,
+        o3_runtime::{
+            O3LiveIssueTelemetry, O3LiveIssueTraceClass, O3LiveRetireGateCheckpointPayload,
+        },
+        riscv_execution_mode_handoff::RiscvO3LiveDataHandoffCapture,
+        CpuCore, CpuFetchConfig, CpuFetchEvent, CpuFetchRecord, CpuId, CpuResetState,
+        O3RuntimeError, RiscvCpuExecutionEvent, RiscvDataAccessEventKind,
     };
 
     #[test]
@@ -475,6 +480,66 @@ mod tests {
         assert_eq!(state.o3_writeback_wake.desired_tick, requested);
     }
 
+    #[test]
+    fn live_issue_nonempty_queue_blocks_data_access_lifecycle_quiescence() {
+        let core = core_with_queue_only_live_issue_request(24);
+
+        assert!(!core.data_access_lifecycle_is_quiescent());
+    }
+
+    #[test]
+    fn checkpoint_finalization_seals_stats_only_live_issue_decision() {
+        let core = core();
+        let projected = {
+            let mut state = core.state.lock().expect("riscv core lock");
+            state
+                .o3_runtime
+                .observe_live_issue_decision_for_test(20, &[1], &[], &[], 1);
+            assert!(state.o3_runtime.has_active_live_issue_decision_for_test());
+            state.o3_runtime.stats()
+        };
+
+        core.finalize_quiescent_o3_writeback_for_checkpoint();
+
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(state.o3_runtime.stats(), projected);
+        assert!(!state.o3_runtime.has_active_live_issue_decision_for_test());
+    }
+
+    #[test]
+    fn detailed_policy_disable_clears_live_issue_state_and_preserves_stats() {
+        let core = core_with_queue_only_live_issue_request(24);
+        core.set_detailed_live_retire_gate_enabled(true);
+        let projected = {
+            let mut state = core.state.lock().expect("riscv core lock");
+            state
+                .o3_runtime
+                .observe_live_issue_decision_for_test(20, &[1], &[], &[], 1);
+            state.o3_runtime.stats()
+        };
+
+        core.set_detailed_live_retire_gate_enabled(false);
+
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(state.o3_runtime.stats(), projected);
+        assert!(state.o3_runtime.live_issue_is_quiescent());
+        assert_eq!(
+            state.o3_runtime.live_issue_telemetry(),
+            O3LiveIssueTelemetry::default()
+        );
+        assert!(state.o3_runtime.live_issue_trace_records().is_empty());
+    }
+
+    #[test]
+    fn live_issue_nonempty_queue_rejects_handoff_without_live_data_authority() {
+        let core = core_with_queue_only_live_issue_request(24);
+
+        assert_eq!(
+            core.capture_o3_live_data_handoff_status(),
+            RiscvO3LiveDataHandoffCapture::Rejected
+        );
+    }
+
     fn core() -> RiscvCore {
         RiscvCore::new(
             CpuCore::new(
@@ -510,6 +575,19 @@ mod tests {
             tick,
         ));
         assert_eq!(state.o3_runtime.live_issue_service_tick(), Some(tick));
+        drop(state);
+        core
+    }
+
+    fn core_with_queue_only_live_issue_request(tick: u64) -> RiscvCore {
+        let core = core();
+        let mut state = core.state.lock().expect("riscv core lock");
+        assert!(state.o3_runtime.enqueue_live_issue_for_test(
+            1,
+            Address::new(0x8100),
+            O3LiveIssueTraceClass::Control,
+            tick,
+        ));
         drop(state);
         core
     }

@@ -1,4 +1,3 @@
-#[cfg(test)]
 use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
 
@@ -235,8 +234,7 @@ impl O3LiveIssueState {
         removed
     }
 
-    #[cfg(test)]
-    pub(in crate::o3_runtime) fn remove_suffix_at(
+    pub(super) fn remove_suffix_at(
         &mut self,
         boundary: u64,
         action: O3LiveIssueTraceAction,
@@ -269,20 +267,24 @@ impl O3LiveIssueState {
         removed.len()
     }
 
-    pub(in crate::o3_runtime) fn discard_suffix(&mut self, boundary: u64) -> usize {
-        self.take_suffix(boundary).len()
-    }
-
     pub(in crate::o3_runtime) fn discard_all(&mut self) {
         let mut changed =
             !self.resident_sequences.is_empty() || self.requested_service_tick.is_some();
         self.resident_sequences.clear();
         self.requested_service_tick = None;
+        self.decision_window = O3LiveIssueDecisionWindow::default();
+        self.scheduler_entry_tick = None;
+        self.active_tick = None;
+        self.transaction_active = false;
+        self.last_service_generation = None;
         changed |= self.clear_active_blocked_sequences();
+        changed |=
+            self.telemetry != O3LiveIssueTelemetry::default() || !self.trace_records.is_empty();
         if changed {
             self.mark_mutated();
         }
-        self.telemetry.current_occupancy = 0;
+        self.telemetry = O3LiveIssueTelemetry::default();
+        self.trace_records.clear();
     }
 
     pub(in crate::o3_runtime) fn request_service_at(&mut self, tick: u64) {

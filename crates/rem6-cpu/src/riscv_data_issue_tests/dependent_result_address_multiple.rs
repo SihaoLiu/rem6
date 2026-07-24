@@ -260,7 +260,7 @@ fn two_pending_data_access_execution_looks_up_exact_pending_fetch() {
         .append_pending_data_address_consumed_request_for_test(fixture.fetches[0], lineage_request);
     assert!(runtime.pending_data_address_owns_fetch(lineage_request));
     let before_discard = runtime.clone();
-    assert!(!runtime.discard_pending_data_address_for_fetch(lineage_request));
+    assert!(!runtime.discard_pending_data_address_for_fetch_at(lineage_request, SUBMIT_TICK));
     assert_eq!(*runtime, before_discard);
     let primary = runtime
         .pending_data_address_execution_for_fetch(fixture.fetches[0])
@@ -413,6 +413,7 @@ fn two_pending_first_pre_submit_replay_discards_second_and_suffix() {
         .add_pma_uncacheable_range(RiscvPmaRange::new(0x9000, 0x9008).unwrap())
         .unwrap();
     assert!(!fixture.issue());
+    assert_live_issue_replay_cleanup_tick(&fixture.core, SUBMIT_TICK);
     fixture.assert_first_pending_suffix_discarded_without_stale_wake();
 }
 

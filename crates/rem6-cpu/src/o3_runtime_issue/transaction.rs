@@ -79,6 +79,7 @@ impl O3LiveIssueTransaction {
     pub(in crate::o3_runtime) fn record(
         runtime: &mut O3RuntimeState,
         prepared: Vec<O3PreparedLiveIssue>,
+        now: u64,
     ) -> Result<O3LiveIssueBatchOutcome, O3LiveIssueTransactionError> {
         let rollback = O3LiveIssueRollback::capture(runtime);
         if !runtime.live_issue.begin_transaction() {
@@ -92,7 +93,7 @@ impl O3LiveIssueTransaction {
             }
             Ok(O3LiveIssueBatchOutcome::ReplayPending(sequence)) => {
                 rollback.restore(runtime);
-                runtime.discard_pending_data_address_from(sequence);
+                runtime.discard_pending_data_address_at_internal(sequence, Some(now));
                 Ok(O3LiveIssueBatchOutcome::ReplayPending(sequence))
             }
             Err(error) => {

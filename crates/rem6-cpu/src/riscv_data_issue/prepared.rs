@@ -14,7 +14,7 @@ impl RiscvCoreState {
         let pending_address_wake = self.o3_runtime.pending_data_address_wake_tick().is_some();
         let pending = self
             .o3_runtime
-            .discard_pending_data_address_for_fetch(fetch_request);
+            .discard_pending_data_address_for_fetch_at(fetch_request, now);
         let deferred = self.abort_deferred_o3_live_data_access_execution(fetch_request);
         if pending && pending_address_wake {
             self.o3_writeback_wake.clear();

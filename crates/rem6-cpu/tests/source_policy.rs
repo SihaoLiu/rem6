@@ -15,6 +15,7 @@ const MAX_O3_RUNTIME_DEEP_CLEANUP_TEST_LINES: usize = 350;
 const MAX_O3_RUNTIME_ISSUE_DEPENDENCY_LINES: usize = 500;
 const MAX_O3_RUNTIME_ISSUE_DEPENDENCY_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_ISSUE_DURABLE_CLEANUP_LINES: usize = 80;
+const MAX_O3_RUNTIME_ISSUE_LIFECYCLE_CLEANUP_LINES: usize = 180;
 const MAX_O3_RUNTIME_ISSUE_DURABLE_CLEANUP_TEST_LINES: usize = 220;
 const MAX_O3_RUNTIME_ISSUE_CALENDAR_LINES: usize = 450;
 const MAX_O3_RUNTIME_ISSUE_CALENDAR_TEST_LINES: usize = 450;
@@ -27,6 +28,7 @@ const MAX_O3_RUNTIME_ISSUE_STATE_DECISION_PROJECTION_LINES: usize = 120;
 const MAX_O3_RUNTIME_ISSUE_STATE_DECISION_WINDOW_LINES: usize = 160;
 const MAX_O3_RUNTIME_ISSUE_STATE_DECISION_WINDOW_TEST_LINES: usize = 160;
 const MAX_O3_RUNTIME_ISSUE_STATE_TEST_LINES: usize = 500;
+const MAX_O3_RUNTIME_ISSUE_STATE_LIFECYCLE_TEST_LINES: usize = 260;
 const MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_LINES: usize = 180;
 const MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_TEST_LINES: usize = 180;
 const MAX_O3_RUNTIME_ISSUE_STATE_TEST_SUPPORT_LINES: usize = 80;
@@ -140,6 +142,10 @@ fn o3_persistent_iq_cpu_files_stay_focused() {
             MAX_O3_RUNTIME_ISSUE_DURABLE_CLEANUP_LINES,
         ),
         (
+            "src/o3_runtime_issue/lifecycle_cleanup.rs",
+            MAX_O3_RUNTIME_ISSUE_LIFECYCLE_CLEANUP_LINES,
+        ),
+        (
             "src/o3_runtime_issue/durable_cleanup_tests.rs",
             MAX_O3_RUNTIME_ISSUE_DURABLE_CLEANUP_TEST_LINES,
         ),
@@ -166,6 +172,10 @@ fn o3_persistent_iq_cpu_files_stay_focused() {
         (
             "src/o3_runtime_issue/state_tests.rs",
             MAX_O3_RUNTIME_ISSUE_STATE_TEST_LINES,
+        ),
+        (
+            "src/o3_runtime_issue/state_tests/lifecycle.rs",
+            MAX_O3_RUNTIME_ISSUE_STATE_LIFECYCLE_TEST_LINES,
         ),
         (
             "src/o3_runtime_issue/state/rollback.rs",
@@ -1578,7 +1588,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "pending_data_address_issue_matches",
         "discard_pending_data_address_at_internal",
         "discard_pending_data_address_from",
-        "discard_pending_data_address_for_fetch",
+        "discard_pending_data_address_for_fetch_at",
         "discard_pending_data_address",
         "discard_pending_data_address_at",
         "bind_pending_data_address_issue",
@@ -1792,7 +1802,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     }
     for anchor in [
         "O3LiveIssueQueueCapture::ReplayPending(sequence)",
-        "discard_pending_data_address_from(sequence)",
+        "discard_pending_data_address_at_internal(sequence, Some(now))",
     ] {
         assert!(
             issue_service_code.contains(anchor),
@@ -1802,7 +1812,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     for anchor in [
         "pending_data_address_sequence_for_replay(sequence)",
         "rollback.restore(runtime)",
-        "runtime.discard_pending_data_address_from(sequence)",
+        "runtime.discard_pending_data_address_at_internal(sequence, Some(now))",
     ] {
         assert!(
             issue_transaction_code.contains(anchor),
@@ -2246,7 +2256,7 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
         "oldest_pending_data_address_execution",
         "pending_data_address_execution_for_fetch",
         "pending_data_address_execution_for_fetch_mut",
-        "discard_pending_data_address_for_fetch",
+        "discard_pending_data_address_for_fetch_at",
     ] {
         assert!(production_defines_exact_function(&pending_set_code, helper));
     }
@@ -2325,11 +2335,14 @@ fn task5_dependent_result_address_data_issue_stays_focused() {
         rust_function_definition(&issue_child_code, "replay_pending_address_before_submit")
             .expect("pending replay owner");
     assert!(replay_definition.contains("abort_prepared_data_issue(fetch_request, now)"));
-    assert!(!replay_definition.contains("discard_pending_data_address_for_fetch(fetch_request)"));
+    assert!(!replay_definition
+        .contains("discard_pending_data_address_for_fetch_at(fetch_request, now)"));
     assert!(!replay_definition.contains("discard_pending_data_address();"));
     let abort_definition = rust_function_definition(&prepared_code, "abort_prepared_data_issue")
         .expect("prepared abort owner");
-    assert!(abort_definition.contains("discard_pending_data_address_for_fetch(fetch_request)"));
+    assert!(
+        abort_definition.contains("discard_pending_data_address_for_fetch_at(fetch_request, now)")
+    );
     assert!(abort_definition.contains("o3_writeback_wake.clear()"));
     assert!(abort_definition.contains("refresh_o3_writeback_wake(now)"));
     let can_issue_definition =
@@ -2805,7 +2818,7 @@ fn task8_dependent_result_address_production_ownership_is_final() {
         "bind_pending_data_address_issue",
         "discard_pending_data_address_at_internal",
         "discard_pending_data_address_from",
-        "discard_pending_data_address_for_fetch",
+        "discard_pending_data_address_for_fetch_at",
         "discard_pending_data_address",
         "discard_pending_data_address_at",
         "pending_data_address_owner_is_consistent",
@@ -4023,10 +4036,10 @@ fn o3_persistent_live_issue_state_owns_membership() {
         );
     }
     assert!(
-        !production_function_is_visible(&state_rollback, "is_quiescent"),
-        "rollback quiescence helper must stay test-only"
+        production_function_is_visible(&state_rollback, "is_quiescent"),
+        "runtime lifecycle boundaries require production quiescence visibility"
     );
-    assert!(state_rollback_source
+    assert!(!state_rollback_source
         .contains("#[cfg(test)]\n    pub(in crate::o3_runtime) fn is_quiescent("));
     assert_eq!(
         path_owned_module_declaration_count(
@@ -4129,6 +4142,220 @@ fn o3_persistent_live_issue_state_owns_membership() {
             "checkpoint payloads must not persist transient live issue evidence `{forbidden}`",
         );
     }
+}
+
+#[test]
+fn o3_persistent_live_issue_cleanup_is_centralized_before_metadata_removal() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lifecycle_cleanup_path = crate_dir.join("src/o3_runtime_issue/lifecycle_cleanup.rs");
+    let live_window_path = crate_dir.join("src/o3_runtime_live_window.rs");
+    let pending_path = crate_dir.join("src/o3_runtime_pending_address_set.rs");
+    let memory_path = crate_dir.join("src/o3_runtime_memory.rs");
+    let live_window = production_rust_source(&fs::read_to_string(live_window_path).unwrap());
+    let pending = production_rust_source(&fs::read_to_string(pending_path).unwrap());
+    let memory = production_rust_source(&fs::read_to_string(memory_path).unwrap());
+    let lifecycle_cleanup =
+        production_rust_source(&fs::read_to_string(&lifecycle_cleanup_path).unwrap());
+
+    let raw_callers = rust_source_files(&crate_dir.join("src"))
+        .into_iter()
+        .filter_map(|path| {
+            let relative = path.strip_prefix(crate_dir).unwrap().to_path_buf();
+            (!is_test_only_rust_source(&relative)).then(|| {
+                let source = production_rust_source(&fs::read_to_string(path).unwrap());
+                (
+                    relative,
+                    rust_method_call_positions(&source, "remove_suffix_at").len(),
+                    rust_method_call_positions(&source, "discard_all").len(),
+                )
+            })
+        })
+        .filter(|(_, suffix, all)| *suffix != 0 || *all != 0)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        raw_callers,
+        vec![(
+            PathBuf::from("src/o3_runtime_issue/lifecycle_cleanup.rs"),
+            1,
+            1
+        )],
+        "raw live issue lifecycle discard calls must stay centralized"
+    );
+    assert!(lifecycle_cleanup.contains("fn discard_live_issue_exact_at"));
+    assert!(lifecycle_cleanup.contains("fn discard_live_issue_suffix_at"));
+    assert!(lifecycle_cleanup.contains("fn discard_all_live_issue_transient_state"));
+    assert!(lifecycle_cleanup.contains("self.live_issue_identity(sequence)"));
+    assert!(lifecycle_cleanup.contains("self.live_issue_rows_from(boundary)"));
+    assert!(lifecycle_cleanup.contains("self.prepare_live_issue_cleanup_wake("));
+    let cleanup_identity = compact_rust_code(
+        &rust_function_definition(&lifecycle_cleanup, "live_issue_identity")
+            .expect("missing live_issue_identity"),
+    );
+    assert!(cleanup_identity
+        .contains("self.live_data_accesses.iter().any(|live|live.sequence==sequence)"));
+    assert!(cleanup_identity.contains("O3LiveIssueTraceClass::MemoryAgu"));
+    let exact_cleanup = compact_rust_code(
+        &rust_function_definition(&lifecycle_cleanup, "discard_live_issue_exact_at")
+            .expect("missing discard_live_issue_exact_at"),
+    );
+    assert!(ordered_once_for_live_issue_cleanup(
+        &exact_cleanup,
+        "self.prepare_live_issue_cleanup_wake(has_survivors,now);",
+        ".remove_exact_at(sequence,action,pc,issue_class,now)",
+    ));
+    let suffix_cleanup = compact_rust_code(
+        &rust_function_definition(&lifecycle_cleanup, "discard_live_issue_suffix_at")
+            .expect("missing discard_live_issue_suffix_at"),
+    );
+    assert!(ordered_once_for_live_issue_cleanup(
+        &suffix_cleanup,
+        "self.prepare_live_issue_cleanup_wake(first_removed!=0,now);",
+        ".remove_suffix_at(boundary,action,&rows,now)",
+    ));
+
+    let retire = compact_rust_code(
+        &rust_function_definition(&live_window, "retire_live_staged_instruction")
+            .expect("missing retire_live_staged_instruction"),
+    );
+    assert!(ordered_once_for_live_issue_cleanup(
+        &retire,
+        "self.discard_live_issue_exact_at(entry.sequence(),O3LiveIssueTraceAction::Retired,retire_tick",
+        "self.commit_live_rob_prefix(rob_commits,commit_tick);",
+    ));
+    assert!(ordered_once_for_live_issue_cleanup(
+        &retire,
+        "self.discard_live_issue_exact_at(boundary_sequence,O3LiveIssueTraceAction::Retired,retire_tick",
+        "self.discard_live_issue_suffix_at(younger_sequence,O3LiveIssueTraceAction::Squashed,retire_tick",
+    ));
+    assert!(ordered_once_for_live_issue_cleanup(
+        &retire,
+        "self.discard_live_issue_suffix_at(younger_sequence,O3LiveIssueTraceAction::Squashed,retire_tick",
+        "self.snapshot.reorder_buffer.drain(index..);",
+    ));
+    let live_suffix = compact_rust_code(
+        &rust_function_definition(&live_window, "discard_live_staged_window_rows_from_at")
+            .expect("missing discard_live_staged_window_rows_from_at"),
+    );
+    assert!(ordered_once_for_live_issue_cleanup(
+        &live_suffix,
+        "self.discard_live_issue_suffix_at(sequence,O3LiveIssueTraceAction::Squashed,now",
+        "self.snapshot.reorder_buffer.retain(",
+    ));
+    let pending_suffix = compact_rust_code(
+        &rust_function_definition(&pending, "discard_pending_data_address_at_internal")
+            .expect("missing discard_pending_data_address_at_internal"),
+    );
+    assert!(ordered_once_for_live_issue_cleanup(
+        &pending_suffix,
+        "self.discard_pending_live_issue_suffix_at(sequence,now);",
+        "self.pending_data_addresses.take_from(sequence);",
+    ));
+    let pending_issue_suffix = compact_rust_code(
+        &rust_function_definition(&lifecycle_cleanup, "discard_pending_live_issue_suffix_at")
+            .expect("missing discard_pending_live_issue_suffix_at"),
+    );
+    assert!(pending_issue_suffix.contains(
+        "self.discard_live_issue_suffix_at(sequence,O3LiveIssueTraceAction::Replayed,cleanup_tick"
+    ));
+    let memory_suffix = compact_rust_code(
+        &rust_function_definition(&memory, "discard_live_data_access_window_rows_at")
+            .expect("missing discard_live_data_access_window_rows_at"),
+    );
+    assert!(ordered_once_for_live_issue_cleanup(
+        &memory_suffix,
+        "self.discard_live_staged_window_from_at(sequence,now",
+        "self.snapshot.load_store_queue.retain(",
+    ));
+}
+
+#[test]
+fn o3_persistent_live_issue_lifecycle_boundaries_are_queue_aware() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib = production_rust_source(&fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap());
+    let wake = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/riscv_o3_writeback_wake.rs")).unwrap(),
+    );
+    let runtime =
+        production_rust_source(&fs::read_to_string(crate_dir.join("src/o3_runtime.rs")).unwrap());
+    let runtime_handoff = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/o3_runtime_handoff.rs")).unwrap(),
+    );
+    let core_handoff = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/riscv_execution_mode_handoff.rs")).unwrap(),
+    );
+    let retire_gate = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/riscv_live_retire_gate.rs")).unwrap(),
+    );
+    let checkpoint = compact_rust_code(&production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/o3_runtime_checkpoint.rs")).unwrap(),
+    ));
+    let handoff_codec = compact_rust_code(&production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/riscv_execution_mode_handoff/codec.rs")).unwrap(),
+    ));
+
+    let quiescence = compact_rust_code(
+        &rust_function_definition(&lib, "data_access_lifecycle_is_quiescent")
+            .expect("missing data_access_lifecycle_is_quiescent"),
+    );
+    assert!(quiescence.contains("state.o3_runtime.live_issue_is_quiescent()"));
+
+    let finalize = compact_rust_code(
+        &rust_function_definition(&wake, "finalize_quiescent_o3_writeback_for_checkpoint")
+            .expect("missing finalize_quiescent_o3_writeback_for_checkpoint"),
+    );
+    assert!(ordered_once_for_live_issue_cleanup(
+        &finalize,
+        "if!state.o3_runtime.live_issue_is_quiescent()",
+        "state.o3_runtime.seal_live_issue_decision();",
+    ));
+    assert!(ordered_once_for_live_issue_cleanup(
+        &finalize,
+        "state.o3_runtime.seal_live_issue_decision();",
+        "state.o3_runtime.finalize_all_writeback_reservations()",
+    ));
+
+    let restore = compact_rust_code(
+        &rust_function_definition(&runtime, "restore").expect("missing O3 runtime restore"),
+    );
+    assert!(restore.contains("self.live_issue=O3LiveIssueState::default();"));
+
+    let runtime_capture = compact_rust_code(
+        &rust_function_definition(&runtime_handoff, "live_scalar_memory_handoff")
+            .expect("missing live_scalar_memory_handoff"),
+    );
+    assert!(ordered_once_for_live_issue_cleanup(
+        &runtime_capture,
+        "if!self.live_issue.resident_sequences().is_empty()",
+        "self.deferred_live_data_access_execution.is_some()",
+    ));
+    let core_capture = compact_rust_code(
+        &rust_function_definition(&core_handoff, "capture_o3_live_data_handoff_status")
+            .expect("missing capture_o3_live_data_handoff_status"),
+    );
+    assert!(ordered_once_for_live_issue_cleanup(
+        &core_capture,
+        "if!state.o3_runtime.live_issue_is_quiescent()",
+        "if!Self::has_o3_live_data_authority(&state)",
+    ));
+
+    let disable = compact_rust_code(
+        &rust_function_definition(&retire_gate, "set_detailed_live_retire_gate_enabled")
+            .expect("missing set_detailed_live_retire_gate_enabled"),
+    );
+    assert!(disable.contains("state.o3_runtime.discard_all_live_issue_transient_state();"));
+    assert!(
+        checkpoint.contains("constO3_RUNTIME_CHECKPOINT_VERSION_WITH_WRITEBACK_PORT_STATS:u8=23;")
+    );
+    assert!(checkpoint.contains(
+        "constO3_RUNTIME_CHECKPOINT_VERSION:u8=O3_RUNTIME_CHECKPOINT_VERSION_WITH_WRITEBACK_PORT_STATS;"
+    ));
+    assert!(handoff_codec.contains("pub(super)constVERSION_CURRENT:u8=7;"));
+}
+
+fn ordered_once_for_live_issue_cleanup(source: &str, first: &str, second: &str) -> bool {
+    source.matches(first).count() == 1
+        && source.matches(second).count() == 1
+        && source.find(first) < source.find(second)
 }
 
 #[test]
@@ -4701,7 +4928,7 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
     assert!(issue_source
         .contains("#[cfg(test)]\n    pub(in crate::o3_runtime) fn record_live_issue_batch("));
     assert!(!batch.contains("self.clone()"));
-    assert!(batch.contains("O3LiveIssueTransaction::record(self, prepared)"));
+    assert!(batch.contains("O3LiveIssueTransaction::record(self, prepared, now)"));
     let transaction_storage = production_struct_named_type_storage(
         &[(
             PathBuf::from("src/o3_runtime_issue/transaction.rs"),
@@ -4834,7 +5061,10 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
     assert!(record.contains("runtime.live_issue.begin_transaction()"));
     assert!(record.contains("O3LiveIssueTransactionError::AlreadyActive"));
     assert!(record.contains("rollback.restore(runtime)"));
-    assert!(record.contains("runtime.discard_pending_data_address_from(sequence)"));
+    assert!(
+        record.contains("runtime.discard_pending_data_address_at_internal(sequence, Some(now))")
+    );
+    assert!(!record.contains("unwrap_or_default"));
 
     let in_place =
         rust_function_definition(&transaction, "record_prepared_batch_in_place").unwrap();
@@ -9668,7 +9898,7 @@ fn o3_live_issue_service_is_exactly_one_tick(source: &str) -> bool {
         "O3LiveIssueCalendar::capture(self)",
         "calendar.plan_at(now,&dependencies,queue.entries())",
         "self.prepare_live_issue_batch(hart,&queue,plan.issued(),now)",
-        "O3LiveIssueTransaction::record(self,rows)",
+        "O3LiveIssueTransaction::record(self,rows,now)",
         "self.classify_live_issue_queue_after_service(now)",
         "self.finish_live_issue_service_at(",
     ];
@@ -9766,7 +9996,7 @@ fn o3_live_issue_replay_finalization_is_shared(source: &str) -> bool {
         .filter(|character| !character.is_whitespace())
         .collect::<String>();
     let anchors = [
-        "self.discard_pending_data_address_from(sequence)",
+        "self.discard_pending_data_address_at_internal(sequence,Some(now))",
         "self.classify_live_issue_queue_after_service(now)",
         "post.replay_boundary",
         "self.finish_live_issue_service_at(",
@@ -9783,8 +10013,10 @@ fn o3_live_issue_replay_finalization_is_shared(source: &str) -> bool {
         && rust_method_call_positions(&service, "finish_live_issue_replay_at").len() == 4
         && rust_method_call_positions(&replay, "classify_live_issue_queue_after_service").len() == 1
         && rust_method_call_positions(&replay, "finish_live_issue_service_at").len() == 1
-        && rust_method_call_positions(&production, "discard_pending_data_address_from").len() == 1
-        && !classify.contains("discard_pending_data_address_from")
+        && rust_method_call_positions(&production, "discard_pending_data_address_at_internal")
+            .len()
+            == 1
+        && !classify.contains("discard_pending_data_address_at_internal")
         && service_compact.contains(
             "returnself.finish_live_issue_replay_at(now,sequence,&[],0,false,0);",
         )
@@ -10263,8 +10495,8 @@ fn o3_live_issue_service_policy_rejects_later_tick_mutations() {
         (
             "extra transaction recording",
             service.replacen(
-                "match O3LiveIssueTransaction::record(self, rows) {",
-                "let _ = O3LiveIssueTransaction::record(self, Vec::new());\n                match O3LiveIssueTransaction::record(self, rows) {",
+                "match O3LiveIssueTransaction::record(self, rows, now) {",
+                "let _ = O3LiveIssueTransaction::record(self, Vec::new(), now);\n                match O3LiveIssueTransaction::record(self, rows, now) {",
                 1,
             ),
         ),
@@ -10299,7 +10531,7 @@ fn o3_live_issue_replay_policy_rejects_unclassified_survivor_mutations() {
         (
             "replay cleanup removed",
             service.replacen(
-                "self.discard_pending_data_address_from(sequence);",
+                "self.discard_pending_data_address_at_internal(sequence, Some(now));",
                 "let _cleanup_boundary = sequence;",
                 1,
             ),

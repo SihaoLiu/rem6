@@ -439,6 +439,7 @@ impl RiscvCore {
         let state = self.state.lock().expect("riscv core lock");
         state.pending_callback_error.is_none()
             && state.o3_runtime.live_data_access_lifecycle_is_quiescent()
+            && state.o3_runtime.live_issue_is_quiescent()
             && !state.o3_runtime.has_pending_retirement_authority()
             && !state.o3_writeback_wake.has_pending_checkpoint_authority()
             && state.outstanding_data.is_empty()

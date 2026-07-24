@@ -253,6 +253,18 @@ impl O3RuntimeState {
         }
         if is_deferred_o3_data_access(execution.execution().memory_access()) {
             let boundary_sequence = entry.sequence();
+            self.discard_live_issue_exact_at(
+                boundary_sequence,
+                O3LiveIssueTraceAction::Retired,
+                retire_tick,
+            );
+            if let Some(younger_sequence) = boundary_sequence.checked_add(1) {
+                self.discard_live_issue_suffix_at(
+                    younger_sequence,
+                    O3LiveIssueTraceAction::Squashed,
+                    retire_tick,
+                );
+            }
             self.snapshot.reorder_buffer.drain(index..);
             self.discard_future_writeback_from_sequence(boundary_sequence, retire_tick);
             self.live_data_access_younger_sequences
@@ -273,6 +285,11 @@ impl O3RuntimeState {
                 .set_rename_map_entries(self.snapshot_with_live_rename_map().rename_map.len());
             return;
         }
+        self.discard_live_issue_exact_at(
+            entry.sequence(),
+            O3LiveIssueTraceAction::Retired,
+            retire_tick,
+        );
         let speculative_timing = self.take_live_speculative_issue_timing_at(
             entry,
             execution,
@@ -356,7 +373,7 @@ impl O3RuntimeState {
     }
 
     pub(crate) fn discard_live_staged_instructions(&mut self) {
-        self.live_issue.discard_all();
+        self.discard_all_live_issue_transient_state();
         self.discard_live_writeback_reservations();
         self.discard_live_data_access_lifecycle();
         self.snapshot
@@ -373,7 +390,7 @@ impl O3RuntimeState {
     }
 
     pub(crate) fn discard_live_staged_instructions_at(&mut self, now: u64) {
-        self.live_issue.discard_all();
+        self.discard_all_live_issue_transient_state();
         self.discard_live_writeback_reservations();
         self.discard_live_data_access_lifecycle_at(now);
         self.snapshot
@@ -426,12 +443,14 @@ impl O3RuntimeState {
     }
 
     pub(super) fn discard_live_staged_window_from(&mut self, sequence: u64) {
-        self.discard_pending_data_address_from(sequence);
         self.discard_live_writeback_from_sequence(sequence);
         self.discard_live_staged_window_rows_from_at(sequence, None);
+        self.discard_pending_data_address_from(sequence);
     }
 
     pub(super) fn discard_live_staged_window_from_at(&mut self, sequence: u64, now: u64) {
+        self.discard_future_writeback_from_sequence(sequence, now);
+        self.discard_live_staged_window_rows_from_at(sequence, Some(now));
         if self
             .pending_data_addresses
             .first()
@@ -439,12 +458,23 @@ impl O3RuntimeState {
         {
             self.discard_pending_data_address_at(now);
         }
-        self.discard_future_writeback_from_sequence(sequence, now);
-        self.discard_live_staged_window_rows_from_at(sequence, Some(now));
     }
 
-    fn discard_live_staged_window_rows_from_at(&mut self, sequence: u64, now: Option<u64>) {
-        self.live_issue.discard_suffix(sequence);
+    pub(super) fn discard_live_staged_window_rows_from_at(
+        &mut self,
+        sequence: u64,
+        now: Option<u64>,
+    ) {
+        if let Some(now) = now {
+            self.discard_live_issue_suffix_at(sequence, O3LiveIssueTraceAction::Squashed, now);
+        } else {
+            let cleanup_tick = self.live_issue_service_tick().unwrap_or_default();
+            self.discard_live_issue_suffix_at(
+                sequence,
+                O3LiveIssueTraceAction::Squashed,
+                cleanup_tick,
+            );
+        }
         self.snapshot
             .reorder_buffer
             .retain(|entry| !entry.is_live_staged() || entry.sequence() < sequence);

@@ -26,7 +26,6 @@ impl O3LiveIssueState {
         self.transaction_active
     }
 
-    #[cfg(test)]
     pub(in crate::o3_runtime) fn is_quiescent(&self) -> bool {
         self.resident_sequences.is_empty()
             && self.requested_service_tick.is_none()

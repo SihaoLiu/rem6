@@ -18,7 +18,6 @@ impl O3PendingDataAddresses {
     pub(super) fn is_empty(&self) -> bool {
         self.rows.is_empty()
     }
-
     pub(super) fn first(&self) -> Option<&O3PendingDataAddress> {
         self.rows.first()
     }
@@ -27,22 +26,18 @@ impl O3PendingDataAddresses {
     pub(super) fn first_mut(&mut self) -> Option<&mut O3PendingDataAddress> {
         self.rows.first_mut()
     }
-
     pub(super) fn last(&self) -> Option<&O3PendingDataAddress> {
         self.rows.last()
     }
-
     pub(super) fn iter(&self) -> impl Iterator<Item = &O3PendingDataAddress> {
         self.rows.iter()
     }
-
     pub(super) fn find_sequence(&self, sequence: u64) -> Option<&O3PendingDataAddress> {
         self.rows.iter().find(|row| row.sequence == sequence)
     }
     pub(super) fn find_sequence_mut(&mut self, sequence: u64) -> Option<&mut O3PendingDataAddress> {
         self.rows.iter_mut().find(|row| row.sequence == sequence)
     }
-
     pub(super) fn find_fetch(&self, request: MemoryRequestId) -> Option<&O3PendingDataAddress> {
         self.rows.iter().find(|row| {
             row.fetch.request_id() == request || row.consumed_requests.contains(&request)
@@ -103,7 +98,7 @@ impl O3PendingDataAddresses {
         self.rows.remove(index)
     }
 
-    fn take_from(&mut self, sequence: u64) -> Vec<O3PendingDataAddress> {
+    pub(super) fn take_from(&mut self, sequence: u64) -> Vec<O3PendingDataAddress> {
         let first_removed = self.rows.partition_point(|row| row.sequence < sequence);
         self.rows.drain(first_removed..).collect()
     }
@@ -209,7 +204,12 @@ impl O3RuntimeState {
         )
     }
 
-    fn discard_pending_data_address_at_internal(&mut self, sequence: u64, now: Option<u64>) {
+    pub(super) fn discard_pending_data_address_at_internal(
+        &mut self,
+        sequence: u64,
+        now: Option<u64>,
+    ) {
+        self.discard_pending_live_issue_suffix_at(sequence, now);
         let removed = self.pending_data_addresses.take_from(sequence);
         let Some(first_removed) = removed.first().map(O3PendingDataAddress::sequence) else {
             return;
@@ -227,9 +227,10 @@ impl O3RuntimeState {
         self.discard_pending_data_address_at_internal(sequence, None);
     }
 
-    pub(crate) fn discard_pending_data_address_for_fetch(
+    pub(crate) fn discard_pending_data_address_for_fetch_at(
         &mut self,
         fetch_request: MemoryRequestId,
+        now: u64,
     ) -> bool {
         let Some(sequence) = self
             .pending_data_addresses
@@ -238,7 +239,7 @@ impl O3RuntimeState {
         else {
             return false;
         };
-        self.discard_pending_data_address_from(sequence);
+        self.discard_pending_data_address_at_internal(sequence, Some(now));
         true
     }
 

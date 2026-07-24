@@ -385,15 +385,9 @@ impl O3RuntimeState {
     }
 
     fn discard_live_control_descendant_rows_from_at(&mut self, branch_sequence: u64, now: u64) {
-        self.snapshot
-            .reorder_buffer
-            .retain(|entry| !entry.is_live_staged() || entry.sequence() <= branch_sequence);
-        self.live_data_access_younger_sequences
-            .retain(|sequence| *sequence <= branch_sequence);
-        self.retain_live_speculative_executions_at(
-            |execution| execution.sequence <= branch_sequence,
-            now,
-        );
+        if let Some(descendant_sequence) = branch_sequence.checked_add(1) {
+            self.discard_live_staged_window_from_at(descendant_sequence, now);
+        }
         self.live_control_lineages
             .retain(|sequence, _| *sequence <= branch_sequence);
         self.live_serializing_control_sequences
