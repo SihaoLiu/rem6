@@ -24,7 +24,7 @@ fn staged_lifecycle_fixture() -> (O3RuntimeState, O3RenameMapEntry, O3RuntimeSna
         default_o3_runtime_snapshot().pending_state().clone(),
     )
     .unwrap();
-    let mut fixture = PendingAddressFixture::new(4, 4);
+    let mut fixture = PendingAddressFixture::new(4, 5);
     fixture.runtime.restore(checkpoint.clone()).unwrap();
     let head = load_event(HEAD_PC, 10, 5, 2, 0x9000);
     assert!(fixture.runtime.stage_live_data_access_issue(
@@ -269,7 +269,11 @@ fn stage_future_pending_wake_with_head(runtime: &mut O3RuntimeState) -> RiscvCpu
     let ready = runtime
         .take_ready_live_data_access_event(HEAD_WRITEBACK_TICK)
         .expect("completed head is ready for retirement");
-    runtime.live_data_accesses[0].issue_tick = HEAD_WRITEBACK_TICK;
+    let head_sequence = runtime.live_data_accesses[0].sequence;
+    let reservation_sequence =
+        super::scheduling::record_independent_branch_reservation_at(runtime, HEAD_WRITEBACK_TICK);
+    assert_eq!(runtime.live_data_accesses[0].issue_tick, 31);
+    assert_ne!(reservation_sequence, head_sequence);
     let head = runtime
         .live_data_access_head_reservation(head_execution.fetch().request_id())
         .expect("canonical pending-address head reservation");

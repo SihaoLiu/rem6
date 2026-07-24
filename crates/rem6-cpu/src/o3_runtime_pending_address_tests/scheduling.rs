@@ -16,7 +16,7 @@ struct PendingAddressSchedulingFixture {
 
 impl PendingAddressSchedulingFixture {
     fn new(issue_width: usize) -> Self {
-        let mut staging = PendingAddressFixture::new(4, 4);
+        let mut staging = PendingAddressFixture::new(4, 5);
         assert!(staging.runtime.set_issue_width(issue_width));
         assert_eq!(staging.stage_default(), 3);
         for (pc, raw, sequence) in [
@@ -101,6 +101,41 @@ impl PendingAddressSchedulingFixture {
     }
 }
 
+pub(super) fn record_independent_branch_reservation_at(
+    runtime: &mut O3RuntimeState,
+    issue_tick: u64,
+) -> u64 {
+    let instruction = RiscvInstruction::Beq {
+        rs1: reg(0),
+        rs2: reg(0),
+        offset: Immediate::new(8),
+    };
+    let decoded = decoded(0x0000_0463);
+    assert_eq!(decoded.instruction(), instruction);
+    let sequence = runtime
+        .stage_live_instruction(Address::new(EXTRA_SUFFIX_PC), instruction, 0)
+        .expect("independent calendar reservation row stages");
+    let requests = [request(14)];
+    assert!(runtime.bind_live_staged_issue_packet(
+        Address::new(EXTRA_SUFFIX_PC),
+        decoded,
+        &requests,
+        issue_tick,
+    ));
+    let head = O3LiveIssueHeadReservation::for_instruction(sequence, issue_tick, instruction);
+    let execution = RiscvExecutionRecord::new(
+        instruction,
+        EXTRA_SUFFIX_PC,
+        EXTRA_SUFFIX_PC + 8,
+        Vec::new(),
+        None,
+    );
+    assert!(runtime
+        .record_live_issue_head_execution(head, &requests, execution)
+        .unwrap());
+    sequence
+}
+
 #[test]
 fn pending_address_scheduler_waits_for_head_writeback() {
     let mut fixture = PendingAddressSchedulingFixture::new(2);
@@ -148,7 +183,17 @@ fn pending_address_scheduler_width_one_orders_memory_before_scalar() {
     blocked.complete_head(PRODUCER_VALUE);
     blocked.publish_head();
     let head_sequence = blocked.runtime.snapshot().reorder_buffer()[0].sequence();
-    blocked.runtime.live_data_accesses[0].issue_tick = HEAD_WRITEBACK_TICK;
+    let reservation_sequence =
+        record_independent_branch_reservation_at(&mut blocked.runtime, HEAD_WRITEBACK_TICK);
+    assert_eq!(blocked.runtime.live_data_accesses[0].issue_tick, 31);
+    assert_ne!(reservation_sequence, head_sequence);
+    assert!(blocked
+        .runtime
+        .live_speculative_executions
+        .iter()
+        .any(|row| {
+            row.sequence == reservation_sequence && row.issue_tick == HEAD_WRITEBACK_TICK
+        }));
 
     blocked.schedule(HEAD_WRITEBACK_TICK).unwrap();
 
@@ -200,7 +245,7 @@ fn pending_address_scheduler_width_one_orders_memory_before_scalar() {
     fired.complete_head(PRODUCER_VALUE);
     fired.publish_head();
     let head_sequence = fired.runtime.snapshot().reorder_buffer()[0].sequence();
-    fired.runtime.live_data_accesses[0].issue_tick = HEAD_WRITEBACK_TICK;
+    record_independent_branch_reservation_at(&mut fired.runtime, HEAD_WRITEBACK_TICK);
     fired.schedule(HEAD_WRITEBACK_TICK).unwrap();
     fired.hart.write(reg(5), PRODUCER_VALUE);
     fired.runtime.remove_live_data_access_rows(head_sequence, 1);
@@ -241,7 +286,7 @@ fn pending_address_scheduler_width_one_orders_memory_before_scalar() {
     stale.complete_head(PRODUCER_VALUE);
     stale.publish_head();
     let head_sequence = stale.runtime.snapshot().reorder_buffer()[0].sequence();
-    stale.runtime.live_data_accesses[0].issue_tick = HEAD_WRITEBACK_TICK;
+    record_independent_branch_reservation_at(&mut stale.runtime, HEAD_WRITEBACK_TICK);
     stale.schedule(HEAD_WRITEBACK_TICK).unwrap();
     stale.hart.write(reg(5), PRODUCER_VALUE);
     stale.runtime.remove_live_data_access_rows(head_sequence, 1);

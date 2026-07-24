@@ -4060,8 +4060,32 @@ fn o3_persistent_live_issue_state_owns_candidate_inventory() {
     );
     assert!(!queue_source.contains("fn capture("));
     assert!(!queue.contains("for (index, rob) in runtime.snapshot.reorder_buffer"));
-    assert!(queue.contains("for &sequence in resident_sequences"));
-    assert!(queue.contains("binary_search_by_key(&sequence"));
+    let queue_materialize = rust_function_definition(&queue, "materialize")
+        .expect("missing persistent issue queue materialization path");
+    let compact_materialize = queue_materialize
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    assert_eq!(queue_materialize.matches("for ").count(), 1);
+    assert!(queue_materialize.contains("for &sequence in resident_sequences"));
+    assert!(queue_materialize.contains("binary_search_by_key(&sequence"));
+    assert_eq!(
+        compact_materialize
+            .matches("runtime.snapshot.reorder_buffer")
+            .count(),
+        2,
+    );
+    for forbidden in [
+        "reorder_buffer.iter(",
+        "reorder_buffer.iter_mut(",
+        "reorder_buffer.into_iter(",
+        "in&runtime.snapshot.reorder_buffer",
+    ] {
+        assert!(
+            !compact_materialize.contains(forbidden),
+            "queue materialization must not scan ROB inventory through `{forbidden}`",
+        );
+    }
     for transient in ["O3LiveIssueDependencyTable", "O3LiveIssueCalendar"] {
         assert!(
             production_struct_named_type_storage(&production_sources, transient).is_empty(),
