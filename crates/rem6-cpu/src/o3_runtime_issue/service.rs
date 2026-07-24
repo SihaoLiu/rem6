@@ -3,7 +3,8 @@ use rem6_isa_riscv::RiscvHartState;
 use super::*;
 use super::{
     calendar::O3LiveIssueCalendar,
-    queue::{O3LiveIssueQueue, O3LiveIssueQueueCapture},
+    queue::{live_issue_trace_class, O3LiveIssueQueue, O3LiveIssueQueueCapture},
+    state::O3LiveIssueTraceRow,
 };
 use crate::o3_pipeline::O3ScopedReadyInstruction;
 
@@ -42,6 +43,8 @@ struct O3LiveIssuePostService {
     observed_decision: bool,
     resource_blocked_sequences: Vec<u64>,
     dependency_blocked_sequences: Vec<u64>,
+    resource_blocked_trace_rows: Vec<O3LiveIssueTraceRow>,
+    dependency_blocked_trace_rows: Vec<O3LiveIssueTraceRow>,
     max_rows_at_tick: usize,
     next_service_tick: Option<u64>,
     replay_boundary: Option<u64>,
@@ -273,12 +276,20 @@ impl O3RuntimeState {
         if let Some(tick) = post.next_service_tick {
             self.live_issue.request_service_at(tick);
         }
+        let next_service_tick = self.live_issue.requested_service_tick();
+        self.live_issue.finalize_service_turn_trace(
+            issued_sequences,
+            &post.resource_blocked_trace_rows,
+            &post.dependency_blocked_trace_rows,
+            now,
+            next_service_tick,
+        );
         if let Some(sequence) = post.no_wake_sequence {
             return Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence });
         }
         Ok(O3LiveIssueServiceOutcome {
             issued_rows,
-            next_service_tick: post.next_service_tick,
+            next_service_tick,
             replay_boundary,
             waits_for_pending_dependency: post.waits_for_pending_dependency,
         })
@@ -309,6 +320,10 @@ impl O3RuntimeState {
         let dependency_table = O3LiveIssueDependencyTable::new(self, queue.entries())?;
         let calendar = O3LiveIssueCalendar::capture(self);
         let post_plan = calendar.plan_at(now, &dependency_table, queue.entries())?;
+        let resource_blocked_trace_rows =
+            live_issue_trace_rows(&queue, post_plan.resource_blocked())?;
+        let dependency_blocked_trace_rows =
+            live_issue_trace_rows(&queue, post_plan.dependency_blocked())?;
         let same_tick = (!post_plan.issued().is_empty()).then_some(now);
         let resource_tick = (!post_plan.resource_blocked().is_empty())
             .then(|| now.checked_add(1))
@@ -366,6 +381,8 @@ impl O3RuntimeState {
                 .iter()
                 .map(O3ScopedReadyInstruction::sequence)
                 .collect(),
+            resource_blocked_trace_rows,
+            dependency_blocked_trace_rows,
             max_rows_at_tick: post_plan.reserved_width(),
             next_service_tick,
             replay_boundary: None,
@@ -436,4 +453,29 @@ impl O3RuntimeState {
         }
         Ok(O3PreparedLiveIssueBatch::Prepared(prepared))
     }
+}
+
+fn live_issue_trace_rows(
+    queue: &O3LiveIssueQueue,
+    rows: &[O3ScopedReadyInstruction],
+) -> Result<Vec<O3LiveIssueTraceRow>, O3RuntimeError> {
+    rows.iter()
+        .map(|row| {
+            let sequence = row.sequence();
+            let entry = queue
+                .entry(sequence)
+                .ok_or(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence })?;
+            let issue_class = if entry.scheduling().is_pending_data_address() {
+                O3LiveIssueTraceClass::MemoryAgu
+            } else {
+                live_issue_trace_class(entry.packet().instruction())
+                    .ok_or(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence })?
+            };
+            Ok(O3LiveIssueTraceRow::new(
+                sequence,
+                entry.scheduling().pc(),
+                issue_class,
+            ))
+        })
+        .collect()
 }

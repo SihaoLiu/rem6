@@ -80,6 +80,98 @@ fn core_summary_json_o3_issue_queue() {
 }
 
 #[test]
+fn debug_output_o3_detailed_scoped_issue_exposes_o3_issue_queue_debug_json() {
+    let path = scoped_issue_binary(
+        "debug-output-o3-issue-queue-json",
+        ScopedIssueCase::CrossResource,
+    );
+    let json = scoped_issue_json(&path, "direct", 2, 1_500);
+    let issue_queue = json
+        .pointer("/debug/o3_trace/0/issue_queue")
+        .unwrap_or_else(|| panic!("missing detailed O3 issue queue debug JSON: {json}"));
+    let telemetry = issue_queue
+        .pointer("/telemetry")
+        .unwrap_or_else(|| panic!("missing O3 issue queue telemetry: {issue_queue}"));
+    let core_telemetry = json
+        .pointer("/cores/0/o3_runtime/issue/queue")
+        .unwrap_or_else(|| panic!("missing core O3 issue queue telemetry: {json}"));
+
+    assert_eq!(
+        telemetry, core_telemetry,
+        "debug O3 issue queue telemetry must exactly match the core summary DTO"
+    );
+    assert!(
+        json.pointer("/debug/o3_trace/0/issue_queue/telemetry/peak_occupancy")
+            .is_some(),
+        "missing exact O3 issue queue peak occupancy path: {issue_queue}"
+    );
+
+    let events = issue_queue
+        .pointer("/events")
+        .and_then(Value::as_array)
+        .filter(|events| !events.is_empty())
+        .unwrap_or_else(|| panic!("missing O3 issue queue lifecycle events: {issue_queue}"));
+    assert!(
+        json.pointer("/debug/o3_trace/0/issue_queue/events/0/action")
+            .is_some(),
+        "missing exact first O3 issue queue action path: {issue_queue}"
+    );
+    for event in events {
+        for key in [
+            "sequence",
+            "pc",
+            "action",
+            "issue_class",
+            "service_tick",
+            "next_wake_tick",
+            "raw_writeback_tick",
+            "admitted_writeback_tick",
+            "cleanup_boundary",
+        ] {
+            assert!(
+                event.get(key).is_some(),
+                "O3 issue queue lifecycle event is missing {key}: {event}"
+            );
+        }
+    }
+}
+
+#[test]
+fn debug_output_o3_detailed_to_timing_omits_o3_issue_queue_debug_json() {
+    let path = scoped_issue_binary(
+        "debug-output-o3-issue-queue-timing-json",
+        ScopedIssueCase::CrossResource,
+    );
+    let baseline = scoped_issue_json(&path, "direct", 2, 1_500);
+    assert!(
+        baseline.pointer("/debug/o3_trace/0/issue_queue").is_some(),
+        "detailed baseline must expose O3 issue queue evidence before the switch: {baseline}"
+    );
+    let requested_switch_tick = event_u64(event_at_pc(&baseline, BRANCH_PC), "issue_tick") + 1;
+    let switch_arg = format!("{requested_switch_tick}:cpu0:timing");
+    let switched = scoped_issue_json_with_args(
+        &path,
+        "direct",
+        2,
+        1_500,
+        &["--host-switch-cpu-mode", &switch_arg],
+    );
+    let trace = switched
+        .pointer("/debug/o3_trace/0")
+        .unwrap_or_else(|| panic!("historical detailed O3 activity lost its trace: {switched}"));
+
+    assert_eq!(
+        trace.pointer("/execution_mode").and_then(Value::as_str),
+        Some("timing"),
+        "detailed-to-timing trace should publish the final execution mode: {trace}"
+    );
+    assert!(
+        trace.pointer("/issue_queue").is_none(),
+        "timing-mode O3 trace must omit detailed issue queue evidence: {trace}"
+    );
+}
+
+#[test]
 fn stats_output_o3_runtime_issue_queue() {
     let path = scoped_issue_binary("o3-issue-queue-stats", ScopedIssueCase::CrossResource);
     let json = scoped_issue_json(&path, "direct", 2, 1_500);

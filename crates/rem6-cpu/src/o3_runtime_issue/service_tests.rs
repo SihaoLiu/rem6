@@ -83,6 +83,27 @@ fn service_live_issue_queue_at_retains_resource_blocked_rows_for_next_tick() {
     assert_eq!(outcome.next_service_tick(), Some(22));
     assert_eq!(fixture.runtime.live_issue_service_tick(), Some(22));
     assert_eq!(fixture.runtime.live_issue.resident_sequences().len(), 2);
+    let turn = fixture
+        .runtime
+        .live_issue_trace_records()
+        .iter()
+        .filter(|record| {
+            record.service_tick() == 21
+                && matches!(
+                    record.action(),
+                    O3LiveIssueTraceAction::Selected | O3LiveIssueTraceAction::RetainedResource
+                )
+        })
+        .collect::<Vec<_>>();
+    assert!(turn
+        .iter()
+        .any(|record| record.action() == O3LiveIssueTraceAction::Selected));
+    assert!(turn
+        .iter()
+        .any(|record| record.action() == O3LiveIssueTraceAction::RetainedResource));
+    assert!(turn
+        .iter()
+        .all(|record| record.next_wake_tick() == Some(22)));
 }
 
 #[test]
@@ -103,6 +124,27 @@ fn service_live_issue_queue_at_requests_earliest_dependency_ready_tick() {
         .live_issue
         .resident_sequences()
         .contains(&fixture.sequence(THIRD_PC)));
+    let turn = fixture
+        .runtime
+        .live_issue_trace_records()
+        .iter()
+        .filter(|record| {
+            record.service_tick() == 21
+                && matches!(
+                    record.action(),
+                    O3LiveIssueTraceAction::Selected | O3LiveIssueTraceAction::RetainedDependency
+                )
+        })
+        .collect::<Vec<_>>();
+    assert!(turn
+        .iter()
+        .any(|record| record.action() == O3LiveIssueTraceAction::Selected));
+    assert!(turn
+        .iter()
+        .any(|record| record.action() == O3LiveIssueTraceAction::RetainedDependency));
+    assert!(turn
+        .iter()
+        .all(|record| record.next_wake_tick() == Some(producer_ready)));
 }
 
 #[test]
@@ -184,6 +226,33 @@ fn two_pending_replay_reclassifies_older_resident_and_preserves_test_driver_wake
         .live_speculative_executions
         .iter()
         .any(|issued| issued.sequence == survivor || issued.sequence == replay));
+}
+
+#[test]
+fn replay_retained_resource_trace_uses_effective_owned_wake() {
+    let (mut runtime, hart, _, survivor, replay) = replay_survivor_fixture();
+    runtime.live_data_accesses[0].issue_tick = REPLAY_SERVICE_TICK;
+
+    let outcome = runtime
+        .service_live_issue_queue_at(&hart, REPLAY_SERVICE_TICK)
+        .unwrap();
+
+    assert_eq!(outcome.replay_boundary(), Some(replay));
+    assert_eq!(runtime.live_issue_service_tick(), Some(REPLAY_SERVICE_TICK));
+    let retained = runtime
+        .live_issue_trace_records()
+        .iter()
+        .find(|record| {
+            record.sequence() == survivor
+                && record.service_tick() == REPLAY_SERVICE_TICK
+                && record.action() == O3LiveIssueTraceAction::RetainedResource
+        })
+        .expect("retained replay survivor trace");
+    assert_eq!(retained.next_wake_tick(), runtime.live_issue_service_tick());
+    assert_eq!(
+        outcome.next_service_tick(),
+        runtime.live_issue_service_tick()
+    );
 }
 
 #[test]

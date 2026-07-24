@@ -31,6 +31,7 @@ fn live_issue_cleanup_retirement_removes_exact_row_before_metadata_finalization(
     assert_eq!(retired.pc(), Address::new(BRANCH_PC));
     assert_eq!(retired.issue_class(), O3LiveIssueTraceClass::Control);
     assert_eq!(retired.next_wake_tick(), Some(30));
+    assert_eq!(retired.cleanup_boundary(), Some(sequence));
 }
 
 #[test]

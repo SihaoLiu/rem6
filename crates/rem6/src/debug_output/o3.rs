@@ -1,11 +1,13 @@
 use rem6_cpu::{
-    BranchTargetKind, CpuId, O3RuntimeFuLatencyClass, O3RuntimeLsqOperation, O3RuntimeLsqOrdering,
-    O3RuntimeStats, O3RuntimeTraceRecord, RiscvCluster,
+    BranchTargetKind, CpuId, O3LiveIssueTelemetry, O3LiveIssueTraceRecord, O3RuntimeFuLatencyClass,
+    O3RuntimeLsqOperation, O3RuntimeLsqOrdering, O3RuntimeStats, O3RuntimeTraceRecord,
+    RiscvCluster,
 };
+use rem6_system::ExecutionMode;
 
 use crate::{
-    formatting::json_escape, Rem6HostCheckpointSummary, Rem6HostExecutionModeSummary,
-    Rem6HostStatsResetSummary,
+    execution_mode_lanes::execution_mode_name, formatting::json_escape, Rem6HostCheckpointSummary,
+    Rem6HostExecutionModeSummary, Rem6HostStatsResetSummary,
 };
 
 #[path = "o3_branch_direction_mismatch.rs"]
@@ -28,6 +30,8 @@ mod o3_event_summary_json;
 mod o3_execution_mode_stats;
 #[path = "o3_fu_latency_stats.rs"]
 mod o3_fu_latency_stats;
+#[path = "o3_issue_queue_json.rs"]
+mod o3_issue_queue_json;
 #[path = "o3_lsq_json.rs"]
 mod o3_lsq_json;
 #[path = "o3_summary_json.rs"]
@@ -83,6 +87,7 @@ use o3_execution_mode_stats::{
     Rem6O3ExecutionModeTraceTotals,
 };
 use o3_fu_latency_stats::{Rem6O3FuLatencyClassTotals, REM6_O3_FU_LATENCY_CLASS_STATS};
+use o3_issue_queue_json::o3_issue_queue_to_json;
 use o3_lsq_json::o3_lsq_to_json;
 use o3_summary_json::{
     o3_commit_to_json, o3_fu_latency_class_to_json, o3_iew_to_json, o3_iq_to_json,
@@ -99,6 +104,8 @@ pub(super) struct Rem6O3TraceRecord {
     stats_reset_tick: u64,
     checkpoint_restore: Option<Rem6O3CheckpointRestoreScope>,
     stats: O3RuntimeStats,
+    issue_queue_telemetry: O3LiveIssueTelemetry,
+    issue_queue_events: Vec<O3LiveIssueTraceRecord>,
     events: Vec<O3RuntimeTraceRecord>,
 }
 
@@ -118,6 +125,8 @@ impl Rem6O3TraceRecord {
         stats_reset_tick: u64,
         checkpoint_restore: Option<Rem6O3CheckpointRestoreScope>,
         stats: O3RuntimeStats,
+        issue_queue_telemetry: O3LiveIssueTelemetry,
+        issue_queue_events: Vec<O3LiveIssueTraceRecord>,
         events: Vec<O3RuntimeTraceRecord>,
     ) -> Self {
         Self {
@@ -128,6 +137,8 @@ impl Rem6O3TraceRecord {
             stats_reset_tick,
             checkpoint_restore,
             stats,
+            issue_queue_telemetry,
+            issue_queue_events,
             events,
         }
     }
@@ -178,6 +189,15 @@ impl Rem6O3TraceRecord {
         let branch_direction_mismatch = o3_branch_direction_mismatch_to_json(&self.events);
         let branch_target_mismatch = o3_branch_target_mismatch_to_json(&self.events);
         let event_summary = o3_event_summary_to_json(&self.events);
+        let issue_queue =
+            if self.execution_mode == Some(execution_mode_name(ExecutionMode::Detailed)) {
+                format!(
+                    ",\"issue_queue\":{}",
+                    o3_issue_queue_to_json(self.issue_queue_telemetry, &self.issue_queue_events)
+                )
+            } else {
+                String::new()
+            };
         let events = self
             .events
             .iter()
@@ -225,7 +245,7 @@ impl Rem6O3TraceRecord {
                 )
             });
         format!(
-            "{{\"cpu\":{},\"target\":\"{}\",\"execution_mode\":{},\"execution_mode_authority\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_labels\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"checkpoint_restore\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"fu_latency_class\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"branch_direction_mismatch\":{},\"branch_target_mismatch\":{},\"event_summary\":{},\"events\":[{}]}}",
+            "{{\"cpu\":{},\"target\":\"{}\",\"execution_mode\":{},\"execution_mode_authority\":{},\"stats_epoch\":{},\"stats_reset_tick\":{},\"checkpoint_restore_count\":{},\"checkpoint_restore_labels\":{},\"checkpoint_restore_label\":{},\"checkpoint_restore_tick\":{},\"checkpoint_restore_manifest_tick\":{},\"checkpoint_restore_payload_bytes\":{},\"checkpoint_restore\":{},\"instructions\":{},\"rob_allocations\":{},\"rob_commits\":{},\"rename_writes\":{},\"lsq_loads\":{},\"lsq_stores\":{},\"lsq_load_bytes\":{},\"lsq_store_bytes\":{},\"store_load_forwarding_candidates\":{},\"store_load_forwarding_matches\":{},\"store_load_forwarding_suppressed\":{},\"store_load_forwarding_address_mismatches\":{},\"store_load_forwarding_byte_mismatches\":{},\"fu_latency_instructions\":{},\"fu_latency_cycles\":{},\"fu_integer_mul_instructions\":{},\"fu_integer_mul_latency_cycles\":{},\"fu_integer_div_instructions\":{},\"fu_integer_div_latency_cycles\":{},\"fu_latency_class\":{},\"max_rob_occupancy\":{},\"max_lsq_occupancy\":{},\"rename_map_entries\":{},\"rob\":{},\"rename\":{},\"lsq\":{},\"iq\":{},\"iew\":{},\"commit\":{},\"branch_event\":{},\"branch_repair\":{},\"branch_direction_mismatch\":{},\"branch_target_mismatch\":{},\"event_summary\":{}{},\"events\":[{}]}}",
             self.cpu,
             json_escape(&self.target),
             execution_mode,
@@ -273,6 +293,7 @@ impl Rem6O3TraceRecord {
             branch_direction_mismatch,
             branch_target_mismatch,
             event_summary,
+            issue_queue,
             events,
         )
     }
@@ -308,14 +329,27 @@ pub(super) fn o3_trace_records(
         let Ok(core) = cluster.core(cpu) else {
             continue;
         };
+        let target = format!("cpu{}", cpu.get());
+        let execution_mode = execution_modes
+            .iter()
+            .find(|mode| mode.target == target)
+            .map(|mode| mode.mode);
+        let (issue_queue_telemetry, issue_queue_events) =
+            if execution_mode == Some(execution_mode_name(ExecutionMode::Detailed)) {
+                (
+                    core.o3_runtime_live_issue_telemetry(),
+                    core.o3_runtime_live_issue_trace_records(),
+                )
+            } else {
+                (O3LiveIssueTelemetry::default(), Vec::new())
+            };
         let stats = core.o3_runtime_stats();
         let events = core.o3_runtime_trace_records();
-        if stats.has_activity() || !events.is_empty() {
-            let target = format!("cpu{}", cpu.get());
-            let execution_mode = execution_modes
-                .iter()
-                .find(|mode| mode.target == target)
-                .map(|mode| mode.mode);
+        if stats.has_activity()
+            || !events.is_empty()
+            || issue_queue_telemetry != O3LiveIssueTelemetry::default()
+            || !issue_queue_events.is_empty()
+        {
             records.push(Rem6O3TraceRecord::new(
                 cpu,
                 target,
@@ -324,6 +358,8 @@ pub(super) fn o3_trace_records(
                 stats_reset_tick,
                 checkpoint_restore.clone(),
                 stats,
+                issue_queue_telemetry,
+                issue_queue_events,
                 events,
             ));
         }

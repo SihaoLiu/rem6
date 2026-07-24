@@ -21,6 +21,10 @@ mod decision_state;
 mod rollback;
 pub(in crate::o3_runtime) use rollback::O3LiveIssueStateRollback;
 
+#[path = "state/trace.rs"]
+mod trace;
+pub(in crate::o3_runtime) use trace::O3LiveIssueTraceRow;
+
 #[cfg(test)]
 #[path = "state/test_support_tests.rs"]
 mod test_support;
@@ -210,7 +214,7 @@ impl O3LiveIssueState {
             next_wake_tick: self.requested_service_tick,
             raw_writeback_tick: None,
             admitted_writeback_tick: None,
-            cleanup_boundary: None,
+            cleanup_boundary: (action != O3LiveIssueTraceAction::Selected).then_some(sequence),
         });
         true
     }
