@@ -9,6 +9,10 @@ use rem6_memory::Address;
 mod decision;
 use decision::O3LiveIssueActiveTick;
 
+#[path = "state/counted_ticks.rs"]
+mod counted_ticks;
+use counted_ticks::O3LiveIssueCountedTicks;
+
 #[path = "state/rollback.rs"]
 mod rollback;
 pub(in crate::o3_runtime) use rollback::O3LiveIssueStateRollback;
@@ -125,7 +129,8 @@ impl DerefMut for O3LiveIssueResidentSequences {
 pub(in crate::o3_runtime) struct O3LiveIssueState {
     resident_sequences: O3LiveIssueResidentSequences,
     requested_service_tick: Option<u64>,
-    last_counted_cycle_tick: Option<u64>,
+    counted_cycle_ticks: O3LiveIssueCountedTicks,
+    scheduler_entry_tick: Option<u64>,
     active_tick: Option<O3LiveIssueActiveTick>,
     transaction_active: bool,
     mutation_generation: u64,
@@ -274,9 +279,6 @@ impl O3LiveIssueState {
         let requested = self
             .requested_service_tick
             .map_or(tick, |current| current.min(tick));
-        let requested = self
-            .service_floor_tick()
-            .map_or(requested, |floor| requested.max(floor));
         if self.requested_service_tick != Some(requested) {
             self.requested_service_tick = Some(requested);
             self.telemetry.wake_requests = self.telemetry.wake_requests.saturating_add(1);
@@ -295,9 +297,6 @@ impl O3LiveIssueState {
         let Some(requested) = self.requested_service_tick else {
             return false;
         };
-        if self.service_floor_tick().is_some_and(|floor| tick < floor) {
-            return false;
-        }
         if requested > tick {
             return false;
         }
@@ -332,8 +331,23 @@ impl O3LiveIssueState {
             ..O3LiveIssueTelemetry::default()
         };
         self.trace_records.clear();
-        self.last_counted_cycle_tick = None;
+        self.counted_cycle_ticks.clear();
         self.reset_active_decision_baseline();
+    }
+
+    #[cfg(test)]
+    pub(in crate::o3_runtime) fn counted_cycle_ticks_for_test(&self) -> Vec<u64> {
+        self.counted_cycle_ticks.values()
+    }
+
+    #[cfg(test)]
+    pub(in crate::o3_runtime) fn counted_cycle_tick_len_for_test(&self) -> usize {
+        self.counted_cycle_ticks.len()
+    }
+
+    #[cfg(test)]
+    pub(in crate::o3_runtime) const fn scheduler_entry_tick_for_test(&self) -> Option<u64> {
+        self.scheduler_entry_tick
     }
 
     fn take_suffix(&mut self, boundary: u64) -> Vec<u64> {

@@ -217,21 +217,26 @@ fn live_issue_state_sealed_same_tick_reentry_reuses_cycle_until_reset() {
 }
 
 #[test]
-fn live_issue_state_cycle_sealing_remains_monotonic_across_long_run() {
+fn live_issue_state_scheduler_entry_prunes_counted_ticks_across_long_run() {
     let mut state = O3LiveIssueState::default();
-    for tick in 0..10_000 {
-        state.observe_sequences(tick, &[tick], &[], &[], 1);
-        assert!(state.take_current_decision().unwrap().new_cycle);
-
-        state.observe_sequences(tick, &[tick + 10_000], &[], &[], 1);
-        assert!(!state.take_current_decision().unwrap().new_cycle);
+    for earliest_tick in 0..10_000 {
+        state.enter_scheduler_at(earliest_tick);
+        for tick in [earliest_tick, earliest_tick + 10] {
+            state.observe_sequences(tick, &[tick], &[], &[], 1);
+            let _ = state.take_current_decision().unwrap();
+        }
+        assert!(state.counted_cycle_tick_len_for_test() <= 11);
     }
+    assert_eq!(state.counted_cycle_tick_len_for_test(), 11);
+    assert_eq!(state.scheduler_entry_tick_for_test(), Some(9_999));
+}
 
-    state.observe_sequences(10_000, &[20_000], &[], &[], 1);
-    assert!(state.take_current_decision().unwrap().new_cycle);
-    state.reset_stats_baseline();
-    state.observe_sequences(10_000, &[20_001], &[], &[], 1);
-    assert!(state.projected_decision().unwrap().new_cycle);
+#[test]
+#[should_panic(expected = "live issue scheduler entry tick regressed")]
+fn live_issue_state_scheduler_entry_rejects_regression() {
+    let mut state = O3LiveIssueState::default();
+    state.enter_scheduler_at(30);
+    state.enter_scheduler_at(21);
 }
 
 #[test]

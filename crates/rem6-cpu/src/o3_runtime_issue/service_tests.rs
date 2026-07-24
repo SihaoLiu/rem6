@@ -28,6 +28,32 @@ fn live_issue_plan_shape_at(runtime: &O3RuntimeState, tick: u64) -> (usize, usiz
     (plan.reserved_width(), plan.issued().len())
 }
 
+fn dependency_lookahead_fixture() -> ScalarIssueFixture {
+    let mut fixture = ScalarIssueFixture::new_unbound(2, ScalarIssueCase::SameTickAluDependency);
+    let producer_sequence = fixture.sequence(BRANCH_PC);
+    let producer_instruction = fixture.rows[0].1;
+    let mut producer_hart = fixture.hart.clone();
+    producer_hart.set_pc(BRANCH_PC);
+    let execution = producer_hart
+        .execute_decoded(decoded(producer_instruction))
+        .unwrap();
+    fixture
+        .runtime
+        .live_speculative_executions
+        .push(O3LiveSpeculativeExecution {
+            consumed_requests: Vec::new(),
+            sequence: producer_sequence,
+            producer_sequences: Vec::new(),
+            issue_tick: 28,
+            raw_ready_tick: 30,
+            admitted_writeback_tick: 30,
+            writeback_slot: None,
+            execution,
+        });
+    fixture.bind_row(1);
+    fixture
+}
+
 fn replay_survivor_fixture() -> (
     O3RuntimeState,
     RiscvHartState,
@@ -232,94 +258,89 @@ fn postplan_replay_with_empty_survivors_preserves_arbitration_max_rows() {
 }
 
 #[test]
-fn compatibility_service_floor_preserves_newer_projection_and_clamps_regression() {
-    let mut fixture = ScalarIssueFixture::new(1, ScalarIssueCase::CrossResource);
+fn compatibility_scheduler_entry_issues_independent_work_before_retained_lookahead() {
+    let mut fixture = dependency_lookahead_fixture();
     fixture
         .runtime
-        .service_live_issue_queue_at(&fixture.hart, 20)
+        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20)
         .unwrap();
-    fixture.runtime.live_issue.clear_requested_service_tick();
-    fixture.runtime.live_issue.request_service_at(30);
-    fixture
-        .runtime
-        .service_live_issue_queue_at(&fixture.hart, 30)
-        .unwrap();
+    assert_eq!(fixture.issue_tick(SECOND_PC), 30);
     let before = fixture.runtime.stats();
     assert_eq!(before.issue_cycles(), 2);
     assert_eq!(before.issued_rows(), 1);
-    assert_eq!(fixture.runtime.live_issue.service_floor_tick(), Some(30));
+    assert_eq!(
+        fixture.runtime.live_issue.counted_cycle_ticks_for_test(),
+        [20, 30],
+    );
 
-    fixture.runtime.live_issue.request_service_at(21);
-    assert_eq!(fixture.runtime.live_issue_service_tick(), Some(30));
-    let regressed = fixture
-        .runtime
-        .service_live_issue_queue_at(&fixture.hart, 21)
-        .unwrap();
-    assert_eq!(regressed.issued_rows(), 0);
-    assert_eq!(regressed.next_service_tick(), None);
-    assert_eq!(regressed.replay_boundary(), None);
-    assert_eq!(fixture.runtime.stats(), before);
-    assert_eq!(fixture.runtime.live_issue_service_tick(), Some(30));
-
-    let issued_before = fixture.runtime.live_speculative_executions.len();
+    fixture.bind_row_at(2, 21);
+    assert_eq!(fixture.runtime.live_issue_service_tick(), Some(21));
     fixture
         .runtime
         .schedule_live_speculative_issues(&fixture.hart, fixture.head, 21)
         .unwrap();
+    assert_eq!(fixture.issue_tick(THIRD_PC), 21);
     let after = fixture.runtime.stats();
-    assert_eq!(after.issue_cycles(), 4);
-    assert_eq!(after.issued_rows(), 3);
-    assert!(fixture.runtime.live_issue.resident_sequences().is_empty());
-    assert!(fixture.runtime.live_speculative_executions[issued_before..]
-        .iter()
-        .all(|issued| issued.issue_tick >= 30));
+    assert_eq!(after.issue_cycles(), before.issue_cycles() + 1);
+    assert_eq!(after.issued_rows(), before.issued_rows() + 1);
+    assert_eq!(
+        fixture.runtime.live_issue.counted_cycle_ticks_for_test(),
+        [21, 30],
+    );
+    assert_eq!(
+        fixture.runtime.live_issue.scheduler_entry_tick_for_test(),
+        Some(21),
+    );
 }
 
 #[test]
-fn stats_reset_preserves_sealed_service_floor_and_counts_new_activity() {
-    let mut fixture = ScalarIssueFixture::new(1, ScalarIssueCase::CrossResource);
+fn scheduler_entry_seals_future_active_decision_before_earlier_tick() {
+    let mut runtime = O3RuntimeState::default();
+    runtime.live_issue.observe_sequences(30, &[30], &[], &[], 1);
+    assert_eq!(runtime.stats().issue_cycles(), 1);
+    assert_eq!(runtime.stats().issued_rows(), 1);
+
+    runtime.enter_live_issue_scheduler_at(21);
+    assert_eq!(runtime.stats().issue_cycles(), 1);
+    assert_eq!(runtime.stats().issued_rows(), 1);
+    assert_eq!(runtime.live_issue_service_tick(), Some(21));
+    assert_eq!(runtime.live_issue.counted_cycle_ticks_for_test(), [30]);
+
+    runtime.live_issue.observe_sequences(21, &[21], &[], &[], 1);
+    runtime.seal_live_issue_decision();
+    runtime.live_issue.observe_sequences(30, &[31], &[], &[], 1);
+    let revisited = runtime.stats();
+    assert_eq!(revisited.issue_cycles(), 2);
+    assert_eq!(revisited.issued_rows(), 3);
+}
+
+#[test]
+fn stats_reset_clears_cycle_evidence_without_delaying_issue_timing() {
+    let mut fixture = dependency_lookahead_fixture();
     fixture
         .runtime
-        .service_live_issue_queue_at(&fixture.hart, 20)
+        .schedule_live_speculative_issues(&fixture.hart, fixture.head, 20)
         .unwrap();
-    fixture.runtime.live_issue.clear_requested_service_tick();
-    fixture.runtime.live_issue.request_service_at(30);
-    fixture
-        .runtime
-        .service_live_issue_queue_at(&fixture.hart, 30)
-        .unwrap();
-    fixture.runtime.seal_live_issue_decision_before(31);
-    assert_eq!(fixture.runtime.live_issue.service_floor_tick(), Some(30));
+    assert_eq!(fixture.issue_tick(SECOND_PC), 30);
 
     fixture.runtime.reset_stats();
     assert_eq!(fixture.runtime.stats().issue_cycles(), 0);
-    assert_eq!(fixture.runtime.stats().issued_rows(), 0);
-    assert_eq!(fixture.runtime.live_issue.service_floor_tick(), Some(30));
-
-    fixture.runtime.live_issue.request_service_at(21);
-    assert_eq!(fixture.runtime.live_issue_service_tick(), Some(30));
-    let regressed = fixture
+    assert!(fixture
         .runtime
-        .service_live_issue_queue_at(&fixture.hart, 21)
-        .unwrap();
-    assert_eq!(regressed.issued_rows(), 0);
-    assert_eq!(regressed.next_service_tick(), None);
-    assert_eq!(regressed.replay_boundary(), None);
-    assert_eq!(fixture.runtime.live_issue_service_tick(), Some(30));
-    assert_eq!(fixture.runtime.stats().issue_cycles(), 0);
+        .live_issue
+        .counted_cycle_ticks_for_test()
+        .is_empty());
 
-    let issued_before = fixture.runtime.live_speculative_executions.len();
+    fixture.bind_row_at(2, 21);
+    assert_eq!(fixture.runtime.live_issue_service_tick(), Some(21));
     fixture
         .runtime
         .schedule_live_speculative_issues(&fixture.hart, fixture.head, 21)
         .unwrap();
+    assert_eq!(fixture.issue_tick(THIRD_PC), 21);
     let after = fixture.runtime.stats();
-    assert_eq!(after.issue_cycles(), 3);
-    assert_eq!(after.issued_rows(), 2);
-    assert!(fixture.runtime.live_issue.resident_sequences().is_empty());
-    assert!(fixture.runtime.live_speculative_executions[issued_before..]
-        .iter()
-        .all(|issued| issued.issue_tick >= 30));
+    assert_eq!(after.issue_cycles(), 1);
+    assert_eq!(after.issued_rows(), 1);
 }
 
 #[test]

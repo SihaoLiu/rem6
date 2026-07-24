@@ -100,6 +100,18 @@ impl O3RuntimeState {
         }
     }
 
+    pub(crate) fn enter_live_issue_scheduler_at(&mut self, earliest_tick: u64) {
+        if self
+            .live_issue
+            .active_decision_tick()
+            .is_some_and(|active| active != earliest_tick)
+        {
+            self.seal_live_issue_decision();
+        }
+        self.live_issue.enter_scheduler_at(earliest_tick);
+        self.live_issue.request_service_at(earliest_tick);
+    }
+
     pub(crate) fn service_live_issue_queue_at(
         &mut self,
         hart: &RiscvHartState,
@@ -412,12 +424,8 @@ impl O3RuntimeState {
         {
             return Ok(());
         }
-        let start_tick = self
-            .live_issue
-            .service_floor_tick()
-            .map_or(earliest_tick, |floor| earliest_tick.max(floor));
-        self.live_issue.request_service_at(start_tick);
-        let mut tick = start_tick;
+        self.enter_live_issue_scheduler_at(earliest_tick);
+        let mut tick = earliest_tick;
         loop {
             let outcome = self.service_live_issue_queue_at(hart, tick)?;
             if outcome.replay_boundary().is_some() {
@@ -426,7 +434,7 @@ impl O3RuntimeState {
             let Some(next_tick) = outcome.next_service_tick() else {
                 break;
             };
-            if outcome.waits_for_pending_dependency() && next_tick > start_tick {
+            if outcome.waits_for_pending_dependency() && next_tick > earliest_tick {
                 break;
             }
             if self.pending_data_address_wake_tick() == Some(next_tick) {

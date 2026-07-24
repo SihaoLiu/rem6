@@ -177,7 +177,7 @@ impl O3LiveIssueState {
         let active = self.active_tick.take()?;
         let delta = active.projected_delta?;
         if delta.new_cycle {
-            self.last_counted_cycle_tick = Some(active.tick);
+            self.counted_cycle_ticks.record(active.tick);
         }
         Some(delta)
     }
@@ -191,15 +191,18 @@ impl O3LiveIssueState {
         }
     }
 
-    pub(in crate::o3_runtime) fn service_floor_tick(&self) -> Option<u64> {
-        let active_tick = self.active_tick.as_ref().map(|active| active.tick);
-        let last_service_tick = self.last_service_generation.map(|(tick, _)| tick);
-        match (active_tick, last_service_tick) {
-            (Some(active), Some(serviced)) => Some(active.max(serviced)),
-            (Some(active), None) => Some(active),
-            (None, Some(serviced)) => Some(serviced),
-            (None, None) => None,
-        }
+    pub(in crate::o3_runtime) fn active_decision_tick(&self) -> Option<u64> {
+        self.active_tick.as_ref().map(|active| active.tick)
+    }
+
+    pub(in crate::o3_runtime) fn enter_scheduler_at(&mut self, earliest_tick: u64) {
+        assert!(
+            self.scheduler_entry_tick
+                .is_none_or(|previous| earliest_tick >= previous),
+            "live issue scheduler entry tick regressed"
+        );
+        self.scheduler_entry_tick = Some(earliest_tick);
+        self.counted_cycle_ticks.prune_before(earliest_tick);
     }
 
     pub(super) fn begin_active_decision_at(&mut self, tick: u64) {
@@ -208,7 +211,7 @@ impl O3LiveIssueState {
             .as_ref()
             .is_none_or(|active| active.tick != tick)
         {
-            let new_cycle = self.last_counted_cycle_tick.is_none_or(|last| tick > last);
+            let new_cycle = !self.counted_cycle_ticks.contains(tick);
             self.active_tick = Some(O3LiveIssueActiveTick::at(tick, new_cycle));
         }
     }
