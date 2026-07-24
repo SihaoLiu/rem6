@@ -206,14 +206,17 @@ fn live_issue_state_active_decision_rebases_same_tick_projection() {
 fn live_issue_state_sealed_same_tick_reentry_reuses_cycle_until_reset() {
     let mut state = O3LiveIssueState::default();
     state.observe_sequences(20, &[1], &[], &[], 1);
-    assert!(state.take_current_decision().unwrap().new_cycle);
+    assert_eq!(state.projected_decisions().issue_cycles, 1);
+    state.seal_current_decision();
 
     state.observe_sequences(20, &[2], &[], &[], 1);
-    assert!(!state.projected_decision().unwrap().new_cycle);
+    assert_eq!(state.projected_decisions().issue_cycles, 1);
+    assert_eq!(state.projected_decisions().issued_rows, 2);
 
     state.reset_stats_baseline();
     state.observe_sequences(20, &[3], &[], &[], 1);
-    assert!(state.projected_decision().unwrap().new_cycle);
+    assert_eq!(state.projected_decisions().issue_cycles, 1);
+    assert_eq!(state.projected_decisions().issued_rows, 1);
 }
 
 #[test]
@@ -223,7 +226,7 @@ fn live_issue_state_scheduler_entry_prunes_counted_ticks_across_long_run() {
         state.enter_scheduler_at(earliest_tick);
         for tick in [earliest_tick, earliest_tick + 10] {
             state.observe_sequences(tick, &[tick], &[], &[], 1);
-            let _ = state.take_current_decision().unwrap();
+            state.seal_current_decision();
         }
         assert!(state.counted_cycle_tick_len_for_test() <= 11);
     }
@@ -237,6 +240,59 @@ fn live_issue_state_scheduler_entry_rejects_regression() {
     let mut state = O3LiveIssueState::default();
     state.enter_scheduler_at(30);
     state.enter_scheduler_at(21);
+}
+
+#[test]
+fn scheduler_revisit_counts_unchanged_blocked_row_once() {
+    let mut runtime = O3RuntimeState::default();
+    runtime.live_issue.observe_sequences(30, &[], &[30], &[], 1);
+    assert_eq!(runtime.stats().resource_blocked_row_cycles(), 1);
+
+    runtime.enter_live_issue_scheduler_at(21);
+    runtime.live_issue.observe_sequences(21, &[21], &[], &[], 1);
+    runtime.seal_live_issue_decision();
+    runtime.live_issue.observe_sequences(30, &[], &[30], &[], 1);
+
+    let revisited = runtime.stats();
+    assert_eq!(runtime.stats(), revisited);
+    assert_eq!(revisited.issue_cycles(), 2);
+    assert_eq!(revisited.issued_rows(), 1);
+    assert_eq!(revisited.resource_blocked_row_cycles(), 1);
+    assert_eq!(revisited.dependency_blocked_row_cycles(), 0);
+
+    runtime.seal_live_issue_decision();
+    runtime.enter_live_issue_scheduler_at(31);
+    assert_eq!(runtime.stats(), revisited);
+}
+
+#[test]
+fn scheduler_revisit_keeps_only_latest_blocked_classification() {
+    let mut runtime = O3RuntimeState::default();
+    runtime.live_issue.observe_sequences(30, &[], &[30], &[], 1);
+    runtime.enter_live_issue_scheduler_at(21);
+    runtime.live_issue.observe_sequences(21, &[21], &[], &[], 1);
+    runtime.seal_live_issue_decision();
+
+    runtime.live_issue.observe_sequences(30, &[], &[], &[30], 1);
+    let dependency = runtime.stats();
+    assert_eq!(runtime.stats(), dependency);
+    assert_eq!(dependency.issue_cycles(), 2);
+    assert_eq!(dependency.issued_rows(), 1);
+    assert_eq!(dependency.resource_blocked_row_cycles(), 0);
+    assert_eq!(dependency.dependency_blocked_row_cycles(), 1);
+
+    runtime.seal_live_issue_decision();
+    runtime.live_issue.observe_sequences(30, &[30], &[], &[], 1);
+    let issued = runtime.stats();
+    assert_eq!(runtime.stats(), issued);
+    assert_eq!(issued.issue_cycles(), 2);
+    assert_eq!(issued.issued_rows(), 2);
+    assert_eq!(issued.resource_blocked_row_cycles(), 0);
+    assert_eq!(issued.dependency_blocked_row_cycles(), 0);
+
+    runtime.seal_live_issue_decision();
+    runtime.enter_live_issue_scheduler_at(31);
+    assert_eq!(runtime.stats(), issued);
 }
 
 #[test]

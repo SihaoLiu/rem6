@@ -48,16 +48,14 @@ struct O3LiveIssuePostService {
 
 impl O3RuntimeState {
     pub const fn stats(&self) -> O3RuntimeStats {
-        match self.live_issue.projected_decision() {
-            Some(delta) => self.stats.project_issue_cycle(
-                delta.new_cycle,
-                delta.issued_rows,
-                delta.resource_blocked_rows,
-                delta.dependency_blocked_rows,
-                delta.max_rows_at_tick,
-            ),
-            None => self.stats,
-        }
+        let projection = self.live_issue.projected_decisions();
+        self.stats.project_issue_decisions(
+            projection.issue_cycles,
+            projection.issued_rows,
+            projection.resource_blocked_rows,
+            projection.dependency_blocked_rows,
+            projection.max_rows_at_tick,
+        )
     }
 
     pub(crate) fn live_issue_service_tick(&self) -> Option<u64> {
@@ -77,38 +75,22 @@ impl O3RuntimeState {
     }
 
     pub(in crate::o3_runtime) fn seal_live_issue_decision_before(&mut self, tick: u64) {
-        if let Some(delta) = self.live_issue.take_decision_before(tick) {
-            self.stats.record_issue_cycle(
-                delta.new_cycle,
-                delta.issued_rows,
-                delta.resource_blocked_rows,
-                delta.dependency_blocked_rows,
-                delta.max_rows_at_tick,
-            );
-        }
+        self.live_issue.seal_decision_before(tick);
     }
 
     pub(crate) fn seal_live_issue_decision(&mut self) {
-        if let Some(delta) = self.live_issue.take_current_decision() {
-            self.stats.record_issue_cycle(
-                delta.new_cycle,
-                delta.issued_rows,
-                delta.resource_blocked_rows,
-                delta.dependency_blocked_rows,
-                delta.max_rows_at_tick,
-            );
-        }
+        self.live_issue.seal_current_decision();
     }
 
     pub(crate) fn enter_live_issue_scheduler_at(&mut self, earliest_tick: u64) {
-        if self
-            .live_issue
-            .active_decision_tick()
-            .is_some_and(|active| active != earliest_tick)
-        {
-            self.seal_live_issue_decision();
-        }
-        self.live_issue.enter_scheduler_at(earliest_tick);
+        let finalized = self.live_issue.enter_scheduler_at(earliest_tick);
+        self.stats.record_issue_decisions(
+            finalized.issue_cycles,
+            finalized.issued_rows,
+            finalized.resource_blocked_rows,
+            finalized.dependency_blocked_rows,
+            finalized.max_rows_at_tick,
+        );
         self.live_issue.request_service_at(earliest_tick);
     }
 
@@ -174,6 +156,8 @@ impl O3RuntimeState {
             .iter()
             .map(O3ScopedReadyInstruction::sequence)
             .collect::<Vec<_>>();
+        self.live_issue
+            .remove_retained_blocked_sequences_at_or_after(now, &issued_sequences);
         let max_rows_at_tick = reserved_width.saturating_add(issued_rows);
         let post = self.classify_live_issue_queue_after_service(now)?;
         if let Some(sequence) = post.replay_boundary {

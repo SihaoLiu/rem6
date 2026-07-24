@@ -10,9 +10,11 @@ const MAX_O3_RUNTIME_ISSUE_CALENDAR_TEST_LINES: usize = 450;
 const MAX_O3_RUNTIME_LIVE_ISSUE_IDENTITY_LINES: usize = 350;
 const MAX_RISCV_O3_WRITEBACK_WAKE_DESIRED_LINES: usize = 220;
 const MAX_O3_RUNTIME_ISSUE_STATE_LINES: usize = 450;
-const MAX_O3_RUNTIME_ISSUE_STATE_DECISION_LINES: usize = 300;
-const MAX_O3_RUNTIME_ISSUE_STATE_COUNTED_TICKS_LINES: usize = 160;
-const MAX_O3_RUNTIME_ISSUE_STATE_COUNTED_TICKS_TEST_LINES: usize = 160;
+const MAX_O3_RUNTIME_ISSUE_STATE_DECISION_LINES: usize = 220;
+const MAX_O3_RUNTIME_ISSUE_STATE_DECISION_STATE_LINES: usize = 220;
+const MAX_O3_RUNTIME_ISSUE_STATE_DECISION_PROJECTION_LINES: usize = 120;
+const MAX_O3_RUNTIME_ISSUE_STATE_DECISION_WINDOW_LINES: usize = 160;
+const MAX_O3_RUNTIME_ISSUE_STATE_DECISION_WINDOW_TEST_LINES: usize = 160;
 const MAX_O3_RUNTIME_ISSUE_STATE_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_LINES: usize = 180;
 const MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_TEST_LINES: usize = 180;
@@ -121,12 +123,20 @@ fn o3_persistent_iq_cpu_files_stay_focused() {
             MAX_O3_RUNTIME_ISSUE_STATE_DECISION_LINES,
         ),
         (
-            "src/o3_runtime_issue/state/counted_ticks.rs",
-            MAX_O3_RUNTIME_ISSUE_STATE_COUNTED_TICKS_LINES,
+            "src/o3_runtime_issue/state/decision_state.rs",
+            MAX_O3_RUNTIME_ISSUE_STATE_DECISION_STATE_LINES,
         ),
         (
-            "src/o3_runtime_issue/state/counted_ticks_tests.rs",
-            MAX_O3_RUNTIME_ISSUE_STATE_COUNTED_TICKS_TEST_LINES,
+            "src/o3_runtime_issue/state/decision_projection.rs",
+            MAX_O3_RUNTIME_ISSUE_STATE_DECISION_PROJECTION_LINES,
+        ),
+        (
+            "src/o3_runtime_issue/state/decision_window.rs",
+            MAX_O3_RUNTIME_ISSUE_STATE_DECISION_WINDOW_LINES,
+        ),
+        (
+            "src/o3_runtime_issue/state/decision_window_tests.rs",
+            MAX_O3_RUNTIME_ISSUE_STATE_DECISION_WINDOW_TEST_LINES,
         ),
         (
             "src/o3_runtime_issue/state_tests.rs",
@@ -4701,6 +4711,7 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
         "last_counted_cycle_tick",
         "compatibility_cycle_ticks",
         "counted_cycle_ticks",
+        "decision_window",
         "scheduler_entry_tick",
         "trace_records:",
         "Vec<O3LiveIssueTraceRecord>",
@@ -4716,6 +4727,7 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
     assert!(!state_capture.contains("last_counted_cycle_tick"));
     assert!(!state_capture.contains("compatibility_cycle_ticks"));
     assert!(!state_capture.contains("counted_cycle_ticks"));
+    assert!(!state_capture.contains("decision_window"));
     assert!(!state_capture.contains("scheduler_entry_tick"));
     assert!(!state_capture.contains("trace_records.clone"));
     assert!(state_restore.contains("truncate"));
@@ -4730,6 +4742,7 @@ fn o3_live_issue_transaction_bounds_batch_rollback() {
     let record = rust_function_definition(&transaction, "record").unwrap();
     assert!(!transaction.contains("last_counted_cycle_tick"));
     assert!(!transaction.contains("counted_cycle_ticks"));
+    assert!(!transaction.contains("decision_window"));
     assert!(!transaction.contains("scheduler_entry_tick"));
     assert!(record.contains("O3LiveIssueRollback::capture(runtime)"));
     assert!(record.contains("runtime.live_issue.begin_transaction()"));
@@ -4818,9 +4831,12 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
     let state_path = crate_dir.join("src/o3_runtime_issue/state.rs");
     let state_tests_path = crate_dir.join("src/o3_runtime_issue/state_tests.rs");
     let decision_path = crate_dir.join("src/o3_runtime_issue/state/decision.rs");
-    let counted_ticks_path = crate_dir.join("src/o3_runtime_issue/state/counted_ticks.rs");
-    let counted_ticks_tests_path =
-        crate_dir.join("src/o3_runtime_issue/state/counted_ticks_tests.rs");
+    let decision_state_path = crate_dir.join("src/o3_runtime_issue/state/decision_state.rs");
+    let decision_projection_path =
+        crate_dir.join("src/o3_runtime_issue/state/decision_projection.rs");
+    let decision_window_path = crate_dir.join("src/o3_runtime_issue/state/decision_window.rs");
+    let decision_window_tests_path =
+        crate_dir.join("src/o3_runtime_issue/state/decision_window_tests.rs");
     let calendar_path = crate_dir.join("src/o3_runtime_issue/calendar.rs");
     let stats_path = crate_dir.join("src/o3_runtime_stats.rs");
     let error_path = crate_dir.join("src/o3_runtime_error.rs");
@@ -4835,8 +4851,12 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
     let state = production_rust_source(&state_source);
     let state_tests = fs::read_to_string(&state_tests_path).unwrap();
     let decision = production_rust_source(&fs::read_to_string(&decision_path).unwrap());
-    let counted_ticks_source = fs::read_to_string(&counted_ticks_path).unwrap();
-    let counted_ticks = production_rust_source(&counted_ticks_source);
+    let decision_state = production_rust_source(&fs::read_to_string(&decision_state_path).unwrap());
+    let decision_projection =
+        production_rust_source(&fs::read_to_string(&decision_projection_path).unwrap());
+    let decision_window_source = fs::read_to_string(&decision_window_path).unwrap();
+    let decision_window = production_rust_source(&decision_window_source);
+    let decision_window_tests = fs::read_to_string(&decision_window_tests_path).unwrap();
     let calendar = production_rust_source(&fs::read_to_string(&calendar_path).unwrap());
     let stats = production_rust_source(&fs::read_to_string(&stats_path).unwrap());
     let error = production_rust_source(&fs::read_to_string(&error_path).unwrap());
@@ -4846,10 +4866,15 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
     assert!(line_count(&service_tests_path) <= MAX_O3_RUNTIME_ISSUE_SERVICE_TEST_LINES);
     assert!(line_count(&state_path) <= MAX_O3_RUNTIME_ISSUE_STATE_LINES);
     assert!(line_count(&decision_path) <= MAX_O3_RUNTIME_ISSUE_STATE_DECISION_LINES);
-    assert!(line_count(&counted_ticks_path) <= MAX_O3_RUNTIME_ISSUE_STATE_COUNTED_TICKS_LINES);
+    assert!(line_count(&decision_state_path) <= MAX_O3_RUNTIME_ISSUE_STATE_DECISION_STATE_LINES);
     assert!(
-        line_count(&counted_ticks_tests_path)
-            <= MAX_O3_RUNTIME_ISSUE_STATE_COUNTED_TICKS_TEST_LINES
+        line_count(&decision_projection_path)
+            <= MAX_O3_RUNTIME_ISSUE_STATE_DECISION_PROJECTION_LINES
+    );
+    assert!(line_count(&decision_window_path) <= MAX_O3_RUNTIME_ISSUE_STATE_DECISION_WINDOW_LINES);
+    assert!(
+        line_count(&decision_window_tests_path)
+            <= MAX_O3_RUNTIME_ISSUE_STATE_DECISION_WINDOW_TEST_LINES
     );
     assert_eq!(
         path_owned_module_declaration_count(
@@ -4874,15 +4899,31 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
     assert_eq!(
         path_owned_module_declaration_count(
             &state_source,
-            "state/counted_ticks.rs",
-            "counted_ticks",
+            "state/decision_state.rs",
+            "decision_state",
         ),
         1,
     );
     assert_eq!(
         path_owned_module_declaration_count(
-            &counted_ticks_source,
-            "counted_ticks_tests.rs",
+            &state_source,
+            "state/decision_projection.rs",
+            "decision_projection",
+        ),
+        1,
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &state_source,
+            "state/decision_window.rs",
+            "decision_window",
+        ),
+        1,
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &decision_window_source,
+            "decision_window_tests.rs",
             "tests",
         ),
         1,
@@ -4913,14 +4954,16 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
     assert!(o3_live_issue_scheduler_entry_is_pruned(
         &service,
         &state,
-        &decision,
-        &counted_ticks,
+        &decision_state,
+        &decision_window,
     ));
     assert!(o3_live_issue_delayed_stats_are_projected(
         &service,
         &state,
         &decision,
-        &counted_ticks,
+        &decision_state,
+        &decision_projection,
+        &decision_window,
         &stats,
     ));
     assert!(!calendar.contains("O3LiveIssueTickDecision"));
@@ -4994,9 +5037,10 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
             production_defines_exact_named_item(definition, "struct", "O3LiveIssueState")
         })
         .expect("missing live issue state");
-    assert!(live_issue_state.contains("counted_cycle_ticks: O3LiveIssueCountedTicks"));
+    assert!(live_issue_state.contains("decision_window: O3LiveIssueDecisionWindow"));
     assert!(live_issue_state.contains("scheduler_entry_tick: Option<u64>"));
     assert!(!state.contains("last_counted_cycle_tick"));
+    assert!(!state.contains("counted_cycle_ticks"));
     assert!(!decision.contains("service_floor_tick"));
 
     let delta = production_struct_definitions(&decision)
@@ -5046,6 +5090,26 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
         1,
         "missing bounded long-run cycle marker regression",
     );
+    for test in [
+        "scheduler_revisit_counts_unchanged_blocked_row_once",
+        "scheduler_revisit_keeps_only_latest_blocked_classification",
+    ] {
+        assert_eq!(
+            rust_test_function_definition_count(&state_tests, test),
+            1,
+            "missing exact latest-classification regression `{test}`",
+        );
+    }
+    for test in [
+        "counted_ticks_window_finalizes_past_and_retains_future_decisions",
+        "counted_ticks_window_reset_rebases_retained_decisions",
+    ] {
+        assert_eq!(
+            rust_test_function_definition_count(&decision_window_tests, test),
+            1,
+            "missing exact retained-window regression `{test}`",
+        );
+    }
 }
 
 #[test]
@@ -5320,7 +5384,7 @@ fn o3_runtime_issue_lives_in_focused_module() {
         "pub(crate) fn service_live_issue_queue_at(",
         "fn classify_live_issue_queue_after_service(",
         "fn prepare_live_issue_batch(",
-        "self.stats.record_issue_cycle(",
+        "self.stats.record_issue_decisions(",
         "O3LiveIssueCalendar::capture(",
         ".plan_at(",
     ] {
@@ -8805,6 +8869,7 @@ fn live_issue_state_rollback_definition_is_bounded(definition: &str) -> bool {
         && !definition.contains("last_counted_cycle_tick")
         && !definition.contains("compatibility_cycle_ticks")
         && !definition.contains("counted_cycle_ticks")
+        && !definition.contains("decision_window")
         && !definition.contains("scheduler_entry_tick")
         && !definition.contains("trace_records:")
         && !definition.contains("Vec<O3LiveIssueTraceRecord>")
@@ -9522,8 +9587,8 @@ fn o3_live_issue_replay_finalization_is_shared(source: &str) -> bool {
 fn o3_live_issue_scheduler_entry_is_pruned(
     service_source: &str,
     state_source: &str,
-    decision_source: &str,
-    counted_ticks_source: &str,
+    decision_state_source: &str,
+    decision_window_source: &str,
 ) -> bool {
     let Some(compatibility) =
         rust_function_definition(service_source, "schedule_live_speculative_issues")
@@ -9541,19 +9606,11 @@ fn o3_live_issue_scheduler_entry_is_pruned(
     let Some(begin) = rust_function_definition(state_source, "begin_service_at") else {
         return false;
     };
-    let Some(state_entry) = rust_function_definition(decision_source, "enter_scheduler_at") else {
+    let Some(state_entry) = rust_function_definition(decision_state_source, "enter_scheduler_at")
+    else {
         return false;
     };
-    let Some(prune) = rust_function_definition(counted_ticks_source, "prune_before") else {
-        return false;
-    };
-    let Some(record) = rust_function_definition(counted_ticks_source, "record") else {
-        return false;
-    };
-    let Some(contains) = rust_function_definition(counted_ticks_source, "contains") else {
-        return false;
-    };
-    let Some(clear) = rust_function_definition(counted_ticks_source, "clear") else {
+    let Some(finalize) = rust_function_definition(decision_window_source, "finalize_before") else {
         return false;
     };
     let compatibility = compact_rust_code(&compatibility);
@@ -9561,19 +9618,14 @@ fn o3_live_issue_scheduler_entry_is_pruned(
     let request = compact_rust_code(&request);
     let begin = compact_rust_code(&begin);
     let state_entry = compact_rust_code(&state_entry);
-    let prune = compact_rust_code(&prune);
-    let record = compact_rust_code(&record);
-    let contains = compact_rust_code(&contains);
-    let clear = compact_rust_code(&clear);
+    let finalize = compact_rust_code(&finalize);
     let state = compact_rust_code(state_source);
-    let decision = compact_rust_code(decision_source);
-    let counted_ticks = compact_rust_code(counted_ticks_source);
-    let active =
-        "self.live_issue.active_decision_tick().is_some_and(|active|active!=earliest_tick)";
-    let seal = "self.seal_live_issue_decision();";
-    let enter = "self.live_issue.enter_scheduler_at(earliest_tick);";
+    let decision_state = compact_rust_code(decision_state_source);
+    let decision_window = compact_rust_code(decision_window_source);
+    let enter = "letfinalized=self.live_issue.enter_scheduler_at(earliest_tick);";
+    let record = "self.stats.record_issue_decisions(finalized.issue_cycles,finalized.issued_rows,finalized.resource_blocked_rows,finalized.dependency_blocked_rows,finalized.max_rows_at_tick,);";
     let request_earliest = "self.live_issue.request_service_at(earliest_tick);";
-    let entry_anchors = [active, seal, enter, request_earliest];
+    let entry_anchors = [enter, record, request_earliest];
     let entry_positions = entry_anchors
         .iter()
         .map(|anchor| {
@@ -9583,40 +9635,88 @@ fn o3_live_issue_scheduler_entry_is_pruned(
         })
         .collect::<Option<Vec<_>>>();
 
-    compatibility.contains("self.enter_live_issue_scheduler_at(earliest_tick);")
-        && compatibility.contains("letmuttick=earliest_tick;")
-        && !compatibility.contains("start_tick")
-        && !compatibility.contains("service_floor_tick")
-        && production_function_is_visible(service_source, "enter_live_issue_scheduler_at")
-        && entry_positions
-            .is_some_and(|positions| positions.windows(2).all(|pair| pair[0] < pair[1]))
-        && request.contains("self.requested_service_tick.map_or(tick,|current|current.min(tick))")
-        && !request.contains(".max(")
-        && !request.contains("service_floor_tick")
-        && !request.contains("last_service_generation")
-        && !begin.contains("service_floor_tick")
-        && !begin.contains("tick<")
-        && state_entry.contains(
-            "assert!(self.scheduler_entry_tick.is_none_or(|previous|earliest_tick>=previous),);",
-        )
-        && state_entry.contains("self.scheduler_entry_tick=Some(earliest_tick)")
-        && state_entry.contains("self.counted_cycle_ticks.prune_before(earliest_tick)")
-        && state.contains("counted_cycle_ticks:O3LiveIssueCountedTicks")
-        && state.contains("scheduler_entry_tick:Option<u64>")
-        && !state.contains("last_counted_cycle_tick")
-        && !decision.contains("service_floor_tick")
-        && counted_ticks.contains("structO3LiveIssueCountedTicks{ticks:BTreeSet<u64>,}")
-        && prune.contains("self.ticks.retain(|tick|*tick>=earliest_tick)")
-        && record.contains("self.ticks.insert(tick)")
-        && contains.contains("self.ticks.contains(&tick)")
-        && clear.contains("self.ticks.clear()")
+    let checks = [
+        (
+            "compatibility entry",
+            compatibility.contains("self.enter_live_issue_scheduler_at(earliest_tick);"),
+        ),
+        ("compatibility tick", compatibility.contains("letmuttick=earliest_tick;")),
+        ("no compatibility start", !compatibility.contains("start_tick")),
+        ("no compatibility floor", !compatibility.contains("service_floor_tick")),
+        (
+            "entry visibility",
+            production_function_is_visible(service_source, "enter_live_issue_scheduler_at"),
+        ),
+        (
+            "entry order",
+            entry_positions
+                .is_some_and(|positions| positions.windows(2).all(|pair| pair[0] < pair[1])),
+        ),
+        (
+            "request minimum",
+            request.contains("self.requested_service_tick.map_or(tick,|current|current.min(tick))"),
+        ),
+        ("request no max", !request.contains(".max(")),
+        ("request no floor", !request.contains("service_floor_tick")),
+        ("request no generation", !request.contains("last_service_generation")),
+        ("begin no floor", !begin.contains("service_floor_tick")),
+        ("begin no regression", !begin.contains("tick<")),
+        (
+            "entry assertion",
+            state_entry.contains(
+                "assert!(self.scheduler_entry_tick.is_none_or(|previous|earliest_tick>=previous),);",
+            ),
+        ),
+        ("entry seal", state_entry.contains("self.seal_current_decision();")),
+        (
+            "entry marker",
+            state_entry.contains("self.scheduler_entry_tick=Some(earliest_tick)"),
+        ),
+        (
+            "entry finalize",
+            state_entry.contains("self.decision_window.finalize_before(earliest_tick)"),
+        ),
+        (
+            "window storage",
+            state.contains("decision_window:O3LiveIssueDecisionWindow"),
+        ),
+        ("entry storage", state.contains("scheduler_entry_tick:Option<u64>")),
+        ("no scalar marker", !state.contains("last_counted_cycle_tick")),
+        (
+            "no counted collection",
+            !state.contains("counted_cycle_ticks:") && !state.contains("O3LiveIssueCountedTicks"),
+        ),
+        ("no service floor", !decision_state.contains("service_floor_tick")),
+        (
+            "window shape",
+            decision_window.contains(
+                "structO3LiveIssueDecisionWindow{ticks:BTreeMap<u64,O3LiveIssueActiveTick>,projection:O3LiveIssueDecisionProjection,}",
+            ),
+        ),
+        (
+            "strict split",
+            finalize.contains("letretained=self.ticks.split_off(&earliest_tick)"),
+        ),
+        (
+            "bounded replacement",
+            finalize.contains("letfinalized=std::mem::replace(&mutself.ticks,retained)"),
+        ),
+        (
+            "finalized projection",
+            finalize.contains("letprojection=project(finalized.values())"),
+        ),
+        ("projection refresh", finalize.contains("self.refresh_projection()")),
+    ];
+    checks.into_iter().all(|(_, passed)| passed)
 }
 
 fn o3_live_issue_delayed_stats_are_projected(
     service_source: &str,
     state_source: &str,
     decision_source: &str,
-    counted_ticks_source: &str,
+    decision_state_source: &str,
+    decision_projection_source: &str,
+    decision_window_source: &str,
     stats_source: &str,
 ) -> bool {
     let compact = |source: &str| {
@@ -9628,10 +9728,10 @@ fn o3_live_issue_delayed_stats_are_projected(
     let Some(stats) = rust_function_definition(service_source, "stats") else {
         return false;
     };
-    let Some(record) = rust_function_definition(stats_source, "record_issue_cycle") else {
+    let Some(record) = rust_function_definition(stats_source, "record_issue_decisions") else {
         return false;
     };
-    let Some(project) = rust_function_definition(stats_source, "project_issue_cycle") else {
+    let Some(project) = rust_function_definition(stats_source, "project_issue_decisions") else {
         return false;
     };
     let Some(observe) = rust_function_definition(decision_source, "observe") else {
@@ -9649,11 +9749,40 @@ fn o3_live_issue_delayed_stats_are_projected(
     let Some(reset) = rust_function_definition(decision_source, "reset_baseline") else {
         return false;
     };
-    let Some(take_current) = rust_function_definition(decision_source, "take_current_decision")
+    let Some(seal_state) = rust_function_definition(decision_state_source, "seal_current_decision")
     else {
         return false;
     };
-    let Some(begin_active) = rust_function_definition(decision_source, "begin_active_decision_at")
+    let Some(begin_active) =
+        rust_function_definition(decision_state_source, "begin_active_decision_at")
+    else {
+        return false;
+    };
+    let Some(projected) = rust_function_definition(decision_state_source, "projected_decisions")
+    else {
+        return false;
+    };
+    let Some(reset_state) =
+        rust_function_definition(decision_state_source, "reset_live_issue_decision_baselines")
+    else {
+        return false;
+    };
+    let Some(with_delta) = rust_function_definition(decision_projection_source, "with_delta")
+    else {
+        return false;
+    };
+    let Some(retain) = rust_function_definition(decision_window_source, "retain") else {
+        return false;
+    };
+    let Some(take) = rust_function_definition(decision_window_source, "take") else {
+        return false;
+    };
+    let Some(reset_window) = rust_function_definition(decision_window_source, "reset_baselines")
+    else {
+        return false;
+    };
+    let Some(remove_future) =
+        rust_function_definition(decision_window_source, "remove_blocked_at_or_after")
     else {
         return false;
     };
@@ -9677,19 +9806,27 @@ fn o3_live_issue_delayed_stats_are_projected(
     let new_issued = compact(&new_issued);
     let new_blocked = compact(&new_blocked);
     let reset = compact(&reset);
-    let take_current = compact(&take_current);
+    let seal_state = compact(&seal_state);
     let begin_active = compact(&begin_active);
+    let projected = compact(&projected);
+    let reset_state = compact(&reset_state);
+    let with_delta = compact(&with_delta);
+    let retain = compact(&retain);
+    let take = compact(&take);
+    let reset_window = compact(&reset_window);
+    let remove_future = compact(&remove_future);
     let state_reset = compact(&state_reset);
     let seal_before = compact(&seal_before);
     let seal_current = compact(&seal_current);
+    let service_source = compact(service_source);
     let state_source = compact(state_source);
-    let counted_ticks_source = compact(counted_ticks_source);
+    let decision_window_source = compact(decision_window_source);
 
-    stats.contains("matchself.live_issue.projected_decision()")
-        && stats.contains("Some(delta)=>self.stats.project_issue_cycle(")
-        && stats.contains("None=>self.stats")
-        && record.contains("*self=self.project_issue_cycle(")
+    stats.contains("letprojection=self.live_issue.projected_decisions()")
+        && stats.contains("self.stats.project_issue_decisions(")
+        && record.contains("*self=self.project_issue_decisions(")
         && project.contains("self.issue_cycles=self.issue_cycles.saturating_add(")
+        && project.contains("issue_cyclesasu64")
         && project.contains("self.issued_rows=self.issued_rows.saturating_add(")
         && observe.contains("self.issued_sequences.entry(*sequence).or_default()")
         && observe.contains("*rows=rows.saturating_add(1)")
@@ -9711,17 +9848,42 @@ fn o3_live_issue_delayed_stats_are_projected(
         && reset.contains("self.observed_after_reset=false")
         && reset.contains("self.new_cycle=true")
         && reset.contains("self.refresh_projection()")
-        && take_current.contains("self.counted_cycle_ticks.record(active.tick)")
-        && begin_active.contains("letnew_cycle=!self.counted_cycle_ticks.contains(tick)")
-        && state_reset.contains("self.reset_active_decision_baseline()")
-        && state_reset.contains("self.counted_cycle_ticks.clear()")
-        && state_source.contains("counted_cycle_ticks:O3LiveIssueCountedTicks")
+        && seal_state.contains("self.decision_window.retain(active)")
+        && begin_active.contains("self.seal_current_decision()")
+        && begin_active.contains("self.decision_window.take(tick)")
+        && begin_active.contains("O3LiveIssueActiveTick::at(tick,true)")
+        && projected.contains("letprojection=self.decision_window.projection()")
+        && projected.contains("projection.with_delta(delta)")
+        && reset_state.contains("active.reset_baseline()")
+        && reset_state.contains("self.decision_window.reset_baselines()")
+        && state_reset.contains("self.reset_live_issue_decision_baselines()")
+        && state_source.contains("decision_window:O3LiveIssueDecisionWindow")
         && !state_source.contains("last_counted_cycle_tick")
-        && counted_ticks_source.contains("ticks:BTreeSet<u64>")
-        && seal_before.contains("self.live_issue.take_decision_before(tick)")
-        && seal_before.contains("self.stats.record_issue_cycle(")
-        && seal_current.contains("self.live_issue.take_current_decision()")
-        && seal_current.contains("self.stats.record_issue_cycle(")
+        && !state_source.contains("counted_cycle_ticks:")
+        && !state_source.contains("O3LiveIssueCountedTicks")
+        && decision_window_source.contains("ticks:BTreeMap<u64,O3LiveIssueActiveTick>")
+        && decision_window_source.contains("projection:O3LiveIssueDecisionProjection")
+        && retain.contains("self.ticks.insert(tick,decision)")
+        && retain.contains("self.refresh_projection()")
+        && take.contains("self.ticks.remove(&tick)")
+        && take.contains("self.refresh_projection()")
+        && reset_window.contains("decision.reset_baseline()")
+        && reset_window.contains("self.refresh_projection()")
+        && remove_future.contains("self.ticks.range_mut(tick..)")
+        && remove_future.contains("decision.remove_blocked(*sequence)")
+        && with_delta.contains("ifdelta.new_cycle{1}else{0}")
+        && with_delta.contains(
+            "self.resource_blocked_rows=self.resource_blocked_rows.saturating_add(delta.resource_blocked_rows)",
+        )
+        && with_delta.contains(
+            "self.dependency_blocked_rows=self.dependency_blocked_rows.saturating_add(delta.dependency_blocked_rows)",
+        )
+        && seal_before.contains("self.live_issue.seal_decision_before(tick)")
+        && !seal_before.contains("self.stats.record_issue")
+        && seal_current.contains("self.live_issue.seal_current_decision()")
+        && !seal_current.contains("self.stats.record_issue")
+        && service_source
+            .contains("remove_retained_blocked_sequences_at_or_after(now,&issued_sequences)")
 }
 
 #[test]
@@ -10053,15 +10215,16 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let service = fs::read_to_string(crate_dir.join("src/o3_runtime_issue/service.rs")).unwrap();
     let state = fs::read_to_string(crate_dir.join("src/o3_runtime_issue/state.rs")).unwrap();
-    let decision =
-        fs::read_to_string(crate_dir.join("src/o3_runtime_issue/state/decision.rs")).unwrap();
-    let counted_ticks =
-        fs::read_to_string(crate_dir.join("src/o3_runtime_issue/state/counted_ticks.rs")).unwrap();
+    let decision_state =
+        fs::read_to_string(crate_dir.join("src/o3_runtime_issue/state/decision_state.rs")).unwrap();
+    let decision_window =
+        fs::read_to_string(crate_dir.join("src/o3_runtime_issue/state/decision_window.rs"))
+            .unwrap();
     assert!(o3_live_issue_scheduler_entry_is_pruned(
         &service,
         &state,
-        &decision,
-        &counted_ticks,
+        &decision_state,
+        &decision_window,
     ));
 
     let mutations = [
@@ -10073,8 +10236,8 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
                 1,
             ),
             state.clone(),
-            decision.clone(),
-            counted_ticks.clone(),
+            decision_state.clone(),
+            decision_window.clone(),
         ),
         (
             "request path restores a global clamp",
@@ -10084,8 +10247,8 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
                 "let requested = self.requested_service_tick.map_or(tick, |current| current.min(tick));\n        let requested = self.last_service_generation.map_or(requested, |(floor, _)| requested.max(floor));",
                 1,
             ),
-            decision.clone(),
-            counted_ticks.clone(),
+            decision_state.clone(),
+            decision_window.clone(),
         ),
         (
             "begin path restores a global clamp",
@@ -10095,37 +10258,41 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
                 "if self.last_service_generation.is_some_and(|(floor, _)| tick < floor) { return false; }\n        if requested > tick {",
                 1,
             ),
-            decision.clone(),
-            counted_ticks.clone(),
+            decision_state.clone(),
+            decision_window.clone(),
         ),
         (
-            "future active decision is not sealed",
-            service.replacen("self.seal_live_issue_decision();", "", 1),
-            state.clone(),
-            decision.clone(),
-            counted_ticks.clone(),
-        ),
-        (
-            "scheduler entry pruning removed",
-            service.clone(),
-            state.clone(),
-            decision.replacen(
-                "self.counted_cycle_ticks.prune_before(earliest_tick);",
-                "let _ = earliest_tick;",
+            "finalized decisions are not recorded",
+            service.replacen(
+                "self.stats.record_issue_decisions(\n            finalized.issue_cycles,\n            finalized.issued_rows,\n            finalized.resource_blocked_rows,\n            finalized.dependency_blocked_rows,\n            finalized.max_rows_at_tick,\n        );",
+                "let _ = finalized;",
                 1,
             ),
-            counted_ticks.clone(),
+            state.clone(),
+            decision_state.clone(),
+            decision_window.clone(),
+        ),
+        (
+            "active decision is not retained before pruning",
+            service.clone(),
+            state.clone(),
+            decision_state.replacen(
+                "self.seal_current_decision();\n        self.scheduler_entry_tick = Some(earliest_tick);",
+                "let _ = self.active_tick.take();\n        self.scheduler_entry_tick = Some(earliest_tick);",
+                1,
+            ),
+            decision_window.clone(),
         ),
         (
             "monotonic scheduler assertion removed",
             service.clone(),
             state.clone(),
-            decision.replacen(
+            decision_state.replacen(
                 "assert!(\n            self.scheduler_entry_tick\n                .is_none_or(|previous| earliest_tick >= previous),\n            \"live issue scheduler entry tick regressed\"\n        );",
                 "",
                 1,
             ),
-            counted_ticks.clone(),
+            decision_window.clone(),
         ),
         (
             "Task 6 scheduler entry is private",
@@ -10135,37 +10302,48 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
                 1,
             ),
             state.clone(),
-            decision.clone(),
-            counted_ticks.clone(),
+            decision_state.clone(),
+            decision_window.clone(),
         ),
         (
-            "counted ticks never prune",
+            "retained decisions never finalize",
             service.clone(),
             state.clone(),
-            decision.clone(),
-            counted_ticks.replacen(
-                "self.ticks.retain(|tick| *tick >= earliest_tick);",
-                "let _ = earliest_tick;",
+            decision_state.clone(),
+            decision_window.replacen(
+                "let retained = self.ticks.split_off(&earliest_tick);",
+                "let retained = std::mem::take(&mut self.ticks);",
+                1,
+            ),
+        ),
+        (
+            "equal scheduler tick is finalized too early",
+            service.clone(),
+            state.clone(),
+            decision_state.clone(),
+            decision_window.replacen(
+                "let retained = self.ticks.split_off(&earliest_tick);",
+                "let retained = self\n            .ticks\n            .split_off(&earliest_tick.saturating_add(1));",
                 1,
             ),
         ),
     ];
-    for (description, mutated_service, mutated_state, mutated_decision, mutated_counted_ticks) in
+    for (description, mutated_service, mutated_state, mutated_decision_state, mutated_window) in
         mutations
     {
         assert!(
             mutated_service != service
                 || mutated_state != state
-                || mutated_decision != decision
-                || mutated_counted_ticks != counted_ticks,
+                || mutated_decision_state != decision_state
+                || mutated_window != decision_window,
             "scheduler-entry mutation did not apply: {description}",
         );
         assert!(
             !o3_live_issue_scheduler_entry_is_pruned(
                 &mutated_service,
                 &mutated_state,
-                &mutated_decision,
-                &mutated_counted_ticks,
+                &mutated_decision_state,
+                &mutated_window,
             ),
             "accepted weakened scheduler-entry mutation: {description}",
         );
@@ -10179,20 +10357,28 @@ fn o3_live_issue_stats_policy_rejects_projection_and_rebase_mutations() {
     let state = fs::read_to_string(crate_dir.join("src/o3_runtime_issue/state.rs")).unwrap();
     let decision =
         fs::read_to_string(crate_dir.join("src/o3_runtime_issue/state/decision.rs")).unwrap();
-    let counted_ticks =
-        fs::read_to_string(crate_dir.join("src/o3_runtime_issue/state/counted_ticks.rs")).unwrap();
+    let decision_state =
+        fs::read_to_string(crate_dir.join("src/o3_runtime_issue/state/decision_state.rs")).unwrap();
+    let decision_projection =
+        fs::read_to_string(crate_dir.join("src/o3_runtime_issue/state/decision_projection.rs"))
+            .unwrap();
+    let decision_window =
+        fs::read_to_string(crate_dir.join("src/o3_runtime_issue/state/decision_window.rs"))
+            .unwrap();
     let stats = fs::read_to_string(crate_dir.join("src/o3_runtime_stats.rs")).unwrap();
     assert!(o3_live_issue_delayed_stats_are_projected(
         &service,
         &state,
         &decision,
-        &counted_ticks,
+        &decision_state,
+        &decision_projection,
+        &decision_window,
         &stats,
     ));
 
     let projection_mutation = service.replacen(
-        "match self.live_issue.projected_decision()",
-        "match None",
+        "let projection = self.live_issue.projected_decisions();",
+        "let projection = Default::default();",
         1,
     );
     let decision_difference =
@@ -10207,111 +10393,219 @@ fn o3_live_issue_stats_policy_rejects_projection_and_rebase_mutations() {
         "self.observed_after_reset = true;",
         1,
     );
-    let decision_cycle = decision.replacen(
-        "let new_cycle = !self.counted_cycle_ticks.contains(tick);",
-        "let new_cycle = true;",
+    let sealed_drop =
+        decision_state.replacen("self.decision_window.retain(active);", "let _ = active;", 1);
+    let revisit_drop = decision_state.replacen(
+        "self\n                .decision_window\n                .take(tick)",
+        "None",
         1,
     );
-    let decision_record = decision.replacen(
-        "self.counted_cycle_ticks.record(active.tick);",
-        "let _ = active.tick;",
+    let retained_projection = decision_state.replacen(
+        "let projection = self.decision_window.projection();",
+        "let projection = Default::default();",
         1,
     );
-    let counted_reset = state.replacen("self.counted_cycle_ticks.clear();", "", 1);
-    let state_mutation = state.replacen("self.reset_active_decision_baseline();", "", 1);
-    let service_mutation =
-        service.replacen("self.live_issue.take_decision_before(tick)", "None", 1);
+    let retained_reset = decision_state.replacen(
+        "self.decision_window.reset_baselines();",
+        "let _ = &self.decision_window;",
+        1,
+    );
+    let state_mutation = state.replacen("self.reset_live_issue_decision_baselines();", "", 1);
+    let service_mutation = service.replacen(
+        "self.live_issue.seal_decision_before(tick);",
+        "let _ = tick;",
+        1,
+    );
     let stats_mutation = stats.replacen(
-        "*self = self.project_issue_cycle(",
-        "let _projected = self.project_issue_cycle(",
+        "*self = self.project_issue_decisions(",
+        "let _projected = self.project_issue_decisions(",
         1,
     );
-    for (description, mutated_service, mutated_state, mutated_decision, mutated_stats) in [
+    let future_cleanup = service.replacen(
+        "self.live_issue\n            .remove_retained_blocked_sequences_at_or_after(now, &issued_sequences);",
+        "let _ = &issued_sequences;",
+        1,
+    );
+    let future_cleanup_owner = decision_window.replacen(
+        "decision.remove_blocked(*sequence);",
+        "let _ = *sequence;",
+        1,
+    );
+    let blocked_projection = decision_projection.replacen(
+        "self.resource_blocked_rows = self\n            .resource_blocked_rows\n            .saturating_add(delta.resource_blocked_rows);",
+        "let _ = delta.resource_blocked_rows;",
+        1,
+    );
+    for (
+        description,
+        mutated_service,
+        mutated_state,
+        mutated_decision,
+        mutated_decision_state,
+        mutated_projection,
+        mutated_window,
+        mutated_stats,
+    ) in [
         (
             "projection removed",
-            &projection_mutation,
-            &state,
-            &decision,
-            &stats,
+            projection_mutation,
+            state.clone(),
+            decision.clone(),
+            decision_state.clone(),
+            decision_projection.clone(),
+            decision_window.clone(),
+            stats.clone(),
         ),
         (
             "issued baseline removed",
-            &service,
-            &state,
-            &decision_difference,
-            &stats,
+            service.clone(),
+            state.clone(),
+            decision_difference,
+            decision_state.clone(),
+            decision_projection.clone(),
+            decision_window.clone(),
+            stats.clone(),
         ),
         (
             "issued reset removed",
-            &service,
-            &state,
-            &decision_reset,
-            &stats,
+            service.clone(),
+            state.clone(),
+            decision_reset,
+            decision_state.clone(),
+            decision_projection.clone(),
+            decision_window.clone(),
+            stats.clone(),
         ),
         (
             "reset observation retained",
-            &service,
-            &state,
-            &decision_observed,
-            &stats,
+            service.clone(),
+            state.clone(),
+            decision_observed,
+            decision_state.clone(),
+            decision_projection.clone(),
+            decision_window.clone(),
+            stats.clone(),
         ),
         (
-            "sealed cycle history ignored",
-            &service,
-            &state,
-            &decision_cycle,
-            &stats,
+            "sealed decision dropped",
+            service.clone(),
+            state.clone(),
+            decision.clone(),
+            sealed_drop,
+            decision_projection.clone(),
+            decision_window.clone(),
+            stats.clone(),
         ),
         (
-            "counted cycle recording removed",
-            &service,
-            &state,
-            &decision_record,
-            &stats,
+            "revisited decision baseline dropped",
+            service.clone(),
+            state.clone(),
+            decision.clone(),
+            revisit_drop,
+            decision_projection.clone(),
+            decision_window.clone(),
+            stats.clone(),
         ),
         (
-            "counted cycle reset removed",
-            &service,
-            &counted_reset,
-            &decision,
-            &stats,
+            "retained projection ignored",
+            service.clone(),
+            state.clone(),
+            decision.clone(),
+            retained_projection,
+            decision_projection.clone(),
+            decision_window.clone(),
+            stats.clone(),
+        ),
+        (
+            "retained reset rebase removed",
+            service.clone(),
+            state.clone(),
+            decision.clone(),
+            retained_reset,
+            decision_projection.clone(),
+            decision_window.clone(),
+            stats.clone(),
         ),
         (
             "state reset delegate removed",
-            &service,
-            &state_mutation,
-            &decision,
-            &stats,
+            service.clone(),
+            state_mutation,
+            decision.clone(),
+            decision_state.clone(),
+            decision_projection.clone(),
+            decision_window.clone(),
+            stats.clone(),
         ),
         (
             "prior seal removed",
-            &service_mutation,
-            &state,
-            &decision,
-            &stats,
+            service_mutation,
+            state.clone(),
+            decision.clone(),
+            decision_state.clone(),
+            decision_projection.clone(),
+            decision_window.clone(),
+            stats.clone(),
         ),
         (
             "stats projection discarded",
-            &service,
-            &state,
-            &decision,
-            &stats_mutation,
+            service.clone(),
+            state.clone(),
+            decision.clone(),
+            decision_state.clone(),
+            decision_projection.clone(),
+            decision_window.clone(),
+            stats_mutation,
+        ),
+        (
+            "issued row retained in future blocking",
+            future_cleanup,
+            state.clone(),
+            decision.clone(),
+            decision_state.clone(),
+            decision_projection.clone(),
+            decision_window.clone(),
+            stats.clone(),
+        ),
+        (
+            "future blocking cleanup ignored",
+            service.clone(),
+            state.clone(),
+            decision.clone(),
+            decision_state.clone(),
+            decision_projection.clone(),
+            future_cleanup_owner,
+            stats.clone(),
+        ),
+        (
+            "blocked projection omitted",
+            service.clone(),
+            state.clone(),
+            decision.clone(),
+            decision_state.clone(),
+            blocked_projection,
+            decision_window.clone(),
+            stats.clone(),
         ),
     ] {
         assert!(
-            mutated_service != &service
-                || mutated_state != &state
-                || mutated_decision != &decision
-                || mutated_stats != &stats,
+            mutated_service != service
+                || mutated_state != state
+                || mutated_decision != decision
+                || mutated_decision_state != decision_state
+                || mutated_projection != decision_projection
+                || mutated_window != decision_window
+                || mutated_stats != stats,
             "delayed-stats mutation did not apply: {description}",
         );
         assert!(
             !o3_live_issue_delayed_stats_are_projected(
-                mutated_service,
-                mutated_state,
-                mutated_decision,
-                &counted_ticks,
-                mutated_stats,
+                &mutated_service,
+                &mutated_state,
+                &mutated_decision,
+                &mutated_decision_state,
+                &mutated_projection,
+                &mutated_window,
+                &mutated_stats,
             ),
             "accepted weakened delayed-stats mutation: {description}",
         );
@@ -10419,6 +10713,10 @@ struct O3LiveIssueStateRollback {
         canonical.replace(
             "trace_records_len: usize,",
             "trace_records_len: usize, pub(crate) counted_cycle_ticks: O3LiveIssueCountedTicks,",
+        ),
+        canonical.replace(
+            "trace_records_len: usize,",
+            "trace_records_len: usize, pub(crate) decision_window: O3LiveIssueDecisionWindow,",
         ),
         canonical.replace(
             "trace_records_len: usize,",

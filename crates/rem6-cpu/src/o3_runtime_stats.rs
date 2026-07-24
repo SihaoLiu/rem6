@@ -1095,16 +1095,16 @@ impl O3RuntimeStats {
         self.iew_consumer_insts = self.iew_consumer_insts.saturating_add(1);
     }
 
-    pub(super) fn record_issue_cycle(
+    pub(super) fn record_issue_decisions(
         &mut self,
-        new_cycle: bool,
+        issue_cycles: usize,
         issued_rows: usize,
         resource_blocked_rows: usize,
         dependency_blocked_rows: usize,
         total_rows_at_tick: usize,
     ) {
-        *self = self.project_issue_cycle(
-            new_cycle,
+        *self = self.project_issue_decisions(
+            issue_cycles,
             issued_rows,
             resource_blocked_rows,
             dependency_blocked_rows,
@@ -1112,17 +1112,15 @@ impl O3RuntimeStats {
         );
     }
 
-    pub(super) const fn project_issue_cycle(
+    pub(super) const fn project_issue_decisions(
         mut self,
-        new_cycle: bool,
+        issue_cycles: usize,
         issued_rows: usize,
         resource_blocked_rows: usize,
         dependency_blocked_rows: usize,
         total_rows_at_tick: usize,
     ) -> Self {
-        self.issue_cycles = self
-            .issue_cycles
-            .saturating_add(if new_cycle { 1 } else { 0 });
+        self.issue_cycles = self.issue_cycles.saturating_add(issue_cycles as u64);
         self.issued_rows = self.issued_rows.saturating_add(issued_rows as u64);
         self.resource_blocked_row_cycles = self
             .resource_blocked_row_cycles

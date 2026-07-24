@@ -9,9 +9,15 @@ use rem6_memory::Address;
 mod decision;
 use decision::O3LiveIssueActiveTick;
 
-#[path = "state/counted_ticks.rs"]
-mod counted_ticks;
-use counted_ticks::O3LiveIssueCountedTicks;
+#[path = "state/decision_projection.rs"]
+mod decision_projection;
+
+#[path = "state/decision_window.rs"]
+mod decision_window;
+use decision_window::O3LiveIssueDecisionWindow;
+
+#[path = "state/decision_state.rs"]
+mod decision_state;
 
 #[path = "state/rollback.rs"]
 mod rollback;
@@ -129,7 +135,7 @@ impl DerefMut for O3LiveIssueResidentSequences {
 pub(in crate::o3_runtime) struct O3LiveIssueState {
     resident_sequences: O3LiveIssueResidentSequences,
     requested_service_tick: Option<u64>,
-    counted_cycle_ticks: O3LiveIssueCountedTicks,
+    decision_window: O3LiveIssueDecisionWindow,
     scheduler_entry_tick: Option<u64>,
     active_tick: Option<O3LiveIssueActiveTick>,
     transaction_active: bool,
@@ -331,18 +337,26 @@ impl O3LiveIssueState {
             ..O3LiveIssueTelemetry::default()
         };
         self.trace_records.clear();
-        self.counted_cycle_ticks.clear();
-        self.reset_active_decision_baseline();
+        self.reset_live_issue_decision_baselines();
     }
 
     #[cfg(test)]
     pub(in crate::o3_runtime) fn counted_cycle_ticks_for_test(&self) -> Vec<u64> {
-        self.counted_cycle_ticks.values()
+        let mut ticks = self.decision_window.counted_ticks();
+        if let Some(active) = self.active_tick.as_ref().filter(|active| {
+            active
+                .projected_delta()
+                .is_some_and(|delta| delta.new_cycle)
+        }) {
+            ticks.push(active.tick());
+            ticks.sort_unstable();
+        }
+        ticks
     }
 
     #[cfg(test)]
     pub(in crate::o3_runtime) fn counted_cycle_tick_len_for_test(&self) -> usize {
-        self.counted_cycle_ticks.len()
+        self.decision_window.len() + usize::from(self.active_tick.is_some())
     }
 
     #[cfg(test)]
