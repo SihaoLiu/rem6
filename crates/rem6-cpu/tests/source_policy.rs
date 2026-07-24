@@ -17,6 +17,7 @@ const MAX_O3_RUNTIME_ISSUE_TRANSACTION_LINES: usize = 450;
 const MAX_O3_RUNTIME_ISSUE_TRANSACTION_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_ISSUE_QUEUE_LINES: usize = 600;
 const MAX_O3_RUNTIME_ISSUE_QUEUE_TEST_LINES: usize = 450;
+const MAX_O3_RUNTIME_ISSUE_QUEUE_MATERIALIZATION_TEST_LINES: usize = 250;
 const MAX_O3_RUNTIME_ISSUE_LINES: usize = 800;
 const MAX_O3_RUNTIME_MEMORY_LINES: usize = 1200;
 const MAX_O3_RUNTIME_MEMORY_RESULT_ADMISSION_LINES: usize = 220;
@@ -3957,6 +3958,8 @@ fn o3_persistent_live_issue_state_owns_candidate_inventory() {
     let issue_path = crate_dir.join("src/o3_runtime_issue.rs");
     let queue_path = crate_dir.join("src/o3_runtime_issue/queue.rs");
     let queue_tests_path = crate_dir.join("src/o3_runtime_issue/queue_tests.rs");
+    let queue_materialization_tests_path =
+        crate_dir.join("src/o3_runtime_issue/queue_tests/materialization.rs");
     let issue_tests_path = crate_dir.join("src/o3_runtime_issue_tests.rs");
     let control_path = crate_dir.join("src/o3_runtime_control_window.rs");
     let live_window_path = crate_dir.join("src/o3_runtime_live_window.rs");
@@ -3967,6 +3970,8 @@ fn o3_persistent_live_issue_state_owns_candidate_inventory() {
     let queue_source = fs::read_to_string(&queue_path).unwrap();
     let queue = production_rust_source(&queue_source);
     let queue_tests_source = fs::read_to_string(&queue_tests_path).unwrap();
+    let queue_materialization_tests_source =
+        fs::read_to_string(&queue_materialization_tests_path).unwrap();
     let issue_tests_source = fs::read_to_string(&issue_tests_path).unwrap();
     let control = production_rust_source(&fs::read_to_string(&control_path).unwrap());
     let live_window_source = fs::read_to_string(&live_window_path).unwrap();
@@ -3977,6 +3982,12 @@ fn o3_persistent_live_issue_state_owns_candidate_inventory() {
 
     assert!(line_count(&queue_path) <= MAX_O3_RUNTIME_ISSUE_QUEUE_LINES);
     assert!(line_count(&queue_tests_path) <= MAX_O3_RUNTIME_ISSUE_QUEUE_TEST_LINES);
+    assert!(
+        line_count(&queue_materialization_tests_path)
+            <= MAX_O3_RUNTIME_ISSUE_QUEUE_MATERIALIZATION_TEST_LINES,
+        "src/o3_runtime_issue/queue_tests/materialization.rs exceeds \
+         {MAX_O3_RUNTIME_ISSUE_QUEUE_MATERIALIZATION_TEST_LINES} lines"
+    );
     assert_eq!(
         path_owned_module_path_declaration_count(&issue_source, "o3_runtime_issue/queue.rs",),
         1,
@@ -3992,6 +4003,23 @@ fn o3_persistent_live_issue_state_owns_candidate_inventory() {
             "queue",
         ),
         1,
+    );
+    assert_eq!(
+        path_owned_module_path_declaration_count(
+            &queue_tests_source,
+            "queue_tests/materialization.rs",
+        ),
+        1,
+        "queue tests must attach the materialization child path exactly once",
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &queue_tests_source,
+            "queue_tests/materialization.rs",
+            "materialization",
+        ),
+        1,
+        "queue tests must attach the materialization child exactly once",
     );
     assert_eq!(
         path_owned_module_declaration_count(
@@ -4066,24 +4094,19 @@ fn o3_persistent_live_issue_state_owns_candidate_inventory() {
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect::<String>();
-    assert_eq!(queue_materialize.matches("for ").count(), 1);
     assert!(queue_materialize.contains("for &sequence in resident_sequences"));
     assert!(queue_materialize.contains("binary_search_by_key(&sequence"));
-    assert_eq!(
-        compact_materialize
-            .matches("runtime.snapshot.reorder_buffer")
-            .count(),
-        2,
-    );
-    for forbidden in [
-        "reorder_buffer.iter(",
-        "reorder_buffer.iter_mut(",
-        "reorder_buffer.into_iter(",
-        "in&runtime.snapshot.reorder_buffer",
-    ] {
+    let rob_inventory = "runtime.snapshot.reorder_buffer";
+    for (access, _) in compact_materialize.match_indices(rob_inventory) {
+        let suffix = &compact_materialize[access + rob_inventory.len()..];
+        let indexed_row = suffix.strip_prefix('[').is_some_and(|suffix| {
+            suffix
+                .find(']')
+                .is_some_and(|end| !suffix[..end].contains(".."))
+        });
         assert!(
-            !compact_materialize.contains(forbidden),
-            "queue materialization must not scan ROB inventory through `{forbidden}`",
+            suffix.starts_with(".binary_search_by_key(") || indexed_row,
+            "queue materialization must not scan or retain the full ROB inventory",
         );
     }
     for transient in ["O3LiveIssueDependencyTable", "O3LiveIssueCalendar"] {
@@ -4348,6 +4371,10 @@ fn o3_persistent_live_issue_state_owns_candidate_inventory() {
         "bound live issue-packet inventory must remain unique to the issue-identity owner"
     );
 
+    let queue_test_sources = [
+        queue_tests_source.as_str(),
+        queue_materialization_tests_source.as_str(),
+    ];
     for anchor in [
         "live_issue_queue_packet_binding_is_idempotent_and_exact",
         "live_issue_queue_packet_rebinding_rejects_any_identity_change",
@@ -4363,7 +4390,10 @@ fn o3_persistent_live_issue_state_owns_candidate_inventory() {
         "live_issue_queue_rejects_materialized_pending_resident_sequence",
     ] {
         assert_eq!(
-            rust_test_function_definition_count(&queue_tests_source, anchor),
+            queue_test_sources
+                .iter()
+                .map(|source| rust_test_function_definition_count(source, anchor))
+                .sum::<usize>(),
             1,
             "missing exact compiled queue test `{anchor}`",
         );
