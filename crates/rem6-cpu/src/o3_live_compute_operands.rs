@@ -163,13 +163,6 @@ fn vector_to_scalar_operands<const N: usize>(
     )
 }
 
-const _: fn(RiscvInstruction) -> Option<O3LiveComputeOperands> = o3_live_compute_operands;
-const _: fn(&O3LiveComputeOperands) -> O3LiveComputeClass = O3LiveComputeOperands::class;
-const _: fn(&O3LiveComputeOperands) -> O3ArchitecturalRegister = O3LiveComputeOperands::destination;
-const _: fn(&O3LiveComputeOperands) -> &[O3ArchitecturalRegister] = O3LiveComputeOperands::sources;
-const _: fn(O3ArchitecturalRegister) -> O3RegisterClass = O3ArchitecturalRegister::register_class;
-const _: fn(O3ArchitecturalRegister) -> u32 = O3ArchitecturalRegister::architectural;
-
 #[cfg(test)]
 #[path = "o3_live_compute_operands_tests.rs"]
 mod tests;

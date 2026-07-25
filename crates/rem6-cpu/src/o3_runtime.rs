@@ -92,7 +92,6 @@ mod o3_runtime_writeback_tests;
 mod o3_source_operands;
 #[path = "o3_store_forwarding.rs"]
 mod o3_store_forwarding;
-#[allow(unused_imports)]
 pub(crate) use o3_live_compute_operands::{
     o3_live_compute_operands, O3ArchitecturalRegister, O3LiveComputeClass, O3LiveComputeOperands,
 };
