@@ -336,9 +336,11 @@ gain special cleanup paths.
 ## Source Policy and File Boundaries
 
 Keep operand classification in a new focused module rather than expanding the
-already broad scalar source helper. Keep mixed-class CLI evidence in focused
-children below `persistent_iq.rs`; the existing parent remains the shared
-fixture and helper owner.
+already broad scalar source helper. Keep compute-specific queue adaptation and
+destination-class validation in `o3_runtime_issue/queue/compute.rs` so the
+capped `queue.rs` remains a thin sequence/materialization owner. Keep
+mixed-class CLI evidence in focused children below `persistent_iq.rs`; the
+existing parent remains the shared fixture and helper owner.
 
 Add source-policy assertions for:
 
