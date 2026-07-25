@@ -488,11 +488,15 @@ fn fp_vector_live_issue_locks_task6_external_telemetry_schema() {
             .unwrap();
 
     let compact_system_cpu = compact_rust_code(&production_rust_source(&system_cpu));
-    let compact_system_snapshot = compact_rust_code(&production_rust_source(&system_snapshot));
     let compact_core_summary = compact_rust_code(&production_rust_source(&core_summary));
-    let compact_stats_output = compact_rust_code(&production_rust_source(&stats_output));
     let compact_debug_output = compact_rust_code(&production_rust_source(&debug_output));
     let compact_persistent_iq = compact_rust_code(&persistent_iq);
+    let compact_raw_system_cpu = compact_rust_code(&system_cpu);
+    let compact_raw_stats_output = compact_rust_code(&stats_output);
+    let compact_delta =
+        compact_rust_code(&rust_function_definition(&system_cpu, "increment_delta").unwrap());
+    let compact_snapshot =
+        compact_rust_code(&rust_function_definition(&system_snapshot, "set_snapshot").unwrap());
 
     for (class, getter) in [
         ("scalar_float", "scalar_float_issued_rows"),
@@ -501,15 +505,18 @@ fn fp_vector_live_issue_locks_task6_external_telemetry_schema() {
         let stat_path = format!("issue_queue.issued_by_class.{class}");
         assert!(system_cpu.contains(&stat_path));
         assert!(compact_system_cpu.contains(&format!("issue_queue_{getter}:StatId")));
-        assert!(compact_system_cpu.contains(&format!("previous_live_issue.{getter}()")));
-        assert!(compact_system_cpu.contains(&format!("current_live_issue.{getter}()")));
-        assert!(compact_system_snapshot.contains(&format!("live_issue.{getter}()")));
+        assert!(compact_raw_system_cpu.contains(&format!("issue_queue_{getter}:register_o3_counter(registry,&prefix,\"issue_queue.issued_by_class.{class}\",\"Count\",)?")));
+        assert!(compact_delta.contains(&format!("(self.issue_queue_{getter},previous_live_issue.{getter}(),current_live_issue.{getter}(),)")));
+        assert!(compact_snapshot.contains(&format!(
+            "(self.issue_queue_{getter},live_issue.{getter}(),)"
+        )));
         assert!(core_summary.contains(&format!("\\\"{class}\\\"")));
         assert!(compact_core_summary.contains(&format!("queue.{getter}()")));
         assert!(stats_output.contains(&format!("issued_by_class.{class}")));
-        assert!(compact_stats_output.contains(&format!("queue.{getter}()")));
+        assert!(compact_raw_stats_output
+            .contains(&format!("(\"issued_by_class.{class}\",queue.{getter}(),)")));
         assert!(debug_output.contains(&format!("\\\"{class}\\\"")));
-        assert!(compact_debug_output.contains(&format!("telemetry.{getter}()")));
+        assert!(compact_debug_output.contains(&format!("{getter}:telemetry.{getter}()")));
         assert!(compact_persistent_iq.contains(&format!("issued_by_class/{class}")));
         assert!(compact_persistent_iq.contains(&format!("(\"issued_by_class/{class}\",0)")));
     }
@@ -543,6 +550,8 @@ fn fp_vector_live_issue_locks_task6_external_telemetry_schema() {
         "\\\"control\\\":{},\\\"scalar_float\\\":{},\\\"vector_to_scalar\\\":{}";
     assert!(core_summary.contains(appended_json_classes));
     assert!(debug_output.contains(appended_json_classes));
+    assert!(compact_core_summary.contains("queue.control_issued_rows(),queue.scalar_float_issued_rows(),queue.vector_to_scalar_issued_rows(),"));
+    assert!(compact_debug_output.contains("telemetry.control_issued_rows,telemetry.scalar_float_issued_rows,telemetry.vector_to_scalar_issued_rows,"));
 
     for source in [
         &system_cpu,
