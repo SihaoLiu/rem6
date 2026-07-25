@@ -183,6 +183,7 @@ impl RiscvCore {
         }
         state.memory_result_window_authorizations.clear();
         state.rebound_in_order_execute_waits.clear();
+        state.o3_force_normal_execute_fetches.clear();
         state.detach_pending_in_order_pipeline_advance();
         state.discard_branch_speculations();
         state.live_retire_gate.rebind_pending_to_next_request();

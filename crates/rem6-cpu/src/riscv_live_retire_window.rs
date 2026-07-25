@@ -9,7 +9,7 @@ use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
 use crate::{
     o3_runtime::{
-        o3_memory_result_destination, o3_scalar_integer_source_registers,
+        o3_memory_result_destination, o3_scalar_integer_source_registers, O3LiveComputeOperands,
         O3LiveIssueHeadReservation, O3RuntimeError,
     },
     riscv_execute::{oldest_completed_fetch_at, RiscvLiveRetireGateWakeKind},
@@ -215,27 +215,34 @@ impl RiscvCore {
         if detailed_scalar_memory_blocks_execution(state, &window)? {
             return Ok(None);
         }
-        let live_speculative_ready_tick = if state.live_retire_gate.pending_ready_tick().is_none() {
-            live_speculative_fu_ready_tick(state, &window)?
-        } else {
-            None
-        };
+        let force_normal_execute = state
+            .o3_force_normal_execute_fetches
+            .contains(&window.request);
+        let live_speculative_ready_tick =
+            if !force_normal_execute && state.live_retire_gate.pending_ready_tick().is_none() {
+                live_speculative_fu_ready_tick(state, &window)?
+            } else {
+                None
+            };
         let completed_normal_execute_wait = state
             .in_order_pipeline
             .execute_wait_completed(window.request.sequence())
             && state.live_retire_gate.pending_ready_tick().is_none();
         let Some((scheduler, kind)) = gate_scheduler.as_mut() else {
-            return Ok((completed_normal_execute_wait
+            let ready = completed_normal_execute_wait
                 || live_speculative_ready_tick
                     .is_some_and(|ready_tick| ready_tick <= window.fetch_tick)
-                || !state.live_retire_gate.blocks_without_scheduler())
-            .then_some(window.fetch_tick));
+                || !state.live_retire_gate.blocks_without_scheduler();
+            return Ok(ready.then_some(window.fetch_tick));
         };
         let now = scheduler
             .partition_now(self.partition())
             .map_err(RiscvCpuError::Scheduler)?;
         if let Some(ready_tick) = state.live_retire_gate.pending_ready_tick() {
-            if ready_tick <= now && state.live_retire_gate.detailed_policy_enabled() {
+            if !force_normal_execute
+                && ready_tick <= now
+                && state.live_retire_gate.detailed_policy_enabled()
+            {
                 stage_o3_live_retire_window(
                     state,
                     window.request,
@@ -255,6 +262,7 @@ impl RiscvCore {
         }
         let mut known_ready_tick = live_speculative_ready_tick;
         if known_ready_tick.is_none()
+            && !force_normal_execute
             && state.live_retire_gate.pending_ready_tick().is_none()
             && state.live_retire_gate.detailed_policy_enabled()
         {
@@ -285,7 +293,7 @@ impl RiscvCore {
                     .live_retire_gate
                     .pending_ready_tick()
                     .expect("blocked live retire gate has a pending ready tick");
-                if known_ready_tick.is_none() {
+                if known_ready_tick.is_none() && !force_normal_execute {
                     stage_o3_live_retire_window(
                         state,
                         window.request,
@@ -327,7 +335,7 @@ impl RiscvCore {
                 if let Some(wait_ticks) = created_wait_ticks {
                     state.o3_runtime.record_live_retire_gate_wait(wait_ticks);
                 }
-                if known_ready_tick.is_none() {
+                if known_ready_tick.is_none() && !force_normal_execute {
                     stage_o3_live_retire_window(
                         state,
                         window.request,
@@ -666,9 +674,10 @@ fn stage_o3_live_retire_window(
         next_pc,
         O3_SCALAR_INTEGER_FU_LIVE_WINDOW_ROWS.saturating_sub(1),
     );
-    let younger = RiscvScalarIntegerLiveWindow::from_fu_head(decoded.instruction())
-        .map(|window| accepted_scalar_integer_younger_window(window, younger))
-        .unwrap_or_default();
+    let (younger, force_normal_execute) =
+        RiscvScalarIntegerLiveWindow::from_fu_head(decoded.instruction())
+            .map(|window| accepted_scalar_integer_younger_window(window, younger))
+            .unwrap_or_default();
     let Some(head_sequence) = state.o3_runtime.stage_live_retire_window(
         pc,
         decoded.instruction(),
@@ -735,7 +744,14 @@ fn stage_o3_live_retire_window(
     if younger.is_empty() || !state.live_retire_gate.detailed_policy_enabled() {
         return Ok(Some(admitted_tick));
     }
-    schedule_o3_live_speculative_younger_executions(state, &younger, earliest_tick)?;
+    let staged = schedule_o3_live_speculative_younger_executions(state, &younger, earliest_tick)?;
+    if staged {
+        if let Some(request) =
+            staged_force_normal_execute_request(force_normal_execute, younger.len())
+        {
+            state.o3_force_normal_execute_fetches.insert(request);
+        }
+    }
     Ok(Some(admitted_tick))
 }
 
@@ -767,7 +783,7 @@ pub(crate) fn stage_o3_data_access_younger_window(
         return;
     };
     let remaining_rows = window.remaining_rows();
-    let younger = completed_scalar_integer_younger_window(
+    let (younger, force_normal_execute) = completed_scalar_integer_younger_window(
         state,
         fetch_events,
         execution.fetch().request_id(),
@@ -781,12 +797,19 @@ pub(crate) fn stage_o3_data_access_younger_window(
             .iter()
             .map(|younger| (younger.pc, younger.decoded.instruction())),
     );
-    schedule_o3_live_speculative_younger_executions(
+    let staged = schedule_o3_live_speculative_younger_executions(
         state,
         &younger[..staged_rows.min(younger.len())],
         issue_tick,
     )
     .expect("live data-access younger writeback reservation");
+    if staged {
+        if let Some(request) =
+            staged_force_normal_execute_request(force_normal_execute, staged_rows)
+        {
+            state.o3_force_normal_execute_fetches.insert(request);
+        }
+    }
 }
 
 pub(crate) fn stage_o3_producer_forwarded_scalar_return_descendant(
@@ -908,9 +931,14 @@ pub(crate) fn wake_o3_data_access_younger_window(
 fn accepted_scalar_integer_younger_window(
     mut window: RiscvScalarIntegerLiveWindow,
     younger: impl IntoIterator<Item = RiscvCompletedFetchInstruction>,
-) -> Vec<RiscvCompletedFetchInstruction> {
-    let mut accepted = Vec::new();
+) -> (
+    Vec<RiscvCompletedFetchInstruction>,
+    Option<(MemoryRequestId, usize)>,
+) {
+    let mut accepted: Vec<RiscvCompletedFetchInstruction> = Vec::new();
     for younger in younger {
+        let unforwardable_live_operands =
+            window.unforwardable_live_operands(younger.decoded.instruction());
         match window.classify_younger(younger.decoded.instruction()) {
             RiscvScalarIntegerYoungerDecision::AdmitContinue => accepted.push(younger),
             RiscvScalarIntegerYoungerDecision::AdmitStop
@@ -920,10 +948,45 @@ fn accepted_scalar_integer_younger_window(
                 accepted.push(younger);
                 break;
             }
-            RiscvScalarIntegerYoungerDecision::Reject => break,
+            RiscvScalarIntegerYoungerDecision::Reject => {
+                let boundary = force_normal_execute_boundary(
+                    &accepted,
+                    younger.first_consumed_request(),
+                    unforwardable_live_operands,
+                );
+                return (accepted, boundary);
+            }
         }
     }
-    accepted
+    (accepted, None)
+}
+
+fn force_normal_execute_boundary(
+    producers: &[RiscvCompletedFetchInstruction],
+    request: MemoryRequestId,
+    unforwardable_live_operands: Option<O3LiveComputeOperands>,
+) -> Option<(MemoryRequestId, usize)> {
+    let operands = unforwardable_live_operands?;
+    producers
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(index, producer)| {
+            let destination =
+                crate::o3_runtime::o3_live_compute_operands(producer.decoded.instruction())?
+                    .destination();
+            operands
+                .sources()
+                .contains(&destination)
+                .then_some((request, index + 1))
+        })
+}
+
+fn staged_force_normal_execute_request(
+    boundary: Option<(MemoryRequestId, usize)>,
+    staged_rows: usize,
+) -> Option<MemoryRequestId> {
+    boundary.and_then(|(request, required_rows)| (staged_rows >= required_rows).then_some(request))
 }
 
 fn schedule_o3_live_speculative_younger_executions(
@@ -986,8 +1049,11 @@ fn completed_scalar_integer_younger_window(
     mut pc: Address,
     mut window: RiscvScalarIntegerLiveWindow,
     limit: usize,
-) -> Vec<RiscvCompletedFetchInstruction> {
-    let mut instructions = Vec::new();
+) -> (
+    Vec<RiscvCompletedFetchInstruction>,
+    Option<(MemoryRequestId, usize)>,
+) {
+    let mut instructions: Vec<RiscvCompletedFetchInstruction> = Vec::new();
     let mut sequenced_return_addresses = Vec::new();
     for _ in 0..limit {
         let Some(instruction) =
@@ -1003,13 +1069,20 @@ fn completed_scalar_integer_younger_window(
                 .wrapping_add(u64::from(instruction.decoded.bytes())),
         );
         sequenced_return_addresses.push((prediction_request.sequence(), sequential_pc));
+        let unforwardable_live_operands =
+            window.unforwardable_live_operands(instruction.decoded.instruction());
         let classification = window.classify_sequenced_younger(
             instruction.decoded.instruction(),
             prediction_request.sequence(),
         );
         let decision = classification.decision();
         if decision == RiscvScalarIntegerYoungerDecision::Reject {
-            break;
+            let boundary = force_normal_execute_boundary(
+                &instructions,
+                prediction_request,
+                unforwardable_live_operands,
+            );
+            return (instructions, boundary);
         }
         current_request = instruction.last_consumed_request();
         let next_pc = if matches!(
@@ -1051,7 +1124,7 @@ fn completed_scalar_integer_younger_window(
         }
         pc = next_pc;
     }
-    instructions
+    (instructions, None)
 }
 
 fn completed_fetch_instruction_at(
@@ -1272,7 +1345,7 @@ mod tests {
             4,
         )
         .unwrap();
-        let replayed = completed_scalar_integer_younger_window(
+        let (replayed, force_normal_execute) = completed_scalar_integer_younger_window(
             &state,
             &fetch_events,
             request(7, 0),
@@ -1281,12 +1354,158 @@ mod tests {
             3,
         );
 
+        assert_eq!(force_normal_execute, None);
+
         assert_eq!(
             replayed
                 .iter()
                 .map(RiscvCompletedFetchInstruction::pc)
                 .collect::<Vec<_>>(),
             [Address::new(0x8004)]
+        );
+    }
+
+    #[test]
+    fn live_retire_replay_marks_rejected_fp_dependency_for_normal_execution() {
+        let current = request(7, 10);
+        let first_pc = Address::new(0x8004);
+        let events = vec![
+            completed_fetch_with_data(
+                7,
+                11,
+                first_pc,
+                0x0020_8253_u32.to_le_bytes().to_vec(), // fadd.s f4, f1, f2
+            ),
+            completed_fetch_with_data(
+                7,
+                12,
+                Address::new(0x8008),
+                0x1032_02d3_u32.to_le_bytes().to_vec(), // fmul.s f5, f4, f3
+            ),
+        ];
+        let state = RiscvCoreState::new(0x8000, 0);
+        let window = RiscvScalarIntegerLiveWindow::from_scalar_memory_prefix(
+            [Register::new(15).unwrap()],
+            1,
+            5,
+        )
+        .unwrap();
+
+        let (replayed, force_normal_execute) =
+            completed_scalar_integer_younger_window(&state, &events, current, first_pc, window, 4);
+
+        assert_eq!(
+            replayed
+                .iter()
+                .map(RiscvCompletedFetchInstruction::pc)
+                .collect::<Vec<_>>(),
+            [first_pc],
+        );
+        assert_eq!(force_normal_execute, Some((request(7, 12), 1)));
+    }
+
+    #[test]
+    fn fu_head_replay_marks_rejected_fp_dependency_for_normal_execution() {
+        let current = request(7, 10);
+        let events = vec![
+            completed_fetch_with_data(
+                7,
+                10,
+                Address::new(0x8000),
+                0x0220_c1b3_u32.to_le_bytes().to_vec(), // div x3, x1, x2
+            ),
+            completed_fetch_with_data(
+                7,
+                11,
+                Address::new(0x8004),
+                0x0020_8253_u32.to_le_bytes().to_vec(), // fadd.s f4, f1, f2
+            ),
+            completed_fetch_with_data(
+                7,
+                12,
+                Address::new(0x8008),
+                0x1032_02d3_u32.to_le_bytes().to_vec(), // fmul.s f5, f4, f3
+            ),
+        ];
+        let mut state = RiscvCoreState::new(0x8000, 0);
+        state
+            .live_retire_gate
+            .set_policy(RiscvLiveRetireGatePolicy::detailed());
+
+        stage_o3_live_retire_window(
+            &mut state,
+            current,
+            Address::new(0x8000),
+            0x0220_c1b3, // div x3, x1, x2
+            10,
+            29,
+            &events,
+        )
+        .unwrap();
+
+        assert_eq!(
+            state.o3_force_normal_execute_fetches,
+            [request(7, 12)].into_iter().collect(),
+        );
+        assert_eq!(
+            state
+                .o3_runtime
+                .snapshot()
+                .reorder_buffer()
+                .iter()
+                .map(|entry| entry.pc())
+                .collect::<Vec<_>>(),
+            [Address::new(0x8000), Address::new(0x8004)],
+        );
+    }
+
+    #[test]
+    fn data_access_replay_does_not_mark_boundary_when_prefix_cannot_stage() {
+        let execution = scalar_load_execution(7, 10, 12, 2, 0x9000);
+        let events = vec![
+            completed_fetch_with_data(
+                7,
+                11,
+                Address::new(0x8004),
+                0x0020_8253_u32.to_le_bytes().to_vec(), // fadd.s f4, f1, f2
+            ),
+            completed_fetch_with_data(
+                7,
+                12,
+                Address::new(0x8008),
+                0x1032_02d3_u32.to_le_bytes().to_vec(), // fmul.s f5, f4, f3
+            ),
+        ];
+        let mut state = RiscvCoreState::new(0x8000, 0);
+        state
+            .live_retire_gate
+            .set_policy(RiscvLiveRetireGatePolicy::detailed());
+        state.o3_runtime.set_scalar_memory_window_limit(4);
+        assert!(state.o3_runtime.stage_live_data_access_issue_for_test(
+            &execution,
+            request(7, 20),
+            31,
+        ));
+        let stray = RiscvInstruction::decode(0x0010_0313).unwrap();
+        assert!(state
+            .o3_runtime
+            .stage_live_retire_window(Address::new(0x9000), stray, 40, [])
+            .is_some());
+
+        stage_o3_data_access_younger_window(&mut state, &execution, 10, &events);
+
+        assert!(state.o3_force_normal_execute_fetches.is_empty());
+    }
+
+    #[test]
+    fn normal_execute_boundary_requires_its_dependency_producer_to_stage() {
+        let boundary = Some((request(7, 12), 2));
+
+        assert_eq!(staged_force_normal_execute_request(boundary, 0), None);
+        assert_eq!(staged_force_normal_execute_request(boundary, 1), None);
+        assert_eq!(
+            staged_force_normal_execute_request(boundary, 2),
+            Some(request(7, 12)),
         );
     }
 

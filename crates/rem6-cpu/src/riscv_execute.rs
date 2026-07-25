@@ -497,6 +497,9 @@ impl RiscvCore {
         if let Some(canonical) = canonical_terminal_memory_result {
             state.events.push(canonical);
         }
+        for request in consumed_requests {
+            state.o3_force_normal_execute_fetches.remove(request);
+        }
         Ok(event)
     }
 
@@ -1742,6 +1745,9 @@ pub(crate) fn remove_fetch_sequences_from_pipeline(
     state
         .rebound_in_order_execute_waits
         .retain(|sequence| !sequences.contains(sequence));
+    state
+        .o3_force_normal_execute_fetches
+        .retain(|request| !sequences.contains(&request.sequence()));
     state
         .in_order_pipeline
         .replace_in_flight(retained)

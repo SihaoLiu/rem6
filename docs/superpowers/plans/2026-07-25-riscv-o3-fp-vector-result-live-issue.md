@@ -919,6 +919,13 @@ git push
 ### Task 8: Add Hierarchy and Boundary CLI Evidence
 
 **Files:**
+- Modify: `crates/rem6-cpu/src/lib.rs`
+- Modify: `crates/rem6-cpu/src/riscv_execute.rs`
+- Modify: `crates/rem6-cpu/src/riscv_execute_tests.rs`
+- Modify: `crates/rem6-cpu/src/riscv_fetch.rs`
+- Modify: `crates/rem6-cpu/src/riscv_live_retire_gate.rs`
+- Modify: `crates/rem6-cpu/src/riscv_live_retire_window.rs`
+- Modify: `crates/rem6-cpu/src/riscv_o3_window_policy.rs`
 - Create: `crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/mixed_compute_boundaries.rs`
 - Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/mixed_compute_fixture.rs`
 - Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/mixed_compute.rs`
@@ -957,6 +964,12 @@ Create separate fixture modes that place:
 - `vmul.vv v4, v1, v2` after a long head.
 
 Assert the dependent/vector-destination PCs never appear in queue events, but their final stored FP/vector bytes are exact after normal execution.
+
+The dependent-FP RED test also guards against later standalone re-admission after
+the original live window drains. Preserve normal-execution ownership with a
+transient fetch identity only after the matching producer prefix is confirmed
+staged. Clear that identity on retirement, sequence discard, fetch/reset, and
+detailed-mode disable or direct O3 restore; do not add it to the O3RT payload.
 
 - [ ] **Step 3: Add system, checkpoint, restore, and timing boundaries**
 
@@ -1000,6 +1013,9 @@ Expected: all positives and boundaries pass on real `rem6` binaries.
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo fmt --all
+git add crates/rem6-cpu/src/lib.rs crates/rem6-cpu/src/riscv_execute.rs crates/rem6-cpu/src/riscv_execute_tests.rs crates/rem6-cpu/src/riscv_fetch.rs crates/rem6-cpu/src/riscv_live_retire_gate.rs crates/rem6-cpu/src/riscv_live_retire_window.rs crates/rem6-cpu/src/riscv_o3_window_policy.rs docs/superpowers/plans/2026-07-25-riscv-o3-fp-vector-result-live-issue.md docs/superpowers/specs/2026-07-25-riscv-o3-fp-vector-result-live-issue-design.md
+git commit -m "fix: keep dependent mixed rows on normal execution path"
+git push
 git add crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq.rs crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/mixed_compute_fixture.rs crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/mixed_compute.rs crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/mixed_compute_boundaries.rs crates/rem6/tests/source_policy/o3_persistent_iq_ownership.rs
 git commit -m "test: cover mixed live issue boundaries"
 git push

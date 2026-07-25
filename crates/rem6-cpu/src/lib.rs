@@ -333,6 +333,7 @@ impl RiscvCore {
         state.in_order_pipeline = InOrderPipelineState::new(config);
         state.in_order_pipeline_cycle_records.clear();
         state.rebound_in_order_execute_waits.clear();
+        state.o3_force_normal_execute_fetches.clear();
         state.detach_pending_in_order_pipeline_advance();
     }
 
@@ -345,6 +346,7 @@ impl RiscvCore {
         let mut state = self.state.lock().expect("riscv core lock");
         state.in_order_pipeline = restored;
         state.rebound_in_order_execute_waits.clear();
+        state.o3_force_normal_execute_fetches.clear();
         state.detach_pending_in_order_pipeline_advance();
         state
             .in_order_pipeline_cycle_records
@@ -955,6 +957,7 @@ struct RiscvCoreState {
     in_order_pipeline: InOrderPipelineState,
     in_order_pipeline_cycle_records: Vec<InOrderPipelineCycleRecord>,
     rebound_in_order_execute_waits: BTreeSet<u64>,
+    o3_force_normal_execute_fetches: BTreeSet<MemoryRequestId>,
     pending_in_order_pipeline_advance: Option<(u64, u64)>,
     pending_in_order_pipeline_wake: Option<riscv_in_order_drive::RiscvInOrderPipelineWake>,
     detached_in_order_pipeline_wakes: Vec<riscv_in_order_drive::RiscvInOrderPipelineWake>,
@@ -1050,6 +1053,7 @@ impl RiscvCoreState {
             ),
             in_order_pipeline_cycle_records: Vec::new(),
             rebound_in_order_execute_waits: BTreeSet::new(),
+            o3_force_normal_execute_fetches: BTreeSet::new(),
             pending_in_order_pipeline_advance: None,
             pending_in_order_pipeline_wake: None,
             detached_in_order_pipeline_wakes: Vec::new(),
@@ -1085,6 +1089,7 @@ impl RiscvCoreState {
             .replace_in_flight([])
             .expect("empty in-order pipeline state is valid");
         self.rebound_in_order_execute_waits.clear();
+        self.o3_force_normal_execute_fetches.clear();
     }
 
     fn discard_data_accesses_for_control_boundary(&mut self) {

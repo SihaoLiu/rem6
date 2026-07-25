@@ -207,6 +207,22 @@ impl RiscvScalarIntegerLiveWindow {
         self.row_limit.saturating_sub(self.rows)
     }
 
+    pub(crate) fn unforwardable_live_operands(
+        &self,
+        instruction: RiscvInstruction,
+    ) -> Option<O3LiveComputeOperands> {
+        if self.control_depth > 0 {
+            return None;
+        }
+        let operands = o3_live_compute_operands(instruction)?;
+        (operands.class() != O3LiveComputeClass::ScalarInteger
+            && operands.sources().iter().any(|source| {
+                source.register_class() != O3RegisterClass::Integer
+                    && self.live_destinations.contains(source)
+            }))
+        .then_some(operands)
+    }
+
     pub(crate) fn classify_younger(
         &mut self,
         instruction: RiscvInstruction,
@@ -366,14 +382,8 @@ impl RiscvScalarIntegerLiveWindow {
         {
             return RiscvScalarIntegerYoungerDecision::Reject;
         }
-        if operands.class() != O3LiveComputeClass::ScalarInteger {
-            let has_unforwardable_live_source = operands.sources().iter().any(|source| {
-                source.register_class() != O3RegisterClass::Integer
-                    && self.live_destinations.contains(source)
-            });
-            if has_unforwardable_live_source {
-                return RiscvScalarIntegerYoungerDecision::Reject;
-            }
+        if self.unforwardable_live_operands(instruction).is_some() {
+            return RiscvScalarIntegerYoungerDecision::Reject;
         }
         let depends_on_unresolved_destination = operands.sources().iter().any(|source| {
             source.register_class() == O3RegisterClass::Integer

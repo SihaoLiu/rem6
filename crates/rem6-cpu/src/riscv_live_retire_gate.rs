@@ -330,6 +330,7 @@ impl RiscvCore {
                 .min()
                 .unwrap_or_default();
             state.o3_runtime.discard_all_live_issue_transient_state();
+            state.o3_force_normal_execute_fetches.clear();
             let younger_result_fetches = state
                 .memory_result_window_authorizations
                 .iter()
@@ -460,6 +461,7 @@ impl RiscvCore {
         state.pending_callback_error = None;
         state.producer_forwarded_scalar_continuation = None;
         state.memory_result_window_authorizations.clear();
+        state.o3_force_normal_execute_fetches.clear();
         Ok(())
     }
 }
@@ -527,6 +529,48 @@ mod tests {
         assert_eq!(core.owned_o3_writeback_wakes().len(), 1);
         assert_eq!(core.owned_o3_writeback_wakes()[0].1.tick(), 31);
         assert_eq!(core.requested_o3_writeback_wake_tick(10), None);
+    }
+
+    #[test]
+    fn o3_runtime_restore_clears_force_normal_execute_fetches() {
+        let core = core();
+        core.state
+            .lock()
+            .unwrap()
+            .o3_force_normal_execute_fetches
+            .insert(MemoryRequestId::new(AgentId::new(7), 31));
+
+        core.restore_o3_runtime_checkpoint_payload(
+            RiscvCore::default_o3_runtime_checkpoint_payload(),
+        )
+        .unwrap();
+
+        assert!(core
+            .state
+            .lock()
+            .unwrap()
+            .o3_force_normal_execute_fetches
+            .is_empty());
+    }
+
+    #[test]
+    fn detailed_disable_clears_force_normal_execute_fetches() {
+        let core = core();
+        core.set_detailed_live_retire_gate_enabled(true);
+        core.state
+            .lock()
+            .unwrap()
+            .o3_force_normal_execute_fetches
+            .insert(MemoryRequestId::new(AgentId::new(7), 31));
+
+        core.set_detailed_live_retire_gate_enabled(false);
+
+        assert!(core
+            .state
+            .lock()
+            .unwrap()
+            .o3_force_normal_execute_fetches
+            .is_empty());
     }
 
     #[test]

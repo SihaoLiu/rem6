@@ -73,6 +73,9 @@ fn retire_cycle_waits_for_requested_sequence_when_older_work_is_stale() {
 fn discarded_fetch_sequences_leave_in_order_pipeline_state() {
     let mut state = RiscvCoreState::new(0x8000, 0);
     state
+        .o3_force_normal_execute_fetches
+        .extend([request(2), request(4)]);
+    state
         .in_order_pipeline
         .replace_in_flight([
             InOrderPipelineInstruction::new(1, InOrderPipelineStage::Commit),
@@ -92,6 +95,10 @@ fn discarded_fetch_sequences_leave_in_order_pipeline_state() {
             .map(|instruction| (instruction.sequence(), instruction.stage()))
             .collect::<Vec<_>>(),
         vec![(1, InOrderPipelineStage::Commit)]
+    );
+    assert_eq!(
+        state.o3_force_normal_execute_fetches,
+        [request(4)].into_iter().collect(),
     );
 }
 

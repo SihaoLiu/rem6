@@ -157,6 +157,12 @@ admitted only when no older live-staged row owns the same typed destination.
 If such a producer exists, classification stops before the dependent row is
 staged. The instruction later executes normally after the live window drains.
 
+Replay records that normal-execution ownership as a transient fetch identity
+only after staging reaches the matching producer row. The identity suppresses
+later standalone speculative admission until the rejected instruction retires
+or mode-disable/fetch/reset/restore cleanup removes it. It is not queue
+membership and does not extend the O3RT checkpoint payload.
+
 This makes dependent FP/vector exclusion an admission rule rather than an
 unserviceable resident queue state.
 
@@ -337,8 +343,10 @@ The implementation fails closed at each ownership boundary:
 - restore clears transient live queue telemetry and membership as before.
 
 Rollback, replay, redirect, retirement, mode handoff, and stats reset continue
-to use the existing sequence-owned queue lifecycle. The new classes do not
-gain special cleanup paths.
+to use the existing sequence-owned queue lifecycle. Rejected dependent rows
+remain outside that queue; their transient normal-execution identity follows
+fetch-sequence cleanup and is cleared by retirement, mode disable, reset, and
+restore.
 
 ## Source Policy and File Boundaries
 
