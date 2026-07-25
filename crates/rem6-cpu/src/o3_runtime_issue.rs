@@ -105,6 +105,14 @@ impl O3LiveIssueHeadReservation {
 }
 
 impl O3RuntimeState {
+    pub(crate) fn live_issue_owns_fetch_request(&self, request: MemoryRequestId) -> bool {
+        self.live_issue.resident_sequences().iter().any(|sequence| {
+            self.live_staged_fetch_identities
+                .get(sequence)
+                .is_some_and(|identity| identity.owns_fetch_request(request))
+        })
+    }
+
     pub(in crate::o3_runtime) fn enqueue_bound_live_issue_sequence_at(
         &mut self,
         sequence: u64,

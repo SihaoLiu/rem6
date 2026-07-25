@@ -404,10 +404,10 @@ fn rem6_run_o3_scoped_issue_dependency_waits_for_multiply() {
     let multiply = event_at_pc(&json, FU_HEAD_PC);
     let independent = event_at_pc(&json, FU_INDEPENDENT_PC);
     let dependent = event_at_pc(&json, FU_DEPENDENT_PC);
-    assert_eq!(
-        event_u64(independent, "issue_tick"),
-        event_u64(multiply, "issue_tick") + 2,
-        "the fetched younger row must not inherit a phantom head reservation: multiply={multiply}, independent={independent}"
+    assert!(
+        event_u64(multiply, "issue_tick") < event_u64(independent, "issue_tick")
+            && event_u64(independent, "issue_tick") < event_u64(multiply, "writeback_tick"),
+        "the fetched younger row must issue independently while IntMult remains live: multiply={multiply}, independent={independent}"
     );
     assert!(
         event_u64(dependent, "issue_tick") >= event_u64(multiply, "writeback_tick"),

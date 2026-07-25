@@ -318,23 +318,23 @@ fn completed_live_load_forwards_into_dependent_alu_candidate() {
         )
         .unwrap());
 
-    assert!(runtime
-        .live_speculative_issue_candidate(Address::new(0x8004), dependent)
-        .is_none());
-    assert!(runtime.take_ready_live_data_access_event(41).is_none());
-    assert!(runtime
-        .live_speculative_issue_candidate(Address::new(0x8004), dependent)
-        .is_none());
-    assert!(runtime.take_ready_live_data_access_event(42).is_some());
-
     let candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x8004), dependent)
-        .expect("admitted load should wake its dependent scalar ALU");
+        .expect("completed load should forward before architectural publication");
     assert_eq!(
         candidate.forwarded_register_writes(),
         &[RegisterWrite::new(Register::new(4).unwrap(), 0x2a)]
     );
     assert_eq!(candidate.issue_tick(10), 42);
+    assert!(runtime.take_ready_live_data_access_event(41).is_none());
+    assert!(runtime
+        .live_speculative_issue_candidate(Address::new(0x8004), dependent)
+        .is_some());
+    assert!(runtime.take_ready_live_data_access_event(42).is_some());
+
+    assert!(runtime
+        .live_speculative_issue_candidate(Address::new(0x8004), dependent)
+        .is_some());
 }
 
 #[test]

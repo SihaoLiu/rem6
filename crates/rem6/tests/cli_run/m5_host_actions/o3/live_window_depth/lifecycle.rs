@@ -132,82 +132,38 @@ fn rem6_run_o3_deep_scalar_window_rejects_live_checkpoint_and_restores_drained()
 }
 
 #[test]
-fn rem6_run_host_switch_preserves_deep_scalar_window_timing() {
+fn rem6_run_host_switch_rejects_live_deep_scalar_window() {
     let path = scalar_live_window_binary("o3-deep-scalar-switch", false);
     let baseline = scalar_live_window_json(&path, "direct", 8, 2, 4_000);
     let requested = event_u64(event_at_pc(&baseline, ROW_PCS[0]), "issue_tick") + 1;
     let switch_arg = format!("{requested}:cpu0:timing");
-    let switched = scalar_live_window_json_with_mode_and_args(
-        &path,
-        "direct",
-        8,
-        2,
-        4_000,
-        "detailed",
-        &["--host-switch-cpu-mode", &switch_arg],
+    let artifact = temp_output("o3-deep-scalar-live-switch");
+    let mut command = scalar_live_window_command(&path, "direct", 8, 2, 4_000, "detailed", "json");
+    command.args([
+        "--host-switch-cpu-mode",
+        &switch_arg,
+        "--output",
+        artifact.to_str().unwrap(),
+    ]);
+    let output = command.output().unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "deep scalar live switch: {output:?}"
     );
-    assert_final_witness(&switched, FINAL_MEMORY, final_registers());
-    let baseline_events = baseline
-        .pointer("/debug/o3_trace/0/events")
-        .and_then(Value::as_array)
-        .unwrap();
-    let switched_events = switched
-        .pointer("/debug/o3_trace/0/events")
-        .and_then(Value::as_array)
-        .unwrap();
-    let transferred_end = baseline_events
-        .iter()
-        .position(|event| event.pointer("/pc").and_then(Value::as_str) == Some(ROW_PCS[6]))
-        .unwrap();
-    let transferred_events = &baseline_events[..=transferred_end];
-    assert_eq!(switched_events.as_slice(), transferred_events);
-    for pc in std::iter::once(LOAD_PC).chain(ROW_PCS) {
-        let expected = event_at_pc(&baseline, pc);
-        let actual = event_at_pc(&switched, pc);
-        for field in ["issue_tick", "writeback_tick", "commit_tick"] {
-            assert_eq!(event_u64(actual, field), event_u64(expected, field));
-        }
-    }
-    let switch = switched
-        .pointer("/host_actions/execution_mode_switches")
-        .and_then(Value::as_array)
-        .and_then(|switches| {
-            switches.iter().find(|switch| {
-                switch.pointer("/target").and_then(Value::as_str) == Some("cpu0")
-                    && switch.pointer("/mode").and_then(Value::as_str) == Some("timing")
-            })
-        })
-        .unwrap();
-    let switch_tick = switch.pointer("/tick").and_then(Value::as_u64).unwrap();
-    assert!(switch_tick >= requested);
-    assert!(switch_tick < event_u64(event_at_pc(&baseline, LOAD_PC), "lsq_data_response_tick"));
-    let transfer = switch.pointer("/state_transfer").unwrap();
-    let runtime = component_chunk(transfer, "cpu0", "o3-runtime-state", "o3_runtime");
-    let handoff = component_chunk(
-        transfer,
-        "cpu0",
-        "o3-live-data-handoff",
-        "o3_live_data_handoff",
+    assert!(
+        output.stdout.is_empty(),
+        "deep scalar live switch: {output:?}"
     );
     assert_eq!(
-        runtime.pointer("/decode_error").and_then(Value::as_bool),
-        Some(false)
+        String::from_utf8(output.stderr).unwrap(),
+        "failed to execute run: host action failed: checkpoint component is not quiescent: cpu0\n"
     );
-    assert_eq!(
-        runtime
-            .pointer("/snapshot_rob_entries")
-            .and_then(Value::as_u64),
-        Some(8)
-    );
-    assert_eq!(
-        runtime
-            .pointer("/snapshot_lsq_entries")
-            .and_then(Value::as_u64),
-        Some(1)
-    );
-    assert_eq!(
-        handoff.pointer("/younger_rows").and_then(Value::as_u64),
-        Some(7)
+    assert!(
+        !artifact.exists(),
+        "deep scalar live switch emitted {}",
+        artifact.display()
     );
 }
 

@@ -1,4 +1,6 @@
 use super::*;
+#[path = "producer_forwarded_return/return_retention.rs"]
+mod return_retention;
 pub(super) fn live_return_core(
     branch_lookahead: usize,
     target_source: u8,

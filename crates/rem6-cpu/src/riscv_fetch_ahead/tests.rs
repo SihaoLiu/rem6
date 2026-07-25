@@ -40,6 +40,8 @@ mod producer_forwarded_return_link_shapes;
 mod producer_forwarded_scalar_return;
 mod producer_forwarded_scalar_return_link_shapes;
 mod ras_required_validation;
+#[path = "tests/retire_gate.rs"]
+mod retire_gate;
 mod selected;
 mod speculative_history;
 mod translated_result_pair;

@@ -72,6 +72,18 @@ fn live_issue_raw_removal_policy_rejects_new_callers_and_indirection() {
     );
 
     let mut mutation = canonical.clone();
+    mutation.replace_in(
+        "src/o3_runtime_issue/lifecycle_cleanup.rs",
+        "        let removed = self.live_issue.remove_suffix_at(\n            removal_boundary,\n            cleanup_boundary,",
+        "        let removed = self.live_issue.remove_suffix_at(\n            removal_boundary,\n            removal_boundary,",
+    );
+    assert_rejected(
+        "suffix cleanup boundary collapsed into removal boundary",
+        &canonical,
+        mutation,
+    );
+
+    let mut mutation = canonical.clone();
     mutation.files.push((
         PathBuf::from("src/o3_runtime_issue/cleanup_tests.rs"),
         "use super::*;\nfn hidden_raw_alias() { let remove = O3LiveIssueState::remove_exact_at; let _ = remove; }\n"
@@ -256,7 +268,13 @@ fn raw_removal_policy_holds(sources: &RawRemovalSources) -> bool {
         && compact_lifecycle.contains("fndiscard_live_issue_exact_at")
         && compact_lifecycle.contains(".remove_exact_at(sequence,action,pc,issue_class,now)")
         && compact_lifecycle.contains("fndiscard_live_issue_suffix_at")
-        && compact_lifecycle.contains(".remove_suffix_at(boundary,action,&rows,now)")
+        && compact_lifecycle.contains("fndiscard_live_issue_suffix_with_cleanup_boundary_at")
+        && compact_lifecycle.contains(
+            "self.discard_live_issue_suffix_with_cleanup_boundary_at(boundary,boundary,action,now);"
+        )
+        && compact_lifecycle.contains(
+            ".remove_suffix_at(removal_boundary,cleanup_boundary,action,&rows,now,)"
+        )
         && compact_lifecycle.contains("fndiscard_all_live_issue_transient_state")
         && compact_lifecycle.contains("self.live_issue.discard_all();")
         && !transaction.contains("remove_durable_blocked_sequences_at_or_after")

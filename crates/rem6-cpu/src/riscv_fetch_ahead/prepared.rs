@@ -66,11 +66,17 @@ impl PreparedRiscvFetchAheadSpeculation {
                     .producer_forwarded_return_descendant()
                     .as_ref()
                     == Some(descendant);
-                let retained_descendant = state
-                    .producer_forwarded_scalar_continuation
-                    .as_ref()
-                    .is_some_and(|continuation| continuation.matches_return_identity(descendant));
-                if (!live_descendant && !retained_descendant)
+                let recorded_descendant = state
+                    .o3_runtime
+                    .recorded_producer_forwarded_return_descendant_matches(descendant);
+                let retained_scalar_descendant = !descendant.scalar_chain().is_empty()
+                    && state
+                        .producer_forwarded_scalar_continuation
+                        .as_ref()
+                        .is_some_and(|continuation| {
+                            continuation.matches_return_identity(descendant)
+                        });
+                if (!live_descendant && !recorded_descendant && !retained_scalar_descendant)
                     || speculation.sequence != descendant.fetch_request().sequence()
                     || speculation.pc != descendant.pc()
                     || detailed_o3::unconsumed_producer_forwarded_return_target(
@@ -79,6 +85,13 @@ impl PreparedRiscvFetchAheadSpeculation {
                         descendant.instruction(),
                         descendant,
                     ) != speculation.target
+                {
+                    return;
+                }
+                if live_descendant
+                    && !state
+                        .o3_runtime
+                        .record_validated_producer_forwarded_return_descendant(descendant)
                 {
                     return;
                 }

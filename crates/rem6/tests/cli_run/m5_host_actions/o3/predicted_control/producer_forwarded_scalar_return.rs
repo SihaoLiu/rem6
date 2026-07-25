@@ -126,7 +126,7 @@ fn assert_producer_forwarded_scalar_return(case: ProducerForwardedLinkedCase) {
     assert!(event_u64(producer, "issue_tick") < response_tick);
     assert!(event_u64(call, "issue_tick") < response_tick);
     let expected_scalar_issue_tick = match case.memory_system {
-        "direct" => response_tick,
+        "direct" => response_tick + 2,
         "cache-fabric-dram" => response_tick + 10,
         other => panic!("unsupported producer-forwarded scalar-return memory system {other}"),
     };

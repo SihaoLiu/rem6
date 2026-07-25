@@ -1,7 +1,7 @@
 use super::*;
 #[path = "boundaries/handoff.rs"]
 mod handoff;
-use handoff::{assert_mixed_live_handoff, sole_data_request_at_tick};
+use handoff::{assert_mixed_live_switch_rejects, sole_data_request_at_tick};
 const HOST_EVENT_DELAY: u64 = 1;
 const DIRECT_ROUTE_DELAY: u64 = 9;
 #[test]
@@ -154,17 +154,16 @@ fn rem6_run_o3_translated_result_pair_live_checkpoint_and_prebind_switch_reject(
     );
 }
 #[test]
-fn rem6_run_host_switch_transfers_o3_translated_memory_mmio_result_pair() {
+fn rem6_run_host_switch_rejects_live_o3_translated_memory_mmio_result_pair() {
     let fixture = TranslatedMemoryPairFixture::new_mmio();
     let baseline = fixture.run_mixed("direct", DIRECT_ROUTE_DELAY, PAIR_MAX_TICK);
-    let baseline_identities = assert_mixed_completion_identities(&baseline);
+    assert_mixed_completion_identities(&baseline);
     let first = memory_result_event_at_pc(&baseline, FIRST_PC);
     let second = memory_result_event_at_pc(&baseline, SECOND_PC);
-    let switched = assert_mixed_live_handoff(
+    assert_mixed_live_switch_rejects(
         &fixture,
         "direct",
         DIRECT_ROUTE_DELAY,
-        event_u64(first, "issue_tick"),
         event_u64(second, "issue_tick"),
         [first, second]
             .map(|event| event_u64(event, "lsq_data_response_tick"))
@@ -172,26 +171,6 @@ fn rem6_run_host_switch_transfers_o3_translated_memory_mmio_result_pair() {
             .min()
             .unwrap(),
     );
-    for pc in [FIRST_PC, SECOND_PC, DIV_PC, DEPENDENT_PC] {
-        for field in ["issue_tick", "writeback_tick", "commit_tick"] {
-            assert_eq!(
-                event_u64(event_at_pc(&switched, pc), field),
-                event_u64(event_at_pc(&baseline, pc), field)
-            );
-        }
-    }
-    for pc in [FIRST_PC, SECOND_PC] {
-        assert_eq!(
-            event_u64(event_at_pc(&switched, pc), "lsq_data_response_tick"),
-            event_u64(event_at_pc(&baseline, pc), "lsq_data_response_tick")
-        );
-    }
-    assert_eq!(
-        assert_mixed_completion_identities(&switched),
-        baseline_identities
-    );
-    assert_mixed_final_witness(&switched);
-    assert_oldest_first_commit(&switched);
 }
 #[test]
 fn rem6_run_o3_translated_result_pair_drained_restore() {
@@ -381,11 +360,10 @@ pub(super) fn assert_mixed_pair(
     let pair_fetches = [FIRST_PC, SECOND_PC]
         .map(|pc| fetch_request_identity(&completed, fetch_record_at_pc(&completed, pc)));
     assert_ne!(pair_fetches[0], pair_fetches[1]);
-    assert_mixed_live_handoff(
+    assert_mixed_live_switch_rejects(
         fixture,
         memory_system,
         route_delay,
-        first_issue,
         second_issue,
         earliest_response,
     );

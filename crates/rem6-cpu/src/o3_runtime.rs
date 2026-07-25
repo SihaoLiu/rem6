@@ -257,6 +257,7 @@ pub struct O3RuntimeState {
     live_serializing_control_sequences: BTreeSet<u64>,
     live_staged_fetch_identities: BTreeMap<u64, O3LiveStagedFetchIdentity>,
     invalidated_live_staged_fetch_identities: BTreeMap<u64, O3LiveStagedFetchIdentity>,
+    committed_live_staged_fetch_identities: BTreeMap<u64, O3LiveStagedFetchIdentity>,
     deferred_live_data_access_execution: Option<MemoryRequestId>,
     live_data_accesses: Vec<O3LiveDataAccess>,
     pending_data_addresses: O3PendingDataAddresses,
@@ -305,6 +306,7 @@ impl O3RuntimeState {
         self.live_serializing_control_sequences.clear();
         self.live_staged_fetch_identities.clear();
         self.invalidated_live_staged_fetch_identities.clear();
+        self.committed_live_staged_fetch_identities.clear();
         self.deferred_live_data_access_execution = None;
         self.live_data_accesses.clear();
         self.live_data_access_younger_sequences.clear();
@@ -644,6 +646,7 @@ impl Default for O3RuntimeState {
             live_serializing_control_sequences: BTreeSet::new(),
             live_staged_fetch_identities: BTreeMap::new(),
             invalidated_live_staged_fetch_identities: BTreeMap::new(),
+            committed_live_staged_fetch_identities: BTreeMap::new(),
             deferred_live_data_access_execution: None,
             live_data_accesses: Vec::new(),
             pending_data_addresses: O3PendingDataAddresses::default(),

@@ -286,14 +286,15 @@ fn two_pending_data_access_execution_looks_up_exact_pending_fetch() {
 #[test]
 fn two_pending_bind_first_removes_exact_row_and_keeps_second_pending() {
     let mut fixture = TwoPendingIssueFixture::chain([0x9000, 0x9040], [true, false], false);
-    let expected_seed = fixture
-        .core
-        .state
-        .lock()
-        .unwrap()
-        .o3_runtime
-        .pending_data_address_wake_seed()
-        .unwrap();
+    let state = fixture.core.state.lock().unwrap();
+    assert_eq!(
+        state
+            .o3_runtime
+            .pending_data_address_selected_issue_tick_for_test(),
+        Some(ISSUE_TICK)
+    );
+    let expected_seed = state.o3_runtime.pending_data_address_wake_seed().unwrap();
+    drop(state);
     assert!(fixture.issue());
     let state = fixture.core.state.lock().expect("riscv core lock");
     let snapshot = state.o3_runtime.snapshot();
@@ -313,7 +314,7 @@ fn two_pending_bind_first_removes_exact_row_and_keeps_second_pending() {
             fixture.sequences[0],
             fixture.rob_count,
             fixture.lsq_count,
-            ISSUE_TICK
+            SUBMIT_TICK
         ))
     );
     assert_eq!(
@@ -381,7 +382,7 @@ fn two_pending_bind_second_preserves_first_live_access() {
                 fixture.sequences[1],
                 fixture.rob_count,
                 fixture.lsq_count,
-                ISSUE_TICK + 1,
+                SUBMIT_TICK,
             )),
         )
     );

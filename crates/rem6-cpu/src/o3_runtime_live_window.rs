@@ -75,6 +75,12 @@ impl O3RuntimeState {
         }
         self.record_live_control_descendant(sequence, authority.consumer_sequence());
         self.live_data_access_younger_sequences.insert(sequence);
+        if o3_exact_link_return_source(instruction).is_some()
+            && !self.record_producer_forwarded_return_descendant()
+        {
+            self.discard_live_staged_window_from(sequence);
+            return None;
+        }
         self.stats
             .observe_rob_occupancy(self.snapshot.reorder_buffer.len());
         self.stats
@@ -385,6 +391,7 @@ impl O3RuntimeState {
         self.live_serializing_control_sequences.clear();
         self.live_staged_fetch_identities.clear();
         self.invalidated_live_staged_fetch_identities.clear();
+        self.committed_live_staged_fetch_identities.clear();
         self.discard_live_speculative_executions();
         self.stats
             .set_rename_map_entries(self.snapshot.rename_map.len());
@@ -405,6 +412,7 @@ impl O3RuntimeState {
         self.live_serializing_control_sequences.clear();
         self.live_staged_fetch_identities.clear();
         self.invalidated_live_staged_fetch_identities.clear();
+        self.committed_live_staged_fetch_identities.clear();
         self.discard_live_speculative_executions_at(now);
         self.stats
             .set_rename_map_entries(self.snapshot.rename_map.len());
@@ -557,6 +565,8 @@ impl O3RuntimeState {
             .retain(|staged, _| *staged < sequence);
         self.invalidated_live_staged_fetch_identities
             .retain(|staged, _| *staged < sequence);
+        self.committed_live_staged_fetch_identities
+            .retain(|staged, _| *staged < sequence);
         self.live_retired_instructions
             .retain(|instruction| instruction.sequence < sequence);
         self.stats
@@ -681,6 +691,18 @@ impl O3RuntimeState {
             .iter()
             .map(|entry| entry.sequence())
             .collect::<BTreeSet<_>>();
+        let committed_return_identities = self
+            .live_staged_fetch_identities
+            .iter()
+            .filter(|(sequence, identity)| {
+                !resident_sequences.contains(sequence)
+                    && (identity.forwarded_control_target_identity().is_some()
+                        || identity.forwarded_return_identity().is_some())
+            })
+            .map(|(sequence, identity)| (*sequence, identity.clone()))
+            .collect::<Vec<_>>();
+        self.committed_live_staged_fetch_identities
+            .extend(committed_return_identities);
         self.live_data_access_younger_sequences
             .retain(|sequence| resident_sequences.contains(sequence));
         self.live_control_lineages

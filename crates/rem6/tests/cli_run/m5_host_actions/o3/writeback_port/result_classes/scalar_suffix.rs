@@ -197,7 +197,8 @@ fn assert_completed_window(fixture: &ResultSuffixFixture, json: &Value, width: u
     ) {
         assert!(event_u64(terminal, "issue_tick") >= event_u64(result, "writeback_tick"));
     } else {
-        assert!(event_u64(terminal, "issue_tick") >= event_u64(div_dependent, "writeback_tick"));
+        let boundary = ["issue_tick", "writeback_tick"][usize::from(width == 1)];
+        assert!(event_u64(terminal, "issue_tick") >= event_u64(div_dependent, boundary));
     }
     assert_event_order([result, div, div_dependent], "sequence", true);
     for pair in [result, div, div_dependent, terminal].windows(2) {

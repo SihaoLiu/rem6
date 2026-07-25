@@ -14,6 +14,7 @@ impl O3RuntimeState {
             || !self.live_speculative_executions.is_empty()
             || !self.live_data_access_younger_sequences.is_empty()
             || !self.invalidated_live_staged_fetch_identities.is_empty()
+            || !self.committed_live_staged_fetch_identities.is_empty()
     }
 
     pub(crate) fn has_pending_retirement_authority(&self) -> bool {
@@ -43,6 +44,10 @@ impl O3RuntimeState {
                 .any(|instruction| instruction.request == fetch_request)
             || self
                 .invalidated_live_staged_fetch_identities
+                .values()
+                .any(|identity| identity.owns_fetch_request(fetch_request))
+            || self
+                .committed_live_staged_fetch_identities
                 .values()
                 .any(|identity| identity.owns_fetch_request(fetch_request))
     }

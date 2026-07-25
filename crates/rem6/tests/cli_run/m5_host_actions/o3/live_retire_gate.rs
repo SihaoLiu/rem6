@@ -298,7 +298,17 @@ fn assert_live_retire_window(json: &Value) {
         .unwrap_or_else(|| {
             panic!("live retire window should expose writeback reservations: {json}")
         });
-    assert_eq!(writeback_entries.len(), 2);
+    assert_eq!(writeback_entries.len(), 1);
+    assert_eq!(
+        live_retire_gate_json_u64_field(&writeback_entries[0], "/sequence"),
+        live_retire_gate_json_u64_field(&entries[0], "/sequence"),
+        "only the issued DIV should own a precommit writeback reservation"
+    );
+    assert_ne!(
+        live_retire_gate_json_u64_field(&writeback_entries[0], "/sequence"),
+        live_retire_gate_json_u64_field(&entries[1], "/sequence"),
+        "the IQ-resident dependent must not acquire a writeback reservation before issue"
+    );
     for entry in writeback_entries {
         let raw_ready_tick = live_retire_gate_json_u64_field(entry, "/raw_ready_tick");
         let admitted_tick = live_retire_gate_json_u64_field(entry, "/admitted_tick");

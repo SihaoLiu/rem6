@@ -63,12 +63,15 @@ impl O3RuntimeState {
         fetch_sequence: u64,
         speculation: BranchSpeculationId,
     ) -> bool {
-        self.live_staged_fetch_identities.values().any(|identity| {
-            identity
-                .producer_forwarded_control_target
-                .is_some_and(|target| target.fetch_request().sequence() == fetch_sequence)
-                && identity.producer_forwarded_control_speculation == Some(speculation)
-        })
+        self.live_staged_fetch_identities
+            .values()
+            .chain(self.committed_live_staged_fetch_identities.values())
+            .any(|identity| {
+                identity
+                    .producer_forwarded_control_target
+                    .is_some_and(|target| target.fetch_request().sequence() == fetch_sequence)
+                    && identity.producer_forwarded_control_speculation == Some(speculation)
+            })
     }
 
     pub(crate) fn clear_recorded_producer_forwarded_control_speculation(
@@ -78,6 +81,19 @@ impl O3RuntimeState {
     ) {
         if let Some(identity) = self
             .live_staged_fetch_identities
+            .values_mut()
+            .find(|identity| {
+                identity
+                    .producer_forwarded_control_target
+                    .is_some_and(|target| target.fetch_request().sequence() == fetch_sequence)
+            })
+        {
+            if identity.producer_forwarded_control_speculation == Some(speculation) {
+                identity.producer_forwarded_control_speculation = None;
+            }
+        }
+        if let Some(identity) = self
+            .committed_live_staged_fetch_identities
             .values_mut()
             .find(|identity| {
                 identity
@@ -233,22 +249,16 @@ impl O3RuntimeState {
 
     pub(super) fn completed_live_data_access_ready_tick(&self, sequence: u64) -> Option<u64> {
         let live = self.live_data_accesses.iter().find(|live| {
-            live.sequence == sequence
-                && live.outcome == O3LiveDataAccessOutcome::Completed
-                && live.event_taken
+            live.sequence == sequence && live.outcome == O3LiveDataAccessOutcome::Completed
         })?;
-        let rob = self
-            .snapshot
-            .reorder_buffer
-            .iter()
-            .find(|entry| entry.sequence() == sequence)?;
-        if !rob.is_live_staged() || !rob.is_ready() {
-            return None;
-        }
-        Some(
-            self.memory_result_writeback_reservation(live.sequence)?
-                .admitted_tick(),
-        )
+        let data = live.load_data.as_deref()?;
+        live.execution
+            .execution()
+            .memory_access()?
+            .read_response_writeback(data)
+            .ok()??;
+        self.memory_result_writeback_reservation(live.sequence)
+            .map(O3WritebackReservation::admitted_tick)
     }
 
     fn completed_live_data_access_source(

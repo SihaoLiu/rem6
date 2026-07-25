@@ -1,12 +1,11 @@
 use super::super::lsq_fu_branch::{
-    assert_completed_mixed_branch_window, event_at_pc, event_at_pc_if_present, event_u64,
-    mixed_load_alu_branch_binary, run_mixed_branch_json, BRANCH_PC, FIRST_ALU_PC, LOAD_PC,
-    SECOND_ALU_PC, WRONG_STORE_PC,
+    assert_completed_mixed_branch_window, event_at_pc, event_u64, mixed_branch_command,
+    mixed_load_alu_branch_binary, run_mixed_branch_json, LOAD_PC,
 };
 use super::*;
 
 #[test]
-fn rem6_run_host_switch_transfers_o3_mixed_load_alu_branch_until_squash() {
+fn rem6_run_host_switch_rejects_live_o3_mixed_load_alu_branch() {
     let path = mixed_load_alu_branch_binary("host-switch-o3-mixed-load-alu-branch");
     let baseline = run_mixed_branch_json(&path, "direct", 1_500, "detailed", &[]);
     assert_completed_mixed_branch_window(&baseline);
@@ -18,92 +17,32 @@ fn rem6_run_host_switch_transfers_o3_mixed_load_alu_branch_until_squash() {
     assert!(load_issue < switch_tick && switch_tick < load_response);
 
     let switch_arg = format!("{switch_tick}:cpu0:timing");
-    let json = run_mixed_branch_json(
-        &path,
-        "direct",
-        1_500,
-        "detailed",
-        &["--host-switch-cpu-mode", &switch_arg],
-    );
+    let artifact = temp_output("o3-mixed-load-alu-branch-live-switch");
+    let mut command = mixed_branch_command(&path, "direct", 1_500, "detailed");
+    command.args([
+        "--host-switch-cpu-mode",
+        &switch_arg,
+        "--output",
+        artifact.to_str().unwrap(),
+    ]);
+    let output = command.output().unwrap();
 
-    assert_completed_mixed_branch_window(&json);
-    let switches = json
-        .pointer("/host_actions/execution_mode_switches")
-        .and_then(Value::as_array)
-        .expect("execution-mode switches");
-    let timing_switch = switches
-        .iter()
-        .find(|switch| {
-            switch.pointer("/target").and_then(Value::as_str) == Some("cpu0")
-                && switch.pointer("/mode").and_then(Value::as_str) == Some("timing")
-                && switch.pointer("/previous_mode").and_then(Value::as_str) == Some("detailed")
-        })
-        .expect("detailed-to-timing switch");
-    let timing_action_tick = timing_switch
-        .pointer("/tick")
-        .and_then(Value::as_u64)
-        .expect("timing switch action tick");
-    assert!(load_issue < timing_action_tick && timing_action_tick < load_response);
-    assert!(timing_action_tick >= switch_tick);
-
-    let transfer = timing_switch
-        .pointer("/state_transfer")
-        .expect("mixed-window state transfer");
     assert_eq!(
-        transfer
-            .pointer("/live_data_handoff")
-            .and_then(Value::as_bool),
-        Some(true)
+        output.status.code(),
+        Some(2),
+        "mixed load/ALU/branch live switch: {output:?}"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "mixed load/ALU/branch live switch: {output:?}"
     );
     assert_eq!(
-        transfer.pointer("/restorable").and_then(Value::as_bool),
-        Some(false)
+        String::from_utf8(output.stderr).unwrap(),
+        "failed to execute run: host action failed: checkpoint component is not quiescent: cpu0\n"
     );
-
-    let runtime = latest_transfer_o3_runtime_chunk(transfer, "cpu0");
-    assert_eq!(
-        runtime
-            .pointer("/snapshot_rob_entries")
-            .and_then(Value::as_u64),
-        Some(4)
+    assert!(
+        !artifact.exists(),
+        "mixed load/ALU/branch live switch emitted {}",
+        artifact.display()
     );
-    assert_eq!(
-        runtime
-            .pointer("/snapshot_lsq_entries")
-            .and_then(Value::as_u64),
-        Some(1)
-    );
-
-    let handoff = super::scalar_load::transfer_handoff_chunk(transfer, "cpu0");
-    assert_eq!(
-        handoff.pointer("/schema_version").and_then(Value::as_u64),
-        Some(7)
-    );
-    assert_eq!(
-        handoff.pointer("/resident_rows").and_then(Value::as_u64),
-        Some(1)
-    );
-    assert_eq!(
-        handoff.pointer("/younger_rows").and_then(Value::as_u64),
-        Some(3)
-    );
-    assert_eq!(
-        handoff
-            .pointer("/outstanding_requests")
-            .and_then(Value::as_u64),
-        Some(1)
-    );
-
-    for pc in [LOAD_PC, FIRST_ALU_PC, SECOND_ALU_PC, BRANCH_PC] {
-        let expected = event_at_pc(&baseline, pc);
-        let actual = event_at_pc(&json, pc);
-        for field in ["issue_tick", "writeback_tick", "commit_tick"] {
-            assert_eq!(
-                event_u64(actual, field),
-                event_u64(expected, field),
-                "handoff must preserve {field} for {pc}: {actual}"
-            );
-        }
-    }
-    assert!(event_at_pc_if_present(&json, WRONG_STORE_PC).is_none());
 }

@@ -388,6 +388,20 @@ fn riscv_core_checkpoint_rejects_live_data_access_before_any_bank_writes() {
     .unwrap()
     .unwrap();
     assert!(!cpu0.data_access_lifecycle_is_quiescent());
+    let wake_tick = cpu1
+        .requested_o3_writeback_wake_tick(scheduler.now())
+        .expect("resident younger row should request an O3 issue wake");
+    let wake_cpu = cpu1.clone();
+    let event = scheduler
+        .schedule_at(cpu1.partition(), wake_tick, move |context| {
+            wake_cpu.mark_o3_writeback_wake_fired(context.now());
+        })
+        .unwrap();
+    cpu1.mark_o3_writeback_wake_scheduled(
+        scheduler.instance_id(),
+        scheduler.pending_event_snapshot(event).unwrap(),
+    );
+    scheduler.run_until_idle_conservative();
     let mut handoff_registry = CheckpointRegistry::new();
     let handoff = bank
         .capture_all_for_execution_mode_handoff_into(

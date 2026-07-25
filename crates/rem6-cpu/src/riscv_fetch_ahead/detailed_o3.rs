@@ -621,32 +621,31 @@ fn retained_producer_forwarded_scalar_return_fetch_candidate(
     )?;
     let target_authority =
         PredictedControlTargetAuthority::ProducerForwardedReturn(descendant.clone());
-    Some(
-        match recorded_predicted_pc(
-            state,
-            descendant.fetch_request(),
-            descendant.sequential_pc(),
-            &target_authority,
-        ) {
-            RecordedPredictedPc::Missing
-                if state.branch_speculations.len() < state.branch_lookahead =>
-            {
-                DetailedFetchAheadCandidate::ReadyPredictedControl {
-                    request: descendant.fetch_request(),
-                    pc: descendant.pc(),
-                    sequential_pc: descendant.sequential_pc(),
-                    instruction: descendant.instruction(),
-                    target_authority,
-                }
+    let recorded = recorded_predicted_pc(
+        state,
+        descendant.fetch_request(),
+        descendant.sequential_pc(),
+        &target_authority,
+    );
+    Some(match recorded {
+        RecordedPredictedPc::Missing
+            if state.branch_speculations.len() < state.branch_lookahead =>
+        {
+            DetailedFetchAheadCandidate::ReadyPredictedControl {
+                request: descendant.fetch_request(),
+                pc: descendant.pc(),
+                sequential_pc: descendant.sequential_pc(),
+                instruction: descendant.instruction(),
+                target_authority,
             }
-            RecordedPredictedPc::Ready(target) if target == descendant.target() => {
-                DetailedFetchAheadCandidate::Blocked
-            }
-            RecordedPredictedPc::Ready(_)
-            | RecordedPredictedPc::Missing
-            | RecordedPredictedPc::Invalid => DetailedFetchAheadCandidate::Blocked,
-        },
-    )
+        }
+        RecordedPredictedPc::Ready(target) if target == descendant.target() => {
+            DetailedFetchAheadCandidate::Blocked
+        }
+        RecordedPredictedPc::Ready(_)
+        | RecordedPredictedPc::Missing
+        | RecordedPredictedPc::Invalid => DetailedFetchAheadCandidate::Blocked,
+    })
 }
 
 pub(crate) fn retained_parent_resolution_preserves_fetch_path(

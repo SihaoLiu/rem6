@@ -206,6 +206,12 @@ impl RiscvCore {
             };
             return Ok(Some(retire_tick));
         }
+        if state
+            .o3_runtime
+            .live_issue_owns_fetch_request(window.request)
+        {
+            return Ok(None);
+        }
         if detailed_scalar_memory_blocks_execution(state, &window)? {
             return Ok(None);
         }
@@ -925,6 +931,9 @@ fn schedule_o3_live_speculative_younger_executions(
     younger: &[RiscvCompletedFetchInstruction],
     issue_tick: u64,
 ) -> Result<bool, RiscvCpuError> {
+    if !state.live_retire_gate.detailed_policy_enabled() {
+        return Ok(false);
+    }
     let pending_window = state.o3_runtime.has_pending_data_address();
     for younger in younger {
         if !state.o3_runtime.bind_live_staged_issue_packet(

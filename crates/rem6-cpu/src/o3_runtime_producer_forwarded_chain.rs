@@ -225,9 +225,14 @@ impl O3RuntimeState {
     ) -> bool {
         self.live_staged_fetch_identities
             .get(&consumer_sequence)
+            .or_else(|| {
+                self.committed_live_staged_fetch_identities
+                    .get(&consumer_sequence)
+            })
             .and_then(O3LiveStagedFetchIdentity::forwarded_control_target_identity)
             .is_some()
     }
+
     fn recorded_producer_forwarded_control_target_after_head_retire_for_sequences(
         &self,
         producer_sequence: u64,
@@ -324,31 +329,47 @@ impl O3RuntimeState {
         if !self.producer_forwarded_control_descendant_sequence(parent, return_sequence) {
             return None;
         }
-        let (entry, issued) = self.producer_forwarded_descendant_rows(return_sequence)?;
+        let entry = self
+            .snapshot
+            .reorder_buffer
+            .iter()
+            .find(|entry| entry.is_live_staged() && entry.sequence() == return_sequence)?;
+        let packet = self.live_staged_issue_packet(return_sequence)?;
+        let instruction = packet.instruction();
         let link = parent.link_destination()?;
         if entry.pc() != expected_pc
             || entry.destination().is_some()
             || entry.rename_destination().is_some()
-            || issued.producer_sequences.as_slice() != [parent.consumer_sequence()]
-            || o3_exact_link_return_source(issued.execution.instruction()) != Some(link)
-            || Address::new(issued.execution.pc()) != expected_pc
-            || Address::new(issued.execution.next_pc()) != parent.sequential_pc()
-            || !issued.execution.register_writes().is_empty()
+            || o3_exact_link_return_source(instruction) != Some(link)
         {
             return None;
         }
+        if let Some(issued) = self
+            .live_speculative_executions
+            .iter()
+            .find(|issued| issued.sequence == return_sequence)
+        {
+            if issued.producer_sequences.as_slice() != [parent.consumer_sequence()]
+                || !packet.matches_execution(&issued.execution, &issued.consumed_requests)
+                || Address::new(issued.execution.pc()) != expected_pc
+                || Address::new(issued.execution.next_pc()) != parent.sequential_pc()
+                || !issued.execution.register_writes().is_empty()
+            {
+                return None;
+            }
+        }
         Some(O3ProducerForwardedReturnDescendant::new(
             scalar_chain,
-            *issued.consumed_requests.first()?,
-            *issued.consumed_requests.last()?,
+            *packet.consumed_requests().first()?,
+            *packet.consumed_requests().last()?,
             entry.pc(),
             Address::new(
-                issued
-                    .execution
+                entry
                     .pc()
-                    .wrapping_add(u64::from(issued.execution.instruction_bytes())),
+                    .get()
+                    .wrapping_add(u64::from(packet.decoded().bytes())),
             ),
-            issued.execution.instruction(),
+            instruction,
             return_sequence,
         ))
     }
@@ -380,14 +401,7 @@ impl O3RuntimeState {
         let Some(descendant) = self.producer_forwarded_return_descendant() else {
             return false;
         };
-        let Some(identity) = self
-            .live_staged_fetch_identities
-            .get_mut(&descendant.sequence())
-        else {
-            return false;
-        };
-        identity.record_forwarded_return_identity(descendant);
-        true
+        self.record_validated_producer_forwarded_return_descendant(&descendant)
     }
 
     pub(crate) fn has_recorded_producer_forwarded_return_descendant(&self, sequence: u64) -> bool {
@@ -547,6 +561,10 @@ impl O3RuntimeState {
         let consumer_sequence = scalar_chain.parent().consumer_sequence();
         self.record_live_control_descendant(sequence, consumer_sequence);
         self.live_data_access_younger_sequences.insert(sequence);
+        if !self.record_producer_forwarded_return_descendant() {
+            self.discard_live_staged_window_from(sequence);
+            return None;
+        }
         self.stats
             .observe_rob_occupancy(self.snapshot.reorder_buffer.len());
         self.stats

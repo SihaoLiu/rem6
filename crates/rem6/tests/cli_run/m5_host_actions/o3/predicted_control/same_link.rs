@@ -370,7 +370,7 @@ fn rem6_run_o3_live_same_link_targets_forward_across_link_and_route_matrix() {
         assert!(event_u64(call, "issue_tick") >= event_u64(producer, "writeback_tick"));
         assert!(event_u64(call, "issue_tick") < response_tick);
         let expected_target_issue_tick = match case.memory_system {
-            "direct" => response_tick,
+            "direct" => response_tick + 2,
             "cache-fabric-dram" => response_tick + 1,
             other => panic!("unsupported same-link memory system {other}"),
         };

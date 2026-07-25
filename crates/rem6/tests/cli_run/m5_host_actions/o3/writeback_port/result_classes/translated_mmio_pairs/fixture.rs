@@ -78,13 +78,14 @@ impl TranslatedMemoryPairFixture {
     pub(super) fn run_mixed(&self, memory_system: &str, route_delay: u64, max_tick: u64) -> Value {
         self.run_with_translation(memory_system, 1, 1, route_delay, max_tick, true, None)
     }
-    pub(super) fn run_mixed_with_switch(
+    pub(super) fn output_mixed_with_switch(
         &self,
         memory_system: &str,
         route_delay: u64,
         switch_tick: u64,
-    ) -> Value {
-        self.run_with_translation(
+        extra_args: &[&str],
+    ) -> std::process::Output {
+        self.output_with_translation(
             memory_system,
             1,
             1,
@@ -92,6 +93,9 @@ impl TranslatedMemoryPairFixture {
             PAIR_MAX_TICK,
             true,
             Some(switch_tick),
+            "detailed",
+            SecondMapping::Allowed,
+            extra_args,
         )
     }
     fn run_with_translation(

@@ -7,13 +7,14 @@ const FIRST_PENDING_PC: &str = "0x80000034";
 const SECOND_PENDING_PC: &str = "0x80000038";
 const SCALAR_SUFFIX_PC: &str = "0x8000003c";
 const CLASS_HEAD_PC: &str = "0x80000040";
-const INTEGER_MUL_DIV_PC: &str = "0x80000044";
-const CONTROL_PC: &str = "0x80000048";
+const CLASS_SCALAR_PC: &str = "0x80000044";
+const INTEGER_MUL_DIV_PC: &str = "0x80000048";
+const CONTROL_PC: &str = "0x8000004c";
 const WITNESS0_PC: &str = "0x80000040";
 const WITNESS1_PC: &str = "0x80000044";
 const WITNESS2_PC: &str = "0x80000048";
 const WITNESS_PCS: [&str; 3] = [WITNESS0_PC, WITNESS1_PC, WITNESS2_PC];
-const PERSISTENT_IQ_WIDTH_FOUR_WITNESS_PCS: [&str; 3] = ["0x8000004c", "0x80000050", "0x80000054"];
+const PERSISTENT_IQ_WIDTH_FOUR_WITNESS_PCS: [&str; 3] = ["0x80000050", "0x80000054", "0x80000058"];
 const TWO_PENDING_DATA_START: u64 = 0x8000_0100;
 const FIRST_POINTER: u64 = TWO_PENDING_DATA_START + 64;
 const SECOND_POINTER: u64 = TWO_PENDING_DATA_START + 96;
@@ -261,6 +262,7 @@ fn assert_two_pending_completed(fixture: &TwoPendingFixture, completed: &Value, 
         .then(|| memory_result_event_at_pc(completed, CLASS_HEAD_PC));
     let class_rows = is_persistent_iq_width_four_row(row).then(|| {
         [
+            event_at_pc(completed, CLASS_SCALAR_PC),
             event_at_pc(completed, INTEGER_MUL_DIV_PC),
             event_at_pc(completed, CONTROL_PC),
         ]
@@ -508,6 +510,7 @@ fn two_pending_binary(row: TwoPendingRow) -> std::path::PathBuf {
     if is_persistent_iq_width_four_row(row) {
         words.extend([
             i_type(24, 9, 0b011, 13, 0x03),
+            i_type(1, 0, 0, 15, 0x13),
             r_type(1, 0, 0, 0b000, 14, 0x33),
             b_type(8, 0, 0, 0b001),
         ]);

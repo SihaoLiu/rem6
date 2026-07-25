@@ -2,6 +2,8 @@ use super::*;
 
 #[path = "state_tests/lifecycle.rs"]
 mod lifecycle;
+#[path = "state_tests/lifecycle_stats.rs"]
+mod lifecycle_stats;
 
 #[test]
 fn live_issue_state_enqueues_supported_bound_rows_once_and_orders_by_sequence() {

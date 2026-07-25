@@ -413,7 +413,7 @@ fn pending_address_bind_reuses_sequence_and_resolves_lsq_address() {
         state
             .o3_runtime
             .live_data_access_issue_identity_for_test(fixture.fetch_request),
-        Some((before.0, before.2, before.3, ISSUE_TICK))
+        Some((before.0, before.2, before.3, SUBMIT_TICK))
     );
     assert_eq!(state.data_events.last().unwrap().tick(), SUBMIT_TICK);
     assert_eq!(

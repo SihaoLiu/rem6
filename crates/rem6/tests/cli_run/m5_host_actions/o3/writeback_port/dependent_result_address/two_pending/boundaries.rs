@@ -12,6 +12,20 @@ enum BoundaryCase {
     AtomicOverlap,
 }
 
+fn replay_cleanup_service_tick(json: &Value, boundary: u64) -> u64 {
+    json.pointer("/debug/o3_trace/0/issue_queue/events")
+        .and_then(Value::as_array)
+        .and_then(|events| {
+            events.iter().find(|event| {
+                event.pointer("/action").and_then(Value::as_str) == Some("replayed")
+                    && event.pointer("/sequence").and_then(Value::as_u64) == Some(boundary)
+                    && event.pointer("/cleanup_boundary").and_then(Value::as_u64) == Some(boundary)
+            })
+        })
+        .map(|event| event_u64(event, "service_tick"))
+        .unwrap_or_else(|| panic!("missing exact replay boundary {boundary}: {json}"))
+}
+
 #[test]
 fn rem6_run_o3_two_pending_result_address_replays_first_failure() {
     let _ = persistent_iq_first_replay_json();
@@ -31,20 +45,8 @@ pub(in crate::m5_host_actions::o3) fn persistent_iq_first_replay_json() -> Value
         memory_result_event_at_pc(&completed, HEAD_PC),
         "writeback_tick",
     );
-    let replay_tick = completed
-        .pointer("/debug/o3_trace/0/issue_queue/events")
-        .and_then(Value::as_array)
-        .and_then(|events| {
-            events.iter().find(|event| {
-                event.pointer("/action").and_then(Value::as_str) == Some("replayed")
-                    && event.pointer("/sequence").and_then(Value::as_u64) == Some(original[0])
-                    && event.pointer("/cleanup_boundary").and_then(Value::as_u64)
-                        == Some(original[0])
-            })
-        })
-        .map(|event| event_u64(event, "service_tick"))
-        .unwrap_or_else(|| panic!("missing exact first replay boundary: {completed}"));
-    assert_eq!(replay_tick, head_writeback_tick + 1);
+    let replay_tick = replay_cleanup_service_tick(&completed, original[0]);
+    assert_eq!(replay_tick, head_writeback_tick);
     let replay = fixture.run(replay_tick + 1);
     assert_eq!(data_requests_sent(&replay).len(), 1);
     assert_eq!(load_count(&replay, MMIO_POINTER), 0);
@@ -85,7 +87,9 @@ fn rem6_run_o3_two_pending_result_address_replays_second_failure() {
     assert_eq!(completed_load_bytes(&before_replay, MMIO_POINTER), 0);
     assert_eq!(load_count(&before_replay, FIRST_POINTER), 0);
     assert_eq!(load_count(&before_replay, MMIO_POINTER), 0);
-    let replay = fixture.run(event_u64(first, "writeback_tick") + 1);
+    let replay_tick = replay_cleanup_service_tick(&completed, original[1]);
+    assert_eq!(replay_tick, event_u64(first, "writeback_tick"));
+    let replay = fixture.run(replay_tick.checked_add(1).unwrap());
     assert_eq!(data_requests_sent(&replay).len(), 2);
     assert_eq!(load_count(&replay, FIRST_POINTER), 1);
     assert_eq!(load_count(&replay, MMIO_POINTER), 0);
@@ -126,7 +130,9 @@ fn rem6_run_o3_two_pending_result_address_rejects_atomic_chain_overlap() {
         Some(FIRST_POINTER)
     );
     assert_eq!(load_count(&before_replay, TWO_PENDING_DATA_START), 0);
-    let replay = fixture.run(event_u64(first, "writeback_tick") + 1);
+    let replay_tick = replay_cleanup_service_tick(&completed, original[1]);
+    assert_eq!(replay_tick, event_u64(first, "writeback_tick"));
+    let replay = fixture.run(replay_tick.checked_add(1).unwrap());
     assert_eq!(
         event_u64(
             memory_result_event_at_pc(&replay, FIRST_PENDING_PC),
@@ -153,7 +159,7 @@ fn rem6_run_o3_two_pending_result_address_rejects_live_checkpoint_and_handoff() 
     let completed = fixture.run(row.max_tick);
     let head = memory_result_event_at_pc(&completed, HEAD_PC);
     let first = memory_result_event_at_pc(&completed, FIRST_PENDING_PC);
-    let one_owner_tick = event_u64(first, "issue_tick") + 1;
+    let one_owner_tick = event_u64(first, "issue_tick") + 2;
     assert!(one_owner_tick < event_u64(first, "lsq_data_response_tick"));
     for (owners, action_tick) in [
         (2, event_u64(head, "lsq_data_response_tick") - 1),

@@ -471,6 +471,50 @@ mod tests {
     }
 
     #[test]
+    fn detailed_mode_disable_preserves_scheduled_memory_result_wake() {
+        let (driver, core, cluster, mut scheduler, turn, wake_tick) =
+            completed_load_waiting_for_writeback();
+        let events = driver
+            .schedule_riscv_system_events_from_turn(&cluster, &mut scheduler, &turn, |_| {
+                GuestEventId::new(1)
+            })
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(scheduler.snapshot().total_pending_events(), 1);
+        assert_eq!(core.owned_o3_writeback_wakes().len(), 1);
+
+        core.set_detailed_live_retire_gate_enabled(false);
+
+        assert_eq!(core.owned_o3_writeback_wakes().len(), 1);
+        assert!(driver
+            .schedule_riscv_system_events_from_turn(&cluster, &mut scheduler, &turn, |_| {
+                GuestEventId::new(2)
+            })
+            .unwrap()
+            .is_empty());
+        assert_eq!(scheduler.snapshot().total_pending_events(), 1);
+
+        core.set_detailed_live_retire_gate_enabled(false);
+
+        assert!(driver
+            .schedule_riscv_system_events_from_turn(&cluster, &mut scheduler, &turn, |_| {
+                GuestEventId::new(3)
+            })
+            .unwrap()
+            .is_empty());
+        assert_eq!(scheduler.snapshot().total_pending_events(), 1);
+        assert_eq!(core.owned_o3_writeback_wakes().len(), 1);
+
+        let wake_turn = RiscvClusterTurn::scheduler(scheduler.run_until_idle());
+        assert_eq!(scheduler.now(), wake_tick);
+        assert!(core.owned_o3_writeback_wakes().is_empty());
+        driver
+            .record_run_stats(&cluster, scheduler.now(), &wake_turn)
+            .unwrap();
+        assert_eq!(core.read_register(Register::new(12).unwrap()), 42);
+    }
+
+    #[test]
     fn schedule_riscv_system_events_from_turn_parallel_schedules_o3_writeback_wake() {
         let (driver, core, cluster, mut scheduler, turn, wake_tick) =
             completed_load_waiting_for_writeback();

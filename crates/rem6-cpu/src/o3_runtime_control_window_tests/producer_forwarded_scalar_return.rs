@@ -112,6 +112,11 @@ fn producer_forwarded_scalar_return_waits_for_data_head_retirement() {
         runtime.pending_live_control_lineage_parent_for_test(return_sequence),
         Some(descendant.parent().consumer_sequence())
     );
+    let staged_return = runtime
+        .producer_forwarded_return_descendant()
+        .expect("staged scalar-sequential return lineage");
+    assert_eq!(staged_return.scalar_chain(), &scalar_chain);
+    assert!(runtime.has_recorded_producer_forwarded_return_descendant(return_sequence));
 
     let candidate = runtime
         .live_speculative_issue_candidate(Address::new(0x9004), return_jump)

@@ -214,7 +214,7 @@ impl ThreePendingIssueFixture {
                         self.sequences[index],
                         self.rob_count,
                         self.lsq_count,
-                        ISSUE_TICK + index as u64,
+                        SUBMIT_TICK,
                     ))
                 );
                 assert_eq!(lsq_address, Some(Address::new(self.addresses[index])));

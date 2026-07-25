@@ -5,18 +5,18 @@ use crate::o3_runtime::o3_runtime_issue::queue::{O3LiveIssueQueue, O3LiveIssueQu
 use rem6_isa_riscv::RiscvHartState;
 
 const HEAD_RESPONSE_TICK: u64 = 40;
-const HEAD_WRITEBACK_TICK: u64 = 41;
-const PRODUCER_VALUE: u64 = 0xa000;
+pub(in crate::o3_runtime) const HEAD_WRITEBACK_TICK: u64 = 41;
+pub(in crate::o3_runtime) const PRODUCER_VALUE: u64 = 0xa000;
 
-struct PendingAddressSchedulingFixture {
-    runtime: O3RuntimeState,
-    hart: RiscvHartState,
-    head: O3LiveIssueHeadReservation,
+pub(in crate::o3_runtime) struct PendingAddressSchedulingFixture {
+    pub(in crate::o3_runtime) runtime: O3RuntimeState,
+    pub(in crate::o3_runtime) hart: RiscvHartState,
+    pub(in crate::o3_runtime) head: O3LiveIssueHeadReservation,
     head_execution: RiscvCpuExecutionEvent,
 }
 
 impl PendingAddressSchedulingFixture {
-    fn new(issue_width: usize) -> Self {
+    pub(in crate::o3_runtime) fn new(issue_width: usize) -> Self {
         let mut staging = PendingAddressFixture::new(4, 5);
         assert!(staging.runtime.set_issue_width(issue_width));
         assert_eq!(staging.stage_default(), 3);
@@ -46,7 +46,7 @@ impl PendingAddressSchedulingFixture {
         }
     }
 
-    fn complete_head(&mut self, value: u64) {
+    pub(in crate::o3_runtime) fn complete_head(&mut self, value: u64) {
         let mut completed = self.head_execution.clone();
         completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
         assert!(self
@@ -73,7 +73,7 @@ impl PendingAddressSchedulingFixture {
             .is_some());
     }
 
-    fn schedule(&mut self, tick: u64) -> Result<(), O3RuntimeError> {
+    pub(in crate::o3_runtime) fn schedule(&mut self, tick: u64) -> Result<(), O3RuntimeError> {
         service_live_issue_queue_until_boundary_for_test(
             &mut self.runtime,
             &self.hart,
@@ -164,108 +164,6 @@ fn pending_address_scheduler_waits_for_head_writeback() {
             .runtime
             .pending_data_address_selected_issue_tick_for_test(),
         Some(HEAD_WRITEBACK_TICK)
-    );
-}
-
-#[test]
-fn pending_address_publication_rearms_same_tick_without_replay() {
-    let mut fixture = PendingAddressSchedulingFixture::new(2);
-    fixture.complete_head(PRODUCER_VALUE);
-    fixture
-        .runtime
-        .live_issue
-        .request_service_at(HEAD_WRITEBACK_TICK);
-
-    let retained = fixture
-        .runtime
-        .service_live_issue_scheduler_at(&fixture.hart, HEAD_WRITEBACK_TICK)
-        .unwrap();
-    assert_eq!(retained.replay_boundary(), None);
-    assert_eq!(retained.next_service_tick(), Some(HEAD_WRITEBACK_TICK));
-    assert_eq!(
-        fixture
-            .runtime
-            .pending_data_address_selected_issue_tick_for_test(),
-        None
-    );
-
-    let published = fixture
-        .runtime
-        .take_ready_live_data_access_event(HEAD_WRITEBACK_TICK)
-        .expect("head publication");
-    fixture.hart.write(reg(5), PRODUCER_VALUE);
-    fixture
-        .runtime
-        .record_pending_data_address_producer_publication(
-            &published,
-            HEAD_WRITEBACK_TICK,
-            HEAD_WRITEBACK_TICK,
-        );
-    fixture
-        .runtime
-        .live_issue
-        .request_live_issue_after_writeback_change(HEAD_WRITEBACK_TICK);
-    fixture
-        .runtime
-        .record_retired_instruction_with_trace(&published, true);
-
-    let issued = fixture
-        .runtime
-        .service_live_issue_scheduler_at(&fixture.hart, HEAD_WRITEBACK_TICK)
-        .unwrap();
-    assert_eq!(issued.replay_boundary(), None);
-    assert_eq!(
-        fixture
-            .runtime
-            .pending_data_address_selected_issue_tick_for_test(),
-        Some(HEAD_WRITEBACK_TICK)
-    );
-}
-
-#[test]
-fn pending_address_late_publication_keeps_ready_tick_and_clamps_wake_to_now() {
-    const LATE_TICK: u64 = HEAD_WRITEBACK_TICK + 9;
-
-    let mut fixture = PendingAddressSchedulingFixture::new(2);
-    fixture.complete_head(PRODUCER_VALUE);
-    let published = fixture
-        .runtime
-        .take_ready_live_data_access_event(LATE_TICK)
-        .expect("late head publication");
-    fixture.hart.write(reg(5), PRODUCER_VALUE);
-    fixture
-        .runtime
-        .record_pending_data_address_producer_publication(
-            &published,
-            HEAD_WRITEBACK_TICK,
-            LATE_TICK,
-        );
-    fixture
-        .runtime
-        .live_issue
-        .request_live_issue_after_writeback_change(LATE_TICK);
-    fixture
-        .runtime
-        .record_retired_instruction_with_trace(&published, true);
-
-    assert_eq!(
-        fixture
-            .runtime
-            .pending_data_address_committed_producer_ready_tick(fixture.head.sequence(), reg(5),),
-        Some(HEAD_WRITEBACK_TICK),
-    );
-    assert_eq!(
-        fixture.runtime.pending_data_address_wake_tick(),
-        Some(LATE_TICK)
-    );
-    assert!(fixture.runtime.pending_data_address_owner_is_consistent());
-
-    fixture.schedule(LATE_TICK).unwrap();
-    assert_eq!(
-        fixture
-            .runtime
-            .pending_data_address_selected_issue_tick_for_test(),
-        Some(LATE_TICK),
     );
 }
 

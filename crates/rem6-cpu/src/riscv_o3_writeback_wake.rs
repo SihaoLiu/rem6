@@ -59,14 +59,16 @@ impl RiscvO3WritebackWakeState {
         if self.desired_tick == desired {
             return;
         }
-        if let Some(wake) = self.scheduled.take() {
+        if let Some(wake) = self
+            .scheduled
+            .take_if(|wake| desired.is_none_or(|tick| tick < wake.tick()))
+        {
             if !self.detached.contains(&wake) {
                 self.detached.push(wake);
             }
         }
         self.desired_tick = desired;
     }
-
     pub(crate) fn requested_tick(&mut self, now: Tick) -> Option<Tick> {
         self.requested_tick_with_current(now, false)
     }
@@ -188,18 +190,22 @@ impl RiscvCore {
         let mut state = self.state.lock().expect("riscv core lock");
         state.o3_runtime.prune_writeback_calendar_before(now);
         state.o3_writeback_wake.mark_fired(now);
-        if state
-            .o3_runtime
-            .pending_data_address_wake_tick()
-            .is_some_and(|tick| tick <= now)
-        {
-            state.wake_ready_o3_data_access_younger_window(now, &fetch_events);
-        }
-        let hart = state.hart.clone();
-        if let Err(error) = state.o3_runtime.service_live_issue_scheduler_at(&hart, now) {
-            state
-                .pending_callback_error
-                .get_or_insert(RiscvCpuError::O3Runtime(error));
+        if crate::riscv_fetch_ahead::hart_has_enabled_pending_interrupt(&state.hart) {
+            state.o3_runtime.discard_all_live_issue_transient_state();
+        } else {
+            if state
+                .o3_runtime
+                .pending_data_address_wake_tick()
+                .is_some_and(|tick| tick <= now)
+            {
+                state.wake_ready_o3_data_access_younger_window(now, &fetch_events);
+            }
+            let hart = state.hart.clone();
+            if let Err(error) = state.o3_runtime.service_live_issue_scheduler_at(&hart, now) {
+                state
+                    .pending_callback_error
+                    .get_or_insert(RiscvCpuError::O3Runtime(error));
+            }
         }
         state.refresh_o3_writeback_wake(now);
     }
@@ -249,6 +255,9 @@ impl RiscvCoreState {
 
 #[cfg(test)]
 mod tests {
+    #[path = "late_wake_tests.rs"]
+    mod late_wake_tests;
+
     use rem6_isa_riscv::{
         Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvExecutionRecord, RiscvInstruction,
     };
@@ -417,7 +426,7 @@ mod tests {
     }
 
     #[test]
-    fn live_data_publication_rearms_same_tick_issue_wake() {
+    fn completed_live_data_writeback_services_same_tick_issue() {
         let core = core_with_scalar_load_and_dependent();
         assert_eq!(core.requested_o3_writeback_wake_tick(10), Some(10));
         let (initial_scheduler, initial_event) = wake(10);
@@ -437,45 +446,32 @@ mod tests {
         core.mark_o3_writeback_wake_scheduled(publication_scheduler, publication_event);
         core.mark_o3_writeback_wake_fired(20);
         assert_eq!(core.pending_callback_error(), None);
-        assert!(core
-            .record_ready_o3_data_access_event_with_trace(20, false)
-            .is_some());
 
         {
             let state = core.state.lock().expect("riscv core lock");
-            assert_eq!(
-                state.o3_runtime.live_issue_service_tick(),
-                Some(20),
-                "publication changed queue authority: quiescent={} trace={:?}",
-                state.o3_runtime.live_issue_is_quiescent(),
-                state.o3_runtime.live_issue_trace_records(),
-            );
+            let dependent = state
+                .o3_runtime
+                .live_issue_trace_records()
+                .iter()
+                .find(|record| {
+                    record.pc() == Address::new(0x8004)
+                        && record.action().name() == "selected"
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "writeback wake did not select the completed load dependent: service={:?} quiescent={} trace={:?}",
+                        state.o3_runtime.live_issue_service_tick(),
+                        state.o3_runtime.live_issue_is_quiescent(),
+                        state.o3_runtime.live_issue_trace_records(),
+                    )
+                });
+            assert_eq!(dependent.service_tick(), 20);
+            assert!(state.o3_runtime.live_issue_is_quiescent());
         }
-        assert_eq!(core.requested_o3_writeback_wake_tick(20), Some(20));
-        let (issue_scheduler, issue_event) = wake(20);
-        core.mark_o3_writeback_wake_scheduled(issue_scheduler, issue_event);
-        core.mark_o3_writeback_wake_fired(20);
-        assert_eq!(core.pending_callback_error(), None);
-
-        let state = core.state.lock().expect("riscv core lock");
-        let dependent = state
-            .o3_runtime
-            .live_issue_trace_records()
-            .iter()
-            .find(|record| {
-                record.pc() == Address::new(0x8004)
-                    && record.action().name() == "selected"
-            })
-            .unwrap_or_else(|| {
-                panic!(
-                    "same-tick wake did not select the published load dependent: service={:?} quiescent={} trace={:?}",
-                    state.o3_runtime.live_issue_service_tick(),
-                    state.o3_runtime.live_issue_is_quiescent(),
-                    state.o3_runtime.live_issue_trace_records(),
-                )
-            });
-        assert_eq!(dependent.service_tick(), 20);
-        assert!(state.o3_runtime.live_issue_is_quiescent());
+        assert!(core
+            .record_ready_o3_data_access_event_with_trace(20, false)
+            .is_some());
+        assert_eq!(core.requested_o3_writeback_wake_tick(20), None);
     }
 
     #[test]

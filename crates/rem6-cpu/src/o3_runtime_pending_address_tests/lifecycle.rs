@@ -420,7 +420,19 @@ fn detailed_mode_disable_discards_pending_address_state() {
         core.requested_o3_writeback_wake_tick(HEAD_WRITEBACK_TICK),
         Some(HEAD_WRITEBACK_TICK + 1)
     );
-    register_o3_wake(&core, HEAD_WRITEBACK_TICK + 1);
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+    let fired = core.clone();
+    let event = scheduler
+        .schedule_at(
+            PartitionId::new(0),
+            HEAD_WRITEBACK_TICK + 1,
+            move |context| fired.mark_o3_writeback_wake_fired(context.now()),
+        )
+        .unwrap();
+    core.mark_o3_writeback_wake_scheduled(
+        scheduler.instance_id(),
+        scheduler.pending_event_snapshot(event).unwrap(),
+    );
 
     core.set_detailed_live_retire_gate_enabled(false);
 
@@ -436,6 +448,11 @@ fn detailed_mode_disable_discards_pending_address_state() {
             .o3_runtime
             .record_retired_instruction_with_trace(&ready, true);
     }
+    assert_eq!(core.owned_o3_writeback_wakes().len(), 1);
+    assert_eq!(scheduler.snapshot().total_pending_events(), 1);
+    scheduler.run_until_idle();
+    assert_eq!(scheduler.snapshot().total_pending_events(), 0);
+    core.finalize_quiescent_o3_writeback_for_checkpoint();
     assert!(core.owned_o3_writeback_wakes().is_empty());
     assert_core_pending_cleanup(&core, prior_x6);
 }

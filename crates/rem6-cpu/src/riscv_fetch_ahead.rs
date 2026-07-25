@@ -617,6 +617,11 @@ fn can_retire_completed_fetch_with_branch_speculations(
     let Some(oldest_speculation_sequence) = state.branch_speculations.keys().next().copied() else {
         return Ok(true);
     };
+    let architectural_sequence =
+        next_completed_fetch_sequence_for_architectural_pc(state, fetch_events);
+    if architectural_sequence.is_some_and(|sequence| sequence < oldest_speculation_sequence) {
+        return Ok(true);
+    }
     if state.branch_speculations.len() < state.branch_lookahead
         && has_pending_younger_fetch(state, fetch_events, oldest_speculation_sequence)
         && completed_unexecuted_fetch_count(state, fetch_events) < completed_fetch_window(state)
@@ -624,10 +629,7 @@ fn can_retire_completed_fetch_with_branch_speculations(
         return Ok(false);
     }
 
-    Ok(
-        next_completed_fetch_sequence_for_architectural_pc(state, fetch_events)
-            == Some(oldest_speculation_sequence),
-    )
+    Ok(architectural_sequence == Some(oldest_speculation_sequence))
 }
 
 fn next_fetch_ahead_candidate<'a>(

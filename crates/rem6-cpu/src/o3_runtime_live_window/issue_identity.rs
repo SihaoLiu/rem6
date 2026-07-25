@@ -78,6 +78,40 @@ impl O3LiveStagedFetchIdentity {
                 && packet.consumed_requests() == consumed_requests
         })
     }
+    pub(in crate::o3_runtime) fn recorded_forwarded_return_matches(
+        &self,
+        sequence: u64,
+        pc: Address,
+        instruction: RiscvInstruction,
+        consumed_requests: &[MemoryRequestId],
+    ) -> bool {
+        self.matches_bound(instruction, consumed_requests)
+            && self.forwarded_return_identity().is_some_and(|descendant| {
+                descendant.sequence() == sequence
+                    && descendant.pc() == pc
+                    && descendant.instruction() == instruction
+                    && consumed_requests.first().copied() == Some(descendant.fetch_request())
+                    && consumed_requests.last().copied() == Some(descendant.last_fetch_request())
+            })
+    }
+    pub(in crate::o3_runtime) fn recorded_forwarded_control_matches(
+        &self,
+        sequence: u64,
+        pc: Address,
+        instruction: RiscvInstruction,
+        consumed_requests: &[MemoryRequestId],
+    ) -> bool {
+        self.matches_bound(instruction, consumed_requests)
+            && self
+                .forwarded_control_target_identity()
+                .is_some_and(|target| {
+                    target.consumer_sequence() == sequence
+                        && target.pc() == pc
+                        && target.instruction() == instruction
+                        && consumed_requests.first().copied() == Some(target.fetch_request())
+                        && consumed_requests.last().copied() == Some(target.last_fetch_request())
+                })
+    }
     pub(super) fn issue_packet(&self) -> Option<&O3LiveIssuePacket> {
         self.issue_packet.as_ref()
     }
@@ -91,6 +125,111 @@ impl O3LiveStagedFetchIdentity {
 }
 
 impl O3RuntimeState {
+    pub(crate) fn recorded_producer_forwarded_control_sequence_for_fetch_identity(
+        &self,
+        pc: Address,
+        instruction: RiscvInstruction,
+        consumed_requests: &[MemoryRequestId],
+    ) -> Option<u64> {
+        self.committed_live_staged_fetch_identities
+            .iter()
+            .find_map(|(sequence, identity)| {
+                identity
+                    .recorded_forwarded_control_matches(
+                        *sequence,
+                        pc,
+                        instruction,
+                        consumed_requests,
+                    )
+                    .then_some(*sequence)
+            })
+    }
+
+    pub(crate) fn recorded_producer_forwarded_return_matches_fetch_identity(
+        &self,
+        pc: Address,
+        instruction: RiscvInstruction,
+        consumed_requests: &[MemoryRequestId],
+    ) -> bool {
+        self.live_staged_fetch_identities
+            .iter()
+            .chain(self.committed_live_staged_fetch_identities.iter())
+            .any(|(sequence, identity)| {
+                identity.recorded_forwarded_return_matches(
+                    *sequence,
+                    pc,
+                    instruction,
+                    consumed_requests,
+                )
+            })
+    }
+
+    pub(crate) fn recorded_producer_forwarded_return_descendant_matches(
+        &self,
+        descendant: &O3ProducerForwardedReturnDescendant,
+    ) -> bool {
+        self.live_staged_fetch_identities
+            .values()
+            .chain(self.committed_live_staged_fetch_identities.values())
+            .any(|identity| identity.forwarded_return_identity() == Some(descendant))
+    }
+
+    pub(crate) fn record_validated_producer_forwarded_return_descendant(
+        &mut self,
+        descendant: &O3ProducerForwardedReturnDescendant,
+    ) -> bool {
+        let packet_matches = self
+            .live_staged_issue_packet(descendant.sequence())
+            .is_some_and(|packet| {
+                packet.instruction() == descendant.instruction()
+                    && packet.consumed_requests().first().copied()
+                        == Some(descendant.fetch_request())
+                    && packet.consumed_requests().last().copied()
+                        == Some(descendant.last_fetch_request())
+            });
+        if !packet_matches {
+            return false;
+        }
+        let Some(identity) = self
+            .live_staged_fetch_identities
+            .get_mut(&descendant.sequence())
+        else {
+            return false;
+        };
+        identity.record_forwarded_return_identity(descendant.clone());
+        true
+    }
+
+    pub(crate) fn consume_committed_live_staged_fetch_identity(
+        &mut self,
+        pc: Address,
+        instruction: RiscvInstruction,
+        consumed_requests: &[MemoryRequestId],
+    ) -> bool {
+        let sequence =
+            self.committed_live_staged_fetch_identities
+                .iter()
+                .find_map(|(sequence, identity)| {
+                    (identity.recorded_forwarded_control_matches(
+                        *sequence,
+                        pc,
+                        instruction,
+                        consumed_requests,
+                    ) || identity.recorded_forwarded_return_matches(
+                        *sequence,
+                        pc,
+                        instruction,
+                        consumed_requests,
+                    ))
+                    .then_some(*sequence)
+                });
+        sequence.is_some_and(|sequence| {
+            self.committed_live_staged_fetch_identities
+                .remove(&sequence)
+                .is_some()
+        })
+    }
+
     pub(crate) fn bind_live_staged_issue_packet(
         &mut self,
         pc: Address,
@@ -176,5 +315,16 @@ impl O3RuntimeState {
                             && packet.consumed_requests() == consumed_requests
                     })
             })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_recorded_producer_forwarded_return_descendant_for_test(
+        &mut self,
+        sequence: u64,
+    ) -> bool {
+        self.live_staged_fetch_identities
+            .get_mut(&sequence)
+            .and_then(|identity| identity.producer_forwarded_return_descendant.take())
+            .is_some()
     }
 }

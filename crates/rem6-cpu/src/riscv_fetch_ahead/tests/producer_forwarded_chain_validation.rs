@@ -32,7 +32,7 @@ fn direct_return_apply_fails_closed_after_fetch_identity_changes() {
             .sequence();
         assert!(state
             .o3_runtime
-            .replace_producer_forwarded_chain_fetch_identity_for_test(sequence, &[request(99)]));
+            .remove_live_staged_issue_identity_for_test(sequence));
         assert_eq!(
             state.o3_runtime.producer_forwarded_return_descendant(),
             None
@@ -63,7 +63,7 @@ fn scalar_return_apply_fails_closed_after_fetch_identity_changes() {
             .sequence();
         assert!(state
             .o3_runtime
-            .replace_producer_forwarded_chain_fetch_identity_for_test(sequence, &[request(99)]));
+            .remove_live_staged_issue_identity_for_test(sequence));
         assert_eq!(
             state.o3_runtime.producer_forwarded_return_descendant(),
             None

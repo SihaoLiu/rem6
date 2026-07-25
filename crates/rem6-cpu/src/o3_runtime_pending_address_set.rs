@@ -290,9 +290,10 @@ impl O3RuntimeState {
             .pending_data_addresses
             .find_primary_fetch(fetch_request)?
             .clone();
-        let issue_tick = pending
+        let selected_issue_tick = pending
             .selected_issue_tick
             .expect("materialized pending address has a selected issue tick");
+        assert!(request_tick >= selected_issue_tick);
         assert!(!self
             .live_data_accesses
             .iter()
@@ -325,7 +326,7 @@ impl O3RuntimeState {
             execution: execution.clone(),
             sequence,
             lsq_sequence_span: 1,
-            issue_tick,
+            issue_tick: request_tick,
             issue_rob_occupancy,
             issue_lsq_occupancy,
             younger_window_policy: O3DataAccessWindowPolicy::MemoryResultWindow,

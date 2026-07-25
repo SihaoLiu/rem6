@@ -416,7 +416,7 @@ impl O3RuntimeState {
 #[cfg(test)]
 mod tests {
     use rem6_isa_riscv::{
-        Immediate, MemoryWidth, Register, RiscvExecutionRecord, RiscvInstruction,
+        Immediate, MemoryWidth, Register, RegisterWrite, RiscvExecutionRecord, RiscvInstruction,
     };
     use rem6_kernel::PartitionId;
     use rem6_memory::{AccessSize, AgentId, MemoryRequestId};
@@ -1381,9 +1381,14 @@ mod tests {
                 forwarding_plan,
             )
             .unwrap());
-        assert!(runtime
+        let candidate = runtime
             .live_speculative_issue_candidate(Address::new(0x8008), dependent)
-            .is_none());
+            .expect("forwarded load should wake its dependent scalar ALU");
+        assert_eq!(
+            candidate.forwarded_register_writes(),
+            &[RegisterWrite::new(reg(12), 0x2a)]
+        );
+        assert_eq!(candidate.issue_tick(10), 33);
 
         let mut retry = store.clone();
         retry.set_data_access_event_kind(RiscvDataAccessEventKind::Retry);
@@ -1391,6 +1396,9 @@ mod tests {
             .complete_live_data_access_response(&retry, memory_request(20), 40, 9, None,)
             .unwrap());
 
+        assert!(runtime
+            .live_speculative_issue_candidate(Address::new(0x8008), dependent)
+            .is_none());
         assert!(runtime.snapshot.reorder_buffer.is_empty());
         assert!(runtime.snapshot.load_store_queue.is_empty());
         assert!(runtime.live_data_access_younger_sequences.is_empty());

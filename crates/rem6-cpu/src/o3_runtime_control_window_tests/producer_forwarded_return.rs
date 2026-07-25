@@ -1,4 +1,6 @@
 use super::*;
+#[path = "retention.rs"]
+mod retention;
 
 pub(super) fn decoded(instruction: RiscvInstruction) -> rem6_isa_riscv::RiscvDecodedInstruction {
     let raw = match instruction {

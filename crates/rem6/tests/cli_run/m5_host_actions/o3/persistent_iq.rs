@@ -26,6 +26,7 @@ const PERSISTENT_IQ_QUEUE_STATS: [(&str, &str); 9] = [
     ("issued_by_class/memory_agu", "issued_by_class.memory_agu"),
     ("issued_by_class/control", "issued_by_class.control"),
 ];
+const WIDTH_FOUR_CLASS_HEAD_PC: &str = "0x80000040";
 
 #[test]
 fn rem6_run_o3_persistent_iq_width_one_oldest_ready_cross_class_direct() {
@@ -87,6 +88,60 @@ fn rem6_run_o3_persistent_iq_width_four_respects_class_caps_hierarchy() {
         json.pointer(&format!("/cores/0/o3_runtime/issue/{configured_key}"))
             .and_then(Value::as_u64),
         Some(4),
+    );
+    assert_eq!(
+        json.pointer("/cores/0/o3_runtime/issue/max_rows_per_cycle")
+            .and_then(Value::as_u64),
+        Some(4),
+    );
+    let selected = queue_events(&json)
+        .iter()
+        .filter(|event| event.pointer("/action").and_then(Value::as_str) == Some("selected"))
+        .collect::<Vec<_>>();
+    let selected_ticks = selected
+        .iter()
+        .map(|event| event_u64(event, "service_tick"))
+        .collect::<BTreeSet<_>>();
+    let width_four_queue_batch = selected_ticks
+        .iter()
+        .map(|tick| {
+            selected
+                .iter()
+                .copied()
+                .filter(|event| event_u64(event, "service_tick") == *tick)
+                .collect::<Vec<_>>()
+        })
+        .find(|batch| {
+            batch.len() == 3
+                && batch
+                    .iter()
+                    .map(|event| {
+                        event
+                            .pointer("/issue_class")
+                            .and_then(Value::as_str)
+                            .unwrap()
+                    })
+                    .collect::<BTreeSet<_>>()
+                    == BTreeSet::from(["control", "integer_mul_div", "scalar_integer"])
+        })
+        .unwrap_or_else(|| panic!("missing three-class queue batch: {selected:?}"));
+    let service_tick = event_u64(width_four_queue_batch[0], "service_tick");
+    let class_head = event_at_pc(&json, WIDTH_FOUR_CLASS_HEAD_PC);
+    assert_eq!(
+        event_u64(class_head, "issue_tick"),
+        service_tick,
+        "memory head must consume the fourth issue slot beside the three queued classes: {class_head}",
+    );
+    assert!(class_head.pointer("/lsq_load_address").is_some());
+    assert_eq!(
+        width_four_queue_batch
+            .iter()
+            .map(|event| event
+                .pointer("/issue_class")
+                .and_then(Value::as_str)
+                .unwrap())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["control", "integer_mul_div", "scalar_integer"]),
     );
     assert!(
         queue
@@ -153,38 +208,65 @@ fn assert_queue_wakeup_transition(json: &Value, retained_action: &str, issue_cla
             )
         })
         .collect::<Vec<_>>();
-    let retained = events
+    let retained_events = events
         .iter()
-        .rev()
-        .find(|event| {
-            event.pointer("/action").and_then(Value::as_str) == Some(retained_action)
-                && event.pointer("/issue_class").and_then(Value::as_str) == Some(issue_class)
+        .enumerate()
+        .filter(|(_, retained)| {
+            retained.pointer("/action").and_then(Value::as_str) == Some(retained_action)
+                && retained.pointer("/issue_class").and_then(Value::as_str) == Some(issue_class)
         })
-        .unwrap_or_else(|| panic!("missing {retained_action}/{issue_class}: {observed:?}"));
-    let sequence = retained
-        .pointer("/sequence")
-        .and_then(Value::as_u64)
-        .unwrap();
-    let wake = retained
-        .pointer("/next_wake_tick")
-        .and_then(Value::as_u64)
-        .expect("retained row next wake");
-    let selected = events
-        .iter()
-        .find(|event| {
-            event.pointer("/action").and_then(Value::as_str) == Some("selected")
-                && event.pointer("/sequence").and_then(Value::as_u64) == Some(sequence)
-        })
-        .unwrap_or_else(|| panic!("missing later selection for sequence {sequence}: {json}"));
-    let lifecycle = events
-        .iter()
-        .filter(|event| event.pointer("/sequence").and_then(Value::as_u64) == Some(sequence))
         .collect::<Vec<_>>();
-    assert_eq!(
-        selected.pointer("/service_tick").and_then(Value::as_u64),
-        Some(wake),
-        "{retained_action}/{issue_class} sequence {sequence} must select at its advertised wake: lifecycle={lifecycle:?}",
+    assert!(
+        !retained_events.is_empty(),
+        "missing {retained_action}/{issue_class} transition: {observed:?}"
     );
+    for (index, retained) in retained_events {
+        let sequence = event_u64(retained, "sequence");
+        let retained_tick = event_u64(retained, "service_tick");
+        let advertised_wake = retained.pointer("/next_wake_tick").and_then(Value::as_u64);
+        let eligible_tick = advertised_wake.unwrap_or_else(|| retained_tick.saturating_add(1));
+        let lifecycle = events
+            .iter()
+            .filter(|event| event.pointer("/sequence").and_then(Value::as_u64) == Some(sequence))
+            .collect::<Vec<_>>();
+        let next = events[index + 1..]
+            .iter()
+            .find(|event| {
+                event.pointer("/sequence").and_then(Value::as_u64) == Some(sequence)
+                    && event
+                        .pointer("/service_tick")
+                        .and_then(Value::as_u64)
+                        .is_some_and(|tick| tick >= eligible_tick)
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{retained_action}/{issue_class} sequence {sequence} is never reconsidered at or after tick {eligible_tick}: lifecycle={lifecycle:?}"
+                )
+            });
+        let next_tick = event_u64(next, "service_tick");
+        if let Some(wake) = advertised_wake {
+            assert_eq!(
+                next_tick, wake,
+                "{retained_action}/{issue_class} sequence {sequence} must be reconsidered at its advertised wake: lifecycle={lifecycle:?}",
+            );
+        } else {
+            assert!(
+                next_tick > retained_tick,
+                "external {retained_action}/{issue_class} sequence {sequence} must be reconsidered on a later wake: lifecycle={lifecycle:?}",
+            );
+        }
+        assert!(
+            events[index + 1..].iter().any(|event| {
+                event.pointer("/sequence").and_then(Value::as_u64) == Some(sequence)
+                    && event.pointer("/action").and_then(Value::as_str) == Some("selected")
+                    && event
+                        .pointer("/service_tick")
+                        .and_then(Value::as_u64)
+                        .is_some_and(|tick| tick >= eligible_tick)
+            }),
+            "{retained_action}/{issue_class} sequence {sequence} never reaches selection: lifecycle={lifecycle:?}"
+        );
+    }
 }
 
 fn queue_events(json: &Value) -> &[Value] {

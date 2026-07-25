@@ -34,6 +34,20 @@ enum BoundaryCase {
     MiddleReplay,
 }
 
+fn replay_cleanup_service_tick(json: &Value, boundary: u64) -> u64 {
+    json.pointer("/debug/o3_trace/0/issue_queue/events")
+        .and_then(Value::as_array)
+        .and_then(|events| {
+            events.iter().find(|event| {
+                event.pointer("/action").and_then(Value::as_str) == Some("replayed")
+                    && event.pointer("/sequence").and_then(Value::as_u64) == Some(boundary)
+                    && event.pointer("/cleanup_boundary").and_then(Value::as_u64) == Some(boundary)
+            })
+        })
+        .map(|event| event_u64(event, "service_tick"))
+        .unwrap_or_else(|| panic!("missing exact replay boundary {boundary}: {json}"))
+}
+
 #[test]
 fn rem6_run_o3_three_pending_rejects_fourth_unresolved() {
     let fixture = BoundaryFixture::new(BoundaryCase::FourthUnresolved);
@@ -85,7 +99,9 @@ fn rem6_run_o3_three_pending_replays_middle_failure() {
     assert_eq!(data_requests_sent(&resident).len(), 1);
 
     let first = memory_result_event_at_pc(&completed, FIRST_PENDING_PC);
-    let after_first = fixture.run(event_u64(first, "writeback_tick") + 1);
+    let replay_tick = replay_cleanup_service_tick(&completed, original[1]);
+    assert_eq!(replay_tick, event_u64(first, "writeback_tick"));
+    let after_first = fixture.run(replay_tick.checked_add(1).unwrap());
     assert_eq!(
         event_u64(
             memory_result_event_at_pc(&after_first, FIRST_PENDING_PC),

@@ -256,6 +256,16 @@ impl O3RuntimeState {
                         .copied()
                         .any(|request| identity.owns_fetch_request(request))
                 })
+            || self
+                .committed_live_staged_fetch_identities
+                .values()
+                .any(|identity| {
+                    pending
+                        .consumed_requests
+                        .iter()
+                        .copied()
+                        .any(|request| identity.owns_fetch_request(request))
+                })
         {
             return None;
         }

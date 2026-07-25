@@ -1,13 +1,9 @@
-use rem6_system::RISCV_O3_LIVE_DATA_HANDOFF_CHUNK;
-
 use super::*;
 
 const COLD_LOAD_PC: &str = "0x80000008";
 const CACHED_LOAD_PC: &str = "0x8000000c";
 const COLD_WINDOW_PCS: [&str; 4] = [COLD_LOAD_PC, "0x8000000c", "0x80000010", "0x80000014"];
 const CACHED_WINDOW_PCS: [&str; 4] = [CACHED_LOAD_PC, "0x80000010", "0x80000014", "0x80000018"];
-const COLD_STORE_PCS: [&str; 3] = ["0x80000018", "0x8000001c", "0x80000020"];
-const CACHED_STORE_PCS: [&str; 3] = ["0x8000001c", "0x80000020", "0x80000024"];
 const CHECKPOINT_MUTATION_PC: &str = "0x80000034";
 const VIRTUAL_PAGE: u64 = 0x4000;
 const PHYSICAL_PAGE: u64 = 0x8000_0000;
@@ -16,16 +12,16 @@ const MAX_TICK: u64 = 1_200;
 const TRANSLATED_RESULTS: &str = "2a00000005000000100000003a000000";
 
 #[test]
-fn rem6_run_host_switch_transfers_cold_translated_scalar_load_younger_window_direct() {
-    assert_cold_translated_scalar_load_younger_window_handoff("direct");
+fn rem6_run_host_switch_rejects_cold_translated_scalar_load_younger_window_direct() {
+    assert_cold_translated_scalar_load_younger_window_switch_rejects("direct");
 }
 
 #[test]
-fn rem6_run_host_switch_transfers_cold_translated_scalar_load_younger_window_cache_fabric_dram() {
-    assert_cold_translated_scalar_load_younger_window_handoff("cache-fabric-dram");
+fn rem6_run_host_switch_rejects_cold_translated_scalar_load_younger_window_cache_fabric_dram() {
+    assert_cold_translated_scalar_load_younger_window_switch_rejects("cache-fabric-dram");
 }
 
-fn assert_cold_translated_scalar_load_younger_window_handoff(memory_system: &str) {
+fn assert_cold_translated_scalar_load_younger_window_switch_rejects(memory_system: &str) {
     let path = cold_translated_scalar_load_binary(&format!(
         "host-switch-live-o3-cold-translated-scalar-load-{}",
         memory_system.replace('-', "_")
@@ -38,99 +34,12 @@ fn assert_cold_translated_scalar_load_younger_window_handoff(memory_system: &str
     let switch_tick = issue_tick.saturating_add(response_tick.saturating_sub(issue_tick) / 2);
     assert!(issue_tick < switch_tick && switch_tick < response_tick);
 
-    let json = run_translated_scalar_load_in_memory_system(
+    assert_translated_scalar_load_switch_rejects(
         &path,
         memory_system,
-        Some(switch_tick),
-        "cold",
+        switch_tick,
+        &format!("cold-{}", memory_system.replace('-', "_")),
     );
-
-    assert_stopped_with_headroom(&json, response_tick);
-    assert_eq!(
-        json.pointer("/memory/0/hex").and_then(Value::as_str),
-        Some(TRANSLATED_RESULTS)
-    );
-    for (register, value) in [
-        ("x12", "0x2a"),
-        ("x13", "0x5"),
-        ("x14", "0x10"),
-        ("x15", "0x3a"),
-    ] {
-        assert_eq!(
-            json.pointer(&format!("/cores/0/registers/{register}"))
-                .and_then(Value::as_str),
-            Some(value),
-            "cold translated handoff must preserve {register}: {json}"
-        );
-    }
-    let (transfer, action_tick) = translated_live_transfer(&json);
-    assert!(action_tick >= switch_tick);
-    assert!(issue_tick < action_tick && action_tick < response_tick);
-    let handoff = assert_translated_handoff(transfer, 4, 3, issue_tick);
-    assert_translated_request_identity(
-        &json,
-        handoff,
-        event_at_pc(&json, COLD_LOAD_PC),
-        action_tick,
-        response_tick,
-    );
-
-    for pc in COLD_WINDOW_PCS {
-        let baseline_event = event_at_pc(&baseline, pc);
-        let transferred = event_at_pc(&json, pc);
-        for field in ["issue_tick", "writeback_tick", "commit_tick"] {
-            assert_eq!(
-                event_u64(transferred, field),
-                event_u64(baseline_event, field),
-                "cold translated handoff must preserve {field} for {pc}: {transferred}"
-            );
-        }
-    }
-    assert_eq!(
-        event_u64(event_at_pc(&json, COLD_LOAD_PC), "lsq_data_response_tick"),
-        response_tick
-    );
-    assert!(COLD_STORE_PCS
-        .iter()
-        .all(|pc| event_at_pc_if_present(&json, pc).is_none()));
-
-    let data = json
-        .pointer("/debug/data_trace")
-        .and_then(Value::as_array)
-        .unwrap_or_else(|| panic!("missing cold translated Data trace: {json}"));
-    assert_eq!(
-        data[0].pointer("/tick").and_then(Value::as_u64),
-        Some(response_tick),
-        "cold translated load Data record must retain its response tick: {}",
-        data[0]
-    );
-    let observed = data
-        .iter()
-        .map(|record| {
-            (
-                record.pointer("/kind").and_then(Value::as_str).unwrap(),
-                record.pointer("/address").and_then(Value::as_str).unwrap(),
-                record.pointer("/size").and_then(Value::as_u64).unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        observed,
-        vec![
-            ("load", "0x80000080", 4),
-            ("store", "0x80000084", 4),
-            ("store", "0x80000088", 4),
-            ("store", "0x8000008c", 4),
-        ]
-    );
-    assert!(data
-        .iter()
-        .filter(|record| record.pointer("/kind").and_then(Value::as_str) == Some("store"))
-        .all(|record| record
-            .pointer("/tick")
-            .and_then(Value::as_u64)
-            .is_some_and(|tick| tick > action_tick)));
-    super::scalar_load::assert_memory_resources(&json, memory_system);
 }
 
 #[test]
@@ -346,16 +255,16 @@ fn rem6_run_timing_suppresses_cold_translated_scalar_load_younger_window_o3_arti
 }
 
 #[test]
-fn rem6_run_host_switch_transfers_cached_translated_scalar_load_younger_window_direct() {
-    assert_cached_translated_scalar_load_younger_window_handoff("direct");
+fn rem6_run_host_switch_rejects_cached_translated_scalar_load_younger_window_direct() {
+    assert_cached_translated_scalar_load_younger_window_switch_rejects("direct");
 }
 
 #[test]
-fn rem6_run_host_switch_transfers_cached_translated_scalar_load_younger_window_cache_fabric_dram() {
-    assert_cached_translated_scalar_load_younger_window_handoff("cache-fabric-dram");
+fn rem6_run_host_switch_rejects_cached_translated_scalar_load_younger_window_cache_fabric_dram() {
+    assert_cached_translated_scalar_load_younger_window_switch_rejects("cache-fabric-dram");
 }
 
-fn assert_cached_translated_scalar_load_younger_window_handoff(memory_system: &str) {
+fn assert_cached_translated_scalar_load_younger_window_switch_rejects(memory_system: &str) {
     let path = cached_translated_scalar_load_binary(&format!(
         "host-switch-live-o3-cached-translated-scalar-load-{}",
         memory_system.replace('-', "_")
@@ -369,101 +278,49 @@ fn assert_cached_translated_scalar_load_younger_window_handoff(memory_system: &s
     let switch_tick = issue_tick.saturating_add(response_tick.saturating_sub(issue_tick) / 2);
     assert!(issue_tick < switch_tick && switch_tick < response_tick);
 
-    let json = run_translated_scalar_load_in_memory_system(
+    assert_translated_scalar_load_switch_rejects(
         &path,
         memory_system,
+        switch_tick,
+        &format!("cached-{}", memory_system.replace('-', "_")),
+    );
+}
+
+fn assert_translated_scalar_load_switch_rejects(
+    path: &Path,
+    memory_system: &str,
+    switch_tick: u64,
+    scenario: &str,
+) {
+    let artifact = temp_output(&format!("translated-scalar-load-{scenario}-live-switch"));
+    let extra_run = format!("output = \"{}\"\n", artifact.display());
+    let output = translated_scalar_load_output(
+        path,
+        memory_system,
         Some(switch_tick),
-        "cached",
+        scenario,
+        "detailed",
+        &extra_run,
     );
 
-    assert_stopped_with_headroom(&json, response_tick);
     assert_eq!(
-        json.pointer("/memory/0/hex").and_then(Value::as_str),
-        Some(TRANSLATED_RESULTS)
+        output.status.code(),
+        Some(2),
+        "translated {scenario} live switch: {output:?}"
     );
-    for (register, value) in [
-        ("x11", "0x2a"),
-        ("x12", "0x2a"),
-        ("x13", "0x5"),
-        ("x14", "0x10"),
-        ("x15", "0x3a"),
-    ] {
-        assert_eq!(
-            json.pointer(&format!("/cores/0/registers/{register}"))
-                .and_then(Value::as_str),
-            Some(value),
-            "cached translated handoff must preserve {register}: {json}"
-        );
-    }
-
-    let (transfer, action_tick) = translated_live_transfer(&json);
-    assert!(action_tick >= switch_tick);
-    assert!(issue_tick < action_tick && action_tick < response_tick);
-    let handoff = assert_translated_handoff(transfer, 4, 3, issue_tick);
-    assert_translated_request_identity(
-        &json,
-        handoff,
-        event_at_pc(&json, CACHED_LOAD_PC),
-        action_tick,
-        response_tick,
+    assert!(
+        output.stdout.is_empty(),
+        "translated {scenario} live switch: {output:?}"
     );
-
-    for pc in CACHED_WINDOW_PCS {
-        let baseline_event = event_at_pc(&baseline, pc);
-        let transferred = event_at_pc(&json, pc);
-        for field in ["issue_tick", "writeback_tick", "commit_tick"] {
-            assert_eq!(
-                event_u64(transferred, field),
-                event_u64(baseline_event, field),
-                "translated handoff must preserve {field} for {pc}: {transferred}"
-            );
-        }
-    }
-    let transferred_load = event_at_pc(&json, CACHED_LOAD_PC);
     assert_eq!(
-        event_u64(transferred_load, "lsq_data_response_tick"),
-        event_u64(baseline_load, "lsq_data_response_tick")
+        String::from_utf8(output.stderr).unwrap(),
+        "failed to execute run: host action failed: checkpoint component is not quiescent: cpu0\n"
     );
-    assert!(event_u64(event_at_pc(&json, CACHED_WINDOW_PCS[1]), "issue_tick") < response_tick);
-    assert!(event_u64(event_at_pc(&json, CACHED_WINDOW_PCS[2]), "issue_tick") < response_tick);
-    assert!(event_u64(event_at_pc(&json, CACHED_WINDOW_PCS[3]), "issue_tick") > response_tick);
-    assert!(CACHED_STORE_PCS
-        .iter()
-        .all(|pc| event_at_pc_if_present(&json, pc).is_none()));
-
-    let data = json
-        .pointer("/debug/data_trace")
-        .and_then(Value::as_array)
-        .unwrap_or_else(|| panic!("missing cached translated Data trace: {json}"));
-    assert_eq!(data.len(), 5);
-    let observed = data
-        .iter()
-        .map(|record| {
-            (
-                record.pointer("/kind").and_then(Value::as_str).unwrap(),
-                record.pointer("/address").and_then(Value::as_str).unwrap(),
-                record.pointer("/size").and_then(Value::as_u64).unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        observed,
-        vec![
-            ("load", "0x80000080", 4),
-            ("load", "0x80000080", 4),
-            ("store", "0x80000084", 4),
-            ("store", "0x80000088", 4),
-            ("store", "0x8000008c", 4),
-        ]
+    assert!(
+        !artifact.exists(),
+        "translated {scenario} live switch emitted {}",
+        artifact.display()
     );
-    assert!(data
-        .iter()
-        .filter(|record| record.pointer("/kind").and_then(Value::as_str) == Some("store"))
-        .all(|record| record
-            .pointer("/tick")
-            .and_then(Value::as_u64)
-            .is_some_and(|tick| tick > action_tick)));
-    super::scalar_load::assert_memory_resources(&json, memory_system);
 }
 
 #[test]
@@ -575,190 +432,6 @@ fn assert_cold_translated_architecture(json: &Value) {
             "cold translated run must preserve {register}: {json}"
         );
     }
-}
-
-fn translated_live_transfer(json: &Value) -> (&Value, u64) {
-    let timing_switch = json
-        .pointer("/host_actions/execution_mode_switches")
-        .and_then(Value::as_array)
-        .and_then(|switches| {
-            switches.iter().find(|switch| {
-                switch.pointer("/target").and_then(Value::as_str) == Some("cpu0")
-                    && switch.pointer("/mode").and_then(Value::as_str) == Some("timing")
-                    && switch.pointer("/previous_mode").and_then(Value::as_str) == Some("detailed")
-            })
-        })
-        .unwrap_or_else(|| panic!("missing translated timing switch: {json}"));
-    let action_tick = timing_switch
-        .pointer("/tick")
-        .and_then(Value::as_u64)
-        .expect("translated switch action tick");
-    let transfer = timing_switch
-        .pointer("/state_transfer")
-        .unwrap_or_else(|| panic!("missing translated live handoff: {timing_switch}"));
-    (transfer, action_tick)
-}
-
-fn assert_translated_handoff(
-    transfer: &Value,
-    rob_rows: u64,
-    younger_rows: u64,
-    issue_tick: u64,
-) -> &Value {
-    assert_eq!(
-        transfer
-            .pointer("/live_data_handoff")
-            .and_then(Value::as_bool),
-        Some(true)
-    );
-    assert_eq!(
-        transfer.pointer("/restorable").and_then(Value::as_bool),
-        Some(false)
-    );
-    assert_eq!(
-        transfer
-            .pointer("/quiescence_gate/validated")
-            .and_then(Value::as_bool),
-        Some(false)
-    );
-    let runtime = latest_transfer_o3_runtime_chunk(transfer, "cpu0");
-    for (pointer, expected) in [
-        ("/snapshot_rob_entries", rob_rows),
-        ("/snapshot_lsq_entries", 1),
-        ("/stats_max_rob_occupancy", rob_rows),
-        ("/stats_max_lsq_occupancy", 1),
-    ] {
-        assert_eq!(
-            runtime.pointer(pointer).and_then(Value::as_u64),
-            Some(expected),
-            "translated runtime field {pointer}: {runtime}"
-        );
-    }
-
-    let handoff = translated_handoff_chunk(transfer);
-    for (pointer, expected) in [
-        ("/outstanding_requests", 1),
-        ("/resident_rows", 1),
-        ("/younger_rows", younger_rows),
-        ("/first_issue_tick", issue_tick),
-        ("/last_issue_tick", issue_tick),
-        ("/first_bytes", 4),
-    ] {
-        assert_eq!(
-            handoff.pointer(pointer).and_then(Value::as_u64),
-            Some(expected),
-            "translated handoff field {pointer}: {handoff}"
-        );
-    }
-    assert_eq!(
-        handoff.pointer("/first_address").and_then(Value::as_str),
-        Some("0x80000080")
-    );
-    assert_eq!(
-        handoff
-            .pointer("/first_target/kind")
-            .and_then(Value::as_str),
-        Some("memory")
-    );
-    handoff
-}
-
-fn assert_translated_request_identity(
-    json: &Value,
-    handoff: &Value,
-    load: &Value,
-    action_tick: u64,
-    response_tick: u64,
-) {
-    assert_eq!(
-        handoff
-            .pointer("/first_o3_sequence")
-            .and_then(Value::as_u64),
-        load.pointer("/sequence").and_then(Value::as_u64)
-    );
-    let fetch_agent = handoff
-        .pointer("/first_fetch_request_agent")
-        .and_then(Value::as_u64)
-        .expect("translated fetch request agent");
-    let fetch_sequence = handoff
-        .pointer("/first_fetch_request_sequence")
-        .and_then(Value::as_u64)
-        .expect("translated fetch request sequence");
-    let data_agent = handoff
-        .pointer("/first_data_request_agent")
-        .and_then(Value::as_u64)
-        .expect("translated data request agent");
-    let data_sequence = handoff
-        .pointer("/first_data_request_sequence")
-        .and_then(Value::as_u64)
-        .expect("translated data request sequence");
-    let load_pc = load
-        .pointer("/pc")
-        .and_then(Value::as_str)
-        .expect("translated load PC");
-    let fetch = json
-        .pointer("/debug/fetch_trace")
-        .and_then(Value::as_array)
-        .unwrap_or_else(|| panic!("missing translated Fetch trace: {json}"));
-    assert!(fetch.iter().any(|record| {
-        record.pointer("/cpu").and_then(Value::as_u64) == Some(0)
-            && record.pointer("/pc").and_then(Value::as_str) == Some(load_pc)
-            && record.pointer("/sequence").and_then(Value::as_u64) == Some(fetch_sequence)
-    }));
-    let memory = json
-        .pointer("/debug/memory_trace")
-        .and_then(Value::as_array)
-        .unwrap_or_else(|| panic!("missing translated Memory trace: {json}"));
-    assert!(memory.iter().any(|record| {
-        record.pointer("/channel").and_then(Value::as_str) == Some("fetch")
-            && record.pointer("/kind").and_then(Value::as_str) == Some("request_sent")
-            && record.pointer("/request_agent").and_then(Value::as_u64) == Some(fetch_agent)
-            && record.pointer("/request").and_then(Value::as_u64) == Some(fetch_sequence)
-    }));
-    let data_request = memory
-        .iter()
-        .find(|record| {
-            record.pointer("/channel").and_then(Value::as_str) == Some("data")
-                && record.pointer("/kind").and_then(Value::as_str) == Some("request_sent")
-                && record
-                    .pointer("/tick")
-                    .and_then(Value::as_u64)
-                    .is_some_and(|tick| tick < action_tick)
-                && record.pointer("/request_agent").and_then(Value::as_u64) == Some(data_agent)
-                && record.pointer("/request").and_then(Value::as_u64) == Some(data_sequence)
-        })
-        .unwrap_or_else(|| panic!("missing pre-switch translated data request: {memory:?}"));
-    let data_route = data_request
-        .pointer("/route")
-        .and_then(Value::as_u64)
-        .expect("translated data request route");
-    assert_eq!(
-        handoff.pointer("/first_route").and_then(Value::as_u64),
-        Some(data_route)
-    );
-    assert_eq!(
-        handoff
-            .pointer("/first_target/source_partition")
-            .and_then(Value::as_u64),
-        Some(0)
-    );
-    assert_eq!(
-        handoff
-            .pointer("/first_target/route")
-            .and_then(Value::as_u64),
-        Some(data_route)
-    );
-    assert_eq!(
-        handoff.pointer("/first_partition").and_then(Value::as_u64),
-        Some(0)
-    );
-    assert!(memory.iter().any(|record| {
-        record.pointer("/channel").and_then(Value::as_str) == Some("data")
-            && record.pointer("/kind").and_then(Value::as_str) == Some("response_arrived")
-            && record.pointer("/tick").and_then(Value::as_u64) == Some(response_tick)
-            && record.pointer("/request_agent").and_then(Value::as_u64) == Some(data_agent)
-            && record.pointer("/request").and_then(Value::as_u64) == Some(data_sequence)
-    }));
 }
 
 #[test]
@@ -1072,26 +745,6 @@ fn event_u64(event: &Value, field: &str) -> u64 {
         .pointer(&format!("/{field}"))
         .and_then(Value::as_u64)
         .unwrap_or_else(|| panic!("missing {field}: {event}"))
-}
-
-fn translated_handoff_chunk(transfer: &Value) -> &Value {
-    transfer
-        .pointer("/components")
-        .and_then(Value::as_array)
-        .and_then(|components| {
-            components
-                .iter()
-                .find(|entry| entry.pointer("/component").and_then(Value::as_str) == Some("cpu0"))
-        })
-        .and_then(|component| component.pointer("/chunks").and_then(Value::as_array))
-        .and_then(|chunks| {
-            chunks.iter().find(|chunk| {
-                chunk.pointer("/name").and_then(Value::as_str)
-                    == Some(RISCV_O3_LIVE_DATA_HANDOFF_CHUNK)
-            })
-        })
-        .and_then(|chunk| chunk.pointer("/o3_live_data_handoff"))
-        .unwrap_or_else(|| panic!("missing translated live-data handoff chunk: {transfer}"))
 }
 
 fn checkpoint_component_chunk<'a>(action: &'a Value, component: &str, chunk: &str) -> &'a Value {

@@ -1539,19 +1539,22 @@ fn riscv_core_driver_issues_older_load_before_younger_live_gate_work() {
             .expect("pending scalar-load response scheduler event");
     }
     assert_eq!(core.read_register(reg(5)), 0);
+    let schedule_wake = |scheduler: &mut PartitionedScheduler, wake_tick: u64| {
+        let wake_core = core.clone();
+        let event = scheduler
+            .schedule_at(core.partition(), wake_tick, move |context| {
+                wake_core.mark_o3_writeback_wake_fired(context.now());
+            })
+            .unwrap();
+        core.mark_o3_writeback_wake_scheduled(
+            scheduler.instance_id(),
+            scheduler.pending_event_snapshot(event).unwrap(),
+        );
+    };
     let wake_tick = core
         .requested_o3_writeback_wake_tick(scheduler.now())
         .expect("completed scalar load should request an O3 writeback wake");
-    let wake_core = core.clone();
-    let event = scheduler
-        .schedule_at(core.partition(), wake_tick, move |context| {
-            wake_core.mark_o3_writeback_wake_fired(context.now());
-        })
-        .unwrap();
-    core.mark_o3_writeback_wake_scheduled(
-        scheduler.instance_id(),
-        scheduler.pending_event_snapshot(event).unwrap(),
-    );
+    schedule_wake(&mut scheduler, wake_tick);
     assert_eq!(core.owned_o3_writeback_wakes().len(), 1);
     let wake_limit = wake_tick.checked_add(1).expect("O3 writeback wake limit");
     for _ in 0..64 {
@@ -1569,6 +1572,13 @@ fn riscv_core_driver_issues_older_load_before_younger_live_gate_work() {
     assert_eq!(core.read_register(reg(5)), 41);
 
     for _ in 0..16 {
+        if let Some(wake_tick) = core.requested_o3_writeback_wake_tick(scheduler.now()) {
+            schedule_wake(&mut scheduler, wake_tick);
+            scheduler.run_until_idle_conservative();
+        }
+        if core.read_register(reg(4)) == 42 {
+            break;
+        }
         match drive_one_action(&core, store.clone(), &mut scheduler, &transport) {
             Some(RiscvCoreDriveAction::FetchIssued { .. })
             | Some(RiscvCoreDriveAction::PipelineCycleScheduled { .. })
@@ -7924,6 +7934,22 @@ fn riscv_core_independent_live_younger_remains_non_architectural_until_retiremen
     assert_eq!(core.pc(), Address::new(0x8000));
 
     scheduler.run_until_idle_conservative();
+    for _ in 0..16 {
+        let Some(wake_tick) = core.requested_o3_writeback_wake_tick(scheduler.now()) else {
+            break;
+        };
+        let wake_core = core.clone();
+        let event = scheduler
+            .schedule_at(core.partition(), wake_tick, move |context| {
+                wake_core.mark_o3_writeback_wake_fired(context.now());
+            })
+            .unwrap();
+        core.mark_o3_writeback_wake_scheduled(
+            scheduler.instance_id(),
+            scheduler.pending_event_snapshot(event).unwrap(),
+        );
+        scheduler.run_until_idle_conservative();
+    }
     let divide = drive_until_execution_event(&core, store.clone(), &mut scheduler, &transport);
     assert_eq!(divide.fetch_pc(), Address::new(0x8000));
     assert_eq!(core.read_register(reg(3)), 12);

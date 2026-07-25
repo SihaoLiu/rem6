@@ -278,24 +278,21 @@ impl O3ProducerForwardedScalarChain {
         instruction_bytes: u8,
         consumed_requests: &[MemoryRequestId],
     ) -> Option<O3ProducerForwardedReturnDescendant> {
-        let scalar = self.last()?;
         if o3_exact_link_return_source(instruction) != self.parent().link_destination()
             || !valid_live_speculative_fetch_identity(consumed_requests)
         {
             return None;
         }
         let fetch_request = *consumed_requests.first()?;
+        let pc = self
+            .last()
+            .map_or(self.parent().target(), |scalar| scalar.sequential_pc());
         Some(O3ProducerForwardedReturnDescendant {
             scalar_chain: self.clone(),
             fetch_request,
             last_fetch_request: *consumed_requests.last()?,
-            pc: scalar.sequential_pc(),
-            sequential_pc: Address::new(
-                scalar
-                    .sequential_pc()
-                    .get()
-                    .wrapping_add(u64::from(instruction_bytes)),
-            ),
+            pc,
+            sequential_pc: Address::new(pc.get().wrapping_add(u64::from(instruction_bytes))),
             instruction,
             sequence: fetch_request.sequence(),
         })

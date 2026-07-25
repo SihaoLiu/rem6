@@ -260,7 +260,15 @@ impl RiscvCore {
                 consumed_requests,
             )
         });
-        let live_control_sequence = live_control_sequence.flatten();
+        let live_control_sequence = live_control_sequence.flatten().or_else(|| {
+            state
+                .o3_runtime
+                .recorded_producer_forwarded_control_sequence_for_fetch_identity(
+                    fetch.pc(),
+                    instruction,
+                    consumed_requests,
+                )
+        });
         let producer_forwarded_control = live_control_sequence.is_some_and(|consumer_sequence| {
             state
                 .o3_runtime
@@ -270,7 +278,13 @@ impl RiscvCore {
             state
                 .o3_runtime
                 .has_recorded_producer_forwarded_return_descendant(sequence)
-        });
+        }) || state
+            .o3_runtime
+            .recorded_producer_forwarded_return_matches_fetch_identity(
+                fetch.pc(),
+                instruction,
+                consumed_requests,
+            );
         let retained_producer_forwarded_return = state
             .producer_forwarded_scalar_continuation
             .as_ref()
@@ -409,6 +423,13 @@ impl RiscvCore {
             state
                 .o3_runtime
                 .retire_live_staged_instruction(&event, consumed_requests, retire_tick);
+            state
+                .o3_runtime
+                .consume_committed_live_staged_fetch_identity(
+                    fetch.pc(),
+                    instruction,
+                    consumed_requests,
+                );
             let detailed = state.live_retire_gate.detailed_policy_enabled();
             assert!(state
                 .o3_runtime

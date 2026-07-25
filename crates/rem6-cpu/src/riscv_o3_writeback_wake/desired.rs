@@ -15,7 +15,8 @@ pub(super) fn desired_o3_writeback_wake(
 ) -> RiscvO3WritebackWakeDemand {
     let memory_result = state
         .o3_runtime
-        .earliest_unpublished_memory_result_writeback_tick();
+        .earliest_unpublished_memory_result_writeback_tick()
+        .map(|tick| tick.max(now));
     let pending_address = state
         .o3_runtime
         .pending_data_address_wake_tick()
@@ -30,7 +31,8 @@ pub(super) fn desired_o3_writeback_wake(
         .owned_scheduler_wakes()
         .is_empty()
         .then_some(live_gate_ready_tick)
-        .flatten();
+        .flatten()
+        .map(|tick| tick.max(now));
     let forwarded_control = state
         .o3_runtime
         .producer_forwarded_control_target()
@@ -54,6 +56,7 @@ pub(super) fn desired_o3_writeback_wake(
     .flatten()
     .min();
     let allow_current = [
+        memory_result,
         pending_address,
         live_issue,
         restored_live_gate,

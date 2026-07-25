@@ -24,7 +24,7 @@ pub(super) const BOUNDARY_ANCHORS: [&str; 6] = [
     "rem6_run_o3_translated_result_pair_dependency_and_fault_boundaries",
     "rem6_run_o3_translated_result_pair_target_ordering_and_capacity_boundaries",
     "rem6_run_o3_translated_result_pair_live_checkpoint_and_prebind_switch_reject",
-    "rem6_run_host_switch_transfers_o3_translated_memory_mmio_result_pair",
+    "rem6_run_host_switch_rejects_live_o3_translated_memory_mmio_result_pair",
     "rem6_run_o3_translated_result_pair_drained_restore",
     "rem6_run_timing_suppresses_o3_translated_result_pairs",
 ];

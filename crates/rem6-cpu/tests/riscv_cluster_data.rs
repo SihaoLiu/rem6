@@ -620,19 +620,22 @@ fn parallel_driver_issues_older_load_before_younger_live_gate_work() {
             .expect("pending scalar-load response scheduler event");
     }
     assert_eq!(cpu.read_register(reg(5)), 0);
+    let schedule_wake = |scheduler: &mut PartitionedScheduler, wake_tick: u64| {
+        let wake_cpu = cpu.clone();
+        let event = scheduler
+            .schedule_parallel_at(cpu.partition(), wake_tick, move |context| {
+                wake_cpu.mark_o3_writeback_wake_fired(context.now());
+            })
+            .unwrap();
+        cpu.mark_o3_writeback_wake_scheduled(
+            scheduler.instance_id(),
+            scheduler.pending_event_snapshot(event).unwrap(),
+        );
+    };
     let wake_tick = cpu
         .requested_o3_writeback_wake_tick(scheduler.now())
         .expect("completed scalar load should request an O3 writeback wake");
-    let wake_cpu = cpu.clone();
-    let event = scheduler
-        .schedule_parallel_at(cpu.partition(), wake_tick, move |context| {
-            wake_cpu.mark_o3_writeback_wake_fired(context.now());
-        })
-        .unwrap();
-    cpu.mark_o3_writeback_wake_scheduled(
-        scheduler.instance_id(),
-        scheduler.pending_event_snapshot(event).unwrap(),
-    );
+    schedule_wake(&mut scheduler, wake_tick);
     assert_eq!(cpu.owned_o3_writeback_wakes().len(), 1);
     let wake_limit = wake_tick.checked_add(1).expect("O3 writeback wake limit");
     for _ in 0..64 {
@@ -651,6 +654,13 @@ fn parallel_driver_issues_older_load_before_younger_live_gate_work() {
     assert_eq!(cpu.read_register(reg(5)), 41);
 
     for _ in 0..32 {
+        if let Some(wake_tick) = cpu.requested_o3_writeback_wake_tick(scheduler.now()) {
+            schedule_wake(&mut scheduler, wake_tick);
+            scheduler.run_until_idle_parallel().unwrap();
+        }
+        if cpu.read_register(reg(4)) == 42 {
+            break;
+        }
         cluster
             .drive_ready_cores_parallel(
                 &mut scheduler,

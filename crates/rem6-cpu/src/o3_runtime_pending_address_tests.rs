@@ -20,7 +20,7 @@ mod lifecycle;
 #[path = "o3_runtime_pending_address_tests/multiple.rs"]
 pub(in crate::o3_runtime) mod multiple;
 #[path = "o3_runtime_pending_address_tests/scheduling.rs"]
-mod scheduling;
+pub(in crate::o3_runtime) mod scheduling;
 #[path = "o3_runtime_pending_address_tests/staging.rs"]
 mod staging;
 #[path = "o3_runtime_pending_address_tests/three_pending.rs"]

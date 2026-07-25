@@ -322,6 +322,13 @@ impl RiscvCore {
         let mut state = self.state.lock().expect("riscv core lock");
         state.live_retire_gate.set_policy(policy);
         if !detailed {
+            let wake_rebase_tick = state
+                .o3_writeback_wake
+                .owned_wakes()
+                .into_iter()
+                .map(crate::riscv_o3_writeback_wake::RiscvO3WritebackWake::tick)
+                .min()
+                .unwrap_or_default();
             state.o3_runtime.discard_all_live_issue_transient_state();
             let younger_result_fetches = state
                 .memory_result_window_authorizations
@@ -355,12 +362,11 @@ impl RiscvCore {
                     event.clear_data_access_retirement();
                 }
             }
-            let pending_address_wake = state.o3_runtime.pending_data_address_wake_tick().is_some();
             state.o3_runtime.discard_pending_data_address();
-            if pending_address_wake {
-                state.o3_writeback_wake.clear();
-            }
-            if state.o3_runtime.has_live_retirement_authority() {
+            state.refresh_o3_writeback_wake(wake_rebase_tick);
+            if state.o3_runtime.has_live_retirement_authority()
+                || state.live_retire_gate.pending_ready_tick().is_some()
+            {
                 return;
             }
             state.memory_result_window_authorizations.clear();
@@ -370,7 +376,9 @@ impl RiscvCore {
                 state.o3_runtime.discard_live_data_access_lifecycle();
                 state.o3_runtime.discard_live_speculative_executions();
             }
-            state.o3_writeback_wake.clear();
+            if !state.o3_writeback_wake.has_scheduled_wake_authority() {
+                state.o3_writeback_wake.clear();
+            }
         }
     }
 
@@ -459,9 +467,11 @@ impl RiscvCore {
 #[cfg(test)]
 mod tests {
     use rem6_kernel::{PartitionId, PartitionedScheduler};
-    use rem6_memory::{AgentId, MemoryRequestId};
+    use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryRequestId};
+    use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
     use super::*;
+    use crate::{CpuCore, CpuFetchConfig, CpuId, CpuResetState};
 
     fn div_raw() -> u32 {
         (1 << 25) | (2 << 20) | (1 << 15) | (4 << 12) | (3 << 7) | 0x33
@@ -476,6 +486,47 @@ mod tests {
             scheduler.instance_id(),
             scheduler.pending_event_snapshot(event_id).unwrap(),
         )
+    }
+
+    fn core() -> RiscvCore {
+        RiscvCore::new(
+            CpuCore::new(
+                CpuResetState::new(
+                    CpuId::new(0),
+                    PartitionId::new(0),
+                    AgentId::new(7),
+                    Address::new(0x8000),
+                ),
+                CpuFetchConfig::new(
+                    TransportEndpointId::new("cpu0.ifetch").unwrap(),
+                    MemoryRouteId::new(0),
+                    CacheLineLayout::new(16).unwrap(),
+                    AccessSize::new(4).unwrap(),
+                ),
+            )
+            .unwrap(),
+        )
+    }
+
+    #[test]
+    fn detailed_disable_preserves_restored_gate_writeback_wake() {
+        let core = core();
+        let request = MemoryRequestId::new(AgentId::new(7), 31);
+        core.state
+            .lock()
+            .unwrap()
+            .live_retire_gate
+            .restore_checkpoint(Some(O3LiveRetireGateCheckpointPayload::new(request, 31)));
+        assert_eq!(core.requested_o3_writeback_wake_tick(10), Some(31));
+        let wake = wake(31);
+        core.mark_o3_writeback_wake_scheduled(wake.scheduler(), wake.event());
+
+        core.set_detailed_live_retire_gate_enabled(false);
+        core.set_detailed_live_retire_gate_enabled(false);
+
+        assert_eq!(core.owned_o3_writeback_wakes().len(), 1);
+        assert_eq!(core.owned_o3_writeback_wakes()[0].1.tick(), 31);
+        assert_eq!(core.requested_o3_writeback_wake_tick(10), None);
     }
 
     #[test]

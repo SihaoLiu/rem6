@@ -121,11 +121,14 @@ impl ProducerForwardedScalarContinuation {
         descendant: &crate::o3_runtime::O3ProducerForwardedReturnDescendant,
     ) -> bool {
         let scalar_chain = descendant.scalar_chain();
-        scalar_chain.last().is_some_and(|scalar| {
-            descendant.parent() == self.parent()
-                && descendant.pc() == scalar.sequential_pc()
-                && self.scalar_chain.matches_retained_candidate(scalar_chain)
-        })
+        let expected_pc = scalar_chain
+            .last()
+            .map_or(descendant.parent().target(), |scalar| {
+                scalar.sequential_pc()
+            });
+        descendant.parent() == self.parent()
+            && descendant.pc() == expected_pc
+            && self.scalar_chain.matches_retained_candidate(scalar_chain)
     }
 
     pub(crate) fn retains_return_fetch(

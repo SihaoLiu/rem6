@@ -74,7 +74,7 @@ fn o3_live_window_ledger_anchors_name_real_cli_tests() {
         "rem6_run_o3_scalar_live_depth_eight_combines_four_memory_and_four_scalar_rows",
         "rem6_run_o3_scalar_live_depth_eight_rejects_fifth_memory_row",
         "rem6_run_o3_deep_scalar_window_rejects_live_checkpoint_and_restores_drained",
-        "rem6_run_host_switch_preserves_deep_scalar_window_timing",
+        "rem6_run_host_switch_rejects_live_deep_scalar_window",
         "rem6_run_timing_suppresses_deep_scalar_window_surfaces",
     ] {
         assert!(tests.contains(anchor), "missing compiled CLI test {anchor}");

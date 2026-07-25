@@ -491,12 +491,10 @@ fn memory_issue_width_calendar_anchors() -> Vec<String> {
         "memory_issue_width: runtime.memory_issue_width(),".to_string(),
         "memory_issue_width.saturating_sub(reservations.memory)".to_string(),
         [
-            "for tick in runtime",
-            "            .pending_data_addresses",
-            "            .iter()",
-            "            .filter_map(|pending| pending.selected_issue_tick)",
-            "        {",
-            "            calendar.reserve(tick, O3IssueOpClass::Memory);",
+            "for pending in runtime.pending_data_addresses.iter() {",
+            "            if let Some(tick) = pending.selected_issue_tick {",
+            "                calendar.reserve(tick, O3IssueOpClass::Memory);",
+            "            }",
             "        }",
         ]
         .join("\n"),

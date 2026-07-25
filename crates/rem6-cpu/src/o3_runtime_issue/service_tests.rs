@@ -5,6 +5,8 @@ use crate::o3_runtime::o3_runtime_pending_address_tests::multiple::ready_two_pen
 #[cfg(test)]
 #[path = "service_tests/legacy_driver.rs"]
 mod legacy_driver;
+#[path = "service_tests/pending_address_publication.rs"]
+mod pending_address_publication;
 #[path = "service_tests/scheduler_request.rs"]
 mod scheduler_request;
 #[cfg(test)]
@@ -179,6 +181,44 @@ fn service_live_issue_queue_at_live_data_dependency_requests_follow_up_tick() {
         })
         .expect("live-data-dependent row remains resident");
     assert_eq!(retained.next_wake_tick(), Some(20));
+}
+
+#[test]
+fn completed_live_data_writeback_wakes_a_later_enqueued_dependent() {
+    let mut fixture = ScalarIssueFixture::new_unbound(2, ScalarIssueCase::LiveDataDependency);
+    let producer = fixture.runtime.live_data_accesses[0].sequence;
+    let mut load = fixture.runtime.live_data_accesses[0].execution.clone();
+    load.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
+    assert!(fixture
+        .runtime
+        .complete_live_data_access_response(&load, request(20), 19, 9, Some(&[0x2a, 0, 0, 0]),)
+        .unwrap());
+    assert_eq!(
+        fixture
+            .runtime
+            .writeback_reservation(producer)
+            .map(O3WritebackReservation::admitted_tick),
+        Some(20)
+    );
+    assert_eq!(fixture.runtime.live_issue_service_tick(), None);
+
+    fixture.bind_row_at(0, 19);
+    let blocked = fixture
+        .runtime
+        .service_live_issue_queue_at(&fixture.hart, 19)
+        .unwrap();
+    assert_eq!(blocked.issued_rows(), 0);
+    assert_eq!(blocked.next_service_tick(), Some(20));
+
+    let issued = fixture
+        .runtime
+        .service_live_issue_queue_at(&fixture.hart, 20)
+        .unwrap();
+    assert_eq!(issued.issued_rows(), 1);
+    let dependent = fixture.execution_at(BRANCH_PC);
+    assert_eq!(dependent.issue_tick, 20);
+    assert_eq!(dependent.admitted_writeback_tick, 21);
+    assert_eq!(dependent.execution.register_writes()[0].value(), 0x2b);
 }
 
 #[test]

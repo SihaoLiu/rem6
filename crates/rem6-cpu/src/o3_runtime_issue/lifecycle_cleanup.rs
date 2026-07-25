@@ -1,5 +1,7 @@
 use super::*;
 
+type O3LiveIssueCleanupRow = (u64, Address, O3LiveIssueTraceClass);
+
 impl O3RuntimeState {
     fn live_issue_identity(&self, sequence: u64) -> Option<(Address, O3LiveIssueTraceClass)> {
         if let Some(pending) = self.pending_data_addresses.find_sequence(sequence) {
@@ -10,19 +12,19 @@ impl O3RuntimeState {
             .reorder_buffer
             .iter()
             .find(|entry| entry.is_live_staged() && entry.sequence() == sequence)?;
-        if self
+        let issue_class = if self
             .live_data_accesses
             .iter()
             .any(|live| live.sequence == sequence)
         {
-            return Some((entry.pc(), O3LiveIssueTraceClass::MemoryAgu));
-        }
-        let packet = self.live_staged_issue_packet(sequence)?;
-        let issue_class = queue::live_issue_trace_class(packet.instruction())?;
+            O3LiveIssueTraceClass::MemoryAgu
+        } else {
+            queue::live_issue_trace_class(self.live_staged_issue_packet(sequence)?.instruction())?
+        };
         Some((entry.pc(), issue_class))
     }
 
-    fn live_issue_rows_from(&self, boundary: u64) -> Vec<(u64, Address, O3LiveIssueTraceClass)> {
+    fn live_issue_rows_from(&self, boundary: u64) -> Vec<O3LiveIssueCleanupRow> {
         self.live_issue
             .resident_sequences()
             .iter()
@@ -35,10 +37,7 @@ impl O3RuntimeState {
             .collect()
     }
 
-    fn live_staged_issue_rows_from(
-        &self,
-        boundary: u64,
-    ) -> Vec<(u64, Address, O3LiveIssueTraceClass)> {
+    fn live_staged_issue_rows_from(&self, boundary: u64) -> Vec<O3LiveIssueCleanupRow> {
         self.snapshot
             .reorder_buffer
             .iter()
@@ -59,16 +58,11 @@ impl O3RuntimeState {
         let Some((pc, issue_class)) = self.live_issue_identity(sequence) else {
             return;
         };
-        if self
-            .live_issue
-            .resident_sequences()
-            .binary_search(&sequence)
-            .is_err()
-        {
+        if !self.live_issue.has_resident_sequence(sequence) {
             return;
         }
         let has_survivors = self.live_issue.resident_sequences().len() > 1;
-        self.prepare_live_issue_cleanup_wake(has_survivors, now);
+        self.live_issue.prepare_cleanup_wake(has_survivors, now);
         let removed = self
             .live_issue
             .remove_exact_at(sequence, action, pc, issue_class, now);
@@ -99,7 +93,8 @@ impl O3RuntimeState {
             return;
         }
         let rows = self.live_issue_rows_from(removal_boundary);
-        self.prepare_live_issue_cleanup_wake(first_removed != 0, now);
+        self.live_issue
+            .prepare_cleanup_wake(first_removed != 0, now);
         let removed = self.live_issue.remove_suffix_at(
             removal_boundary,
             cleanup_boundary,
@@ -141,49 +136,30 @@ impl O3RuntimeState {
         sequence: u64,
         now: Option<u64>,
     ) {
-        if let Some(cleanup_tick) = now.or_else(|| self.live_issue_service_tick()) {
-            let already_squashed = self
-                .live_issue
-                .resident_sequences()
-                .binary_search(&sequence)
-                .is_err()
-                && self.live_issue.trace_records().iter().any(|record| {
-                    record.sequence() == sequence
-                        && record.action() == O3LiveIssueTraceAction::Squashed
-                });
-            if already_squashed {
-                return;
-            }
-            if self
-                .live_issue
-                .resident_sequences()
-                .binary_search(&sequence)
-                .is_err()
-            {
-                if let Some((pc, issue_class)) = self.live_issue_identity(sequence) {
-                    self.live_issue.record_nonresident_cleanup_at(
-                        sequence,
-                        sequence,
-                        O3LiveIssueTraceAction::Replayed,
-                        pc,
-                        issue_class,
-                        cleanup_tick,
-                    );
-                }
-            }
-            self.discard_live_issue_suffix_at(
-                sequence,
-                O3LiveIssueTraceAction::Replayed,
-                cleanup_tick,
-            );
+        let Some(cleanup_tick) = now.or_else(|| self.live_issue_service_tick()) else {
+            return;
+        };
+        let nonresident = !self.live_issue.has_resident_sequence(sequence);
+        if nonresident
+            && self.live_issue.trace_records().iter().any(|record| {
+                record.sequence() == sequence && record.action() == O3LiveIssueTraceAction::Squashed
+            })
+        {
+            return;
         }
-    }
-
-    fn prepare_live_issue_cleanup_wake(&mut self, has_survivors: bool, now: u64) {
-        self.live_issue.clear_requested_service_tick();
-        if has_survivors {
-            self.live_issue.request_service_at(now);
+        if nonresident {
+            if let Some((pc, issue_class)) = self.live_issue_identity(sequence) {
+                self.live_issue.record_nonresident_cleanup_at(
+                    sequence,
+                    sequence,
+                    O3LiveIssueTraceAction::Replayed,
+                    pc,
+                    issue_class,
+                    cleanup_tick,
+                );
+            }
         }
+        self.discard_live_issue_suffix_at(sequence, O3LiveIssueTraceAction::Replayed, cleanup_tick);
     }
 
     pub(crate) fn discard_all_live_issue_transient_state(&mut self) {

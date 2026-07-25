@@ -27,13 +27,16 @@ const MAX_O3_RUNTIME_ISSUE_STATE_DECISION_STATE_LINES: usize = 220;
 const MAX_O3_RUNTIME_ISSUE_STATE_DECISION_PROJECTION_LINES: usize = 120;
 const MAX_O3_RUNTIME_ISSUE_STATE_DECISION_WINDOW_LINES: usize = 160;
 const MAX_O3_RUNTIME_ISSUE_STATE_DECISION_WINDOW_TEST_LINES: usize = 160;
+const MAX_O3_RUNTIME_ISSUE_STATE_WAKE_LINES: usize = 100;
 const MAX_O3_RUNTIME_ISSUE_STATE_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_ISSUE_STATE_LIFECYCLE_TEST_LINES: usize = 260;
+const MAX_O3_RUNTIME_ISSUE_STATE_LIFECYCLE_STATS_TEST_LINES: usize = 160;
 const MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_LINES: usize = 180;
 const MAX_O3_RUNTIME_ISSUE_STATE_ROLLBACK_TEST_LINES: usize = 180;
 const MAX_O3_RUNTIME_ISSUE_STATE_TEST_SUPPORT_LINES: usize = 80;
 const MAX_O3_RUNTIME_ISSUE_SERVICE_LINES: usize = 600;
 const MAX_O3_RUNTIME_ISSUE_SERVICE_TEST_LINES: usize = 500;
+const MAX_O3_RUNTIME_ISSUE_SERVICE_PENDING_ADDRESS_PUBLICATION_TEST_LINES: usize = 130;
 const MAX_O3_RUNTIME_ISSUE_SERVICE_SCHEDULER_REQUEST_TEST_LINES: usize = 300;
 const MAX_O3_RUNTIME_ISSUE_TRANSACTION_LINES: usize = 450;
 const MAX_O3_RUNTIME_ISSUE_TRANSACTION_TEST_LINES: usize = 350;
@@ -52,6 +55,7 @@ const MAX_O3_RUNTIME_CONTROL_WINDOW_LINEAGE_TEST_LINES: usize = 120;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_TARGET_TEST_LINES: usize = 225;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_NONADJACENT_TARGET_TEST_LINES: usize = 180;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_RETURN_TEST_LINES: usize = 200;
+const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_RETURN_RETENTION_TEST_LINES: usize = 80;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_SCALAR_RETURN_TEST_LINES: usize = 240;
 const MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_CHAIN_VALIDATION_TEST_LINES: usize = 180;
 const MAX_O3_RUNTIME_PRODUCER_FORWARDED_CHAIN_LINES: usize = 650;
@@ -61,10 +65,12 @@ const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CHAIN_VALIDATION_TEST_LINES: usiz
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CONTROL_VALIDATION_TEST_LINES: usize = 100;
 const MAX_RISCV_FETCH_AHEAD_RAS_REQUIRED_VALIDATION_TEST_LINES: usize = 100;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_RETURN_TEST_LINES: usize = 200;
+const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_RETURN_RETENTION_TEST_LINES: usize = 90;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_RETURN_LINK_SHAPES_TEST_LINES: usize = 100;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_SCALAR_RETURN_TEST_LINES: usize = 600;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_SCALAR_RETURN_LINK_SHAPES_TEST_LINES: usize = 100;
 const MAX_RISCV_FETCH_AHEAD_PREPARED_LINES: usize = 175;
+const MAX_RISCV_FETCH_AHEAD_RETIRE_GATE_TEST_LINES: usize = 60;
 const MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_CONTINUATION_LINES: usize = 240;
 const MAX_RISCV_FETCH_AHEAD_PREPARED_OWNER_LINES: usize = 390;
 const MAX_RISCV_DATA_ACCESS_RESULT_LINES: usize = 450;
@@ -106,8 +112,10 @@ const MAX_O3_RUNTIME_WRITEBACK_LINES: usize = 800;
 const MAX_O3_RUNTIME_WRITEBACK_REPLAN_LINES: usize = 600;
 const MAX_O3_RUNTIME_WRITEBACK_OWNERSHIP_LINES: usize = 300;
 const MAX_RISCV_O3_WRITEBACK_WAKE_LINES: usize = 800;
+const MAX_RISCV_O3_WRITEBACK_WAKE_LATE_TEST_LINES: usize = 120;
 const MAX_RISCV_DATA_ISSUE_TEST_ROOT_LINES: usize = 1500;
 const MAX_RISCV_DATA_ISSUE_LIFECYCLE_TEST_LINES: usize = 450;
+const MAX_RISCV_DATA_ISSUE_PERSISTENT_LIFECYCLE_TEST_LINES: usize = 120;
 const MAX_RISCV_O3_RESULT_PAIR_ADMISSION_LINES: usize = 300;
 const MAX_RISCV_TRANSLATED_RESULT_PAIR_TRANSLATION_LINES: usize = 500;
 const MAX_RISCV_TRANSLATED_RESULT_PAIR_ISSUE_TEST_LINES: usize = 450;
@@ -170,12 +178,20 @@ fn o3_persistent_iq_cpu_files_stay_focused() {
             MAX_O3_RUNTIME_ISSUE_STATE_DECISION_WINDOW_TEST_LINES,
         ),
         (
+            "src/o3_runtime_issue/state/wake.rs",
+            MAX_O3_RUNTIME_ISSUE_STATE_WAKE_LINES,
+        ),
+        (
             "src/o3_runtime_issue/state_tests.rs",
             MAX_O3_RUNTIME_ISSUE_STATE_TEST_LINES,
         ),
         (
             "src/o3_runtime_issue/state_tests/lifecycle.rs",
             MAX_O3_RUNTIME_ISSUE_STATE_LIFECYCLE_TEST_LINES,
+        ),
+        (
+            "src/o3_runtime_issue/state_tests/lifecycle_stats.rs",
+            MAX_O3_RUNTIME_ISSUE_STATE_LIFECYCLE_STATS_TEST_LINES,
         ),
         (
             "src/o3_runtime_issue/state/rollback.rs",
@@ -198,6 +214,10 @@ fn o3_persistent_iq_cpu_files_stay_focused() {
             MAX_O3_RUNTIME_ISSUE_SERVICE_TEST_LINES,
         ),
         (
+            "src/o3_runtime_issue/service_tests/pending_address_publication.rs",
+            MAX_O3_RUNTIME_ISSUE_SERVICE_PENDING_ADDRESS_PUBLICATION_TEST_LINES,
+        ),
+        (
             "src/o3_runtime_issue/service_tests/scheduler_request.rs",
             MAX_O3_RUNTIME_ISSUE_SERVICE_SCHEDULER_REQUEST_TEST_LINES,
         ),
@@ -212,6 +232,26 @@ fn o3_persistent_iq_cpu_files_stay_focused() {
         (
             "src/o3_runtime_issue/transaction_tests/replan.rs",
             MAX_O3_RUNTIME_ISSUE_TRANSACTION_REPLAN_TEST_LINES,
+        ),
+        (
+            "src/o3_runtime_control_window_tests/retention.rs",
+            MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_RETURN_RETENTION_TEST_LINES,
+        ),
+        (
+            "src/riscv_data_issue_tests/lifecycle/persistent_issue.rs",
+            MAX_RISCV_DATA_ISSUE_PERSISTENT_LIFECYCLE_TEST_LINES,
+        ),
+        (
+            "src/riscv_fetch_ahead/tests/producer_forwarded_return/return_retention.rs",
+            MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_RETURN_RETENTION_TEST_LINES,
+        ),
+        (
+            "src/riscv_fetch_ahead/tests/retire_gate.rs",
+            MAX_RISCV_FETCH_AHEAD_RETIRE_GATE_TEST_LINES,
+        ),
+        (
+            "src/riscv_o3_writeback_wake/tests/late_wake_tests.rs",
+            MAX_RISCV_O3_WRITEBACK_WAKE_LATE_TEST_LINES,
         ),
         (
             "tests/source_policy/live_issue_durable_cleanup.rs",
@@ -238,6 +278,322 @@ fn o3_persistent_iq_cpu_files_stay_focused() {
             "{relative} has {lines} lines; limit is {limit}"
         );
     }
+}
+
+#[test]
+fn task11_split_test_children_stay_attached_focused_and_capped() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let contracts: [(&str, &str, &str, &str, &[&str], usize); 6] = [
+        (
+            "src/o3_runtime_issue/state_tests.rs",
+            "src/o3_runtime_issue/state_tests/lifecycle_stats.rs",
+            "state_tests/lifecycle_stats.rs",
+            "lifecycle_stats",
+            &[
+                "live_issue_nonresident_cleanup_survives_stats_reset",
+                "live_issue_cleanup_is_idempotent_without_duplicate_trace",
+                "live_issue_full_discard_clears_transient_state_and_preserves_projected_stats",
+                "o3_runtime_restore_clears_live_issue_membership_telemetry_and_wake_from_drained_checkpoint",
+            ],
+            MAX_O3_RUNTIME_ISSUE_STATE_LIFECYCLE_STATS_TEST_LINES,
+        ),
+        (
+            "src/o3_runtime_control_window_tests/producer_forwarded_return.rs",
+            "src/o3_runtime_control_window_tests/retention.rs",
+            "retention.rs",
+            "retention",
+            &["committed_return_retains_exact_recorded_fetch_identity"],
+            MAX_O3_RUNTIME_CONTROL_WINDOW_PRODUCER_FORWARDED_RETURN_RETENTION_TEST_LINES,
+        ),
+        (
+            "src/riscv_data_issue_tests/lifecycle.rs",
+            "src/riscv_data_issue_tests/lifecycle/persistent_issue.rs",
+            "lifecycle/persistent_issue.rs",
+            "persistent_issue",
+            &["completed_scalar_load_blocks_younger_retirement_until_o3_event_is_consumed"],
+            MAX_RISCV_DATA_ISSUE_PERSISTENT_LIFECYCLE_TEST_LINES,
+        ),
+        (
+            "src/riscv_fetch_ahead/tests/producer_forwarded_return.rs",
+            "src/riscv_fetch_ahead/tests/producer_forwarded_return/return_retention.rs",
+            "producer_forwarded_return/return_retention.rs",
+            "return_retention",
+            &[
+                "producer_forwarded_return_apply_records_retirement_trace_authority",
+                "committed_producer_forwarded_call_retains_direct_return_ras_authority",
+            ],
+            MAX_RISCV_FETCH_AHEAD_PRODUCER_FORWARDED_RETURN_RETENTION_TEST_LINES,
+        ),
+        (
+            "src/riscv_fetch_ahead/tests.rs",
+            "src/riscv_fetch_ahead/tests/retire_gate.rs",
+            "tests/retire_gate.rs",
+            "retire_gate",
+            &["architectural_predecessor_retires_before_younger_branch_speculation"],
+            MAX_RISCV_FETCH_AHEAD_RETIRE_GATE_TEST_LINES,
+        ),
+        (
+            "src/riscv_o3_writeback_wake.rs",
+            "src/riscv_o3_writeback_wake/tests/late_wake_tests.rs",
+            "late_wake_tests.rs",
+            "late_wake_tests",
+            &[
+                "restored_live_retire_gate_polled_late_requests_current_tick",
+                "unpublished_memory_result_polled_late_requests_current_tick",
+                "detailed_policy_disable_preserves_iq_only_scheduled_wake_until_it_fires",
+                "detailed_policy_disable_rebases_remaining_memory_result_demand",
+                "detailed_policy_disable_keeps_earlier_wake_until_later_memory_demand_is_rescheduled",
+            ],
+            MAX_RISCV_O3_WRITEBACK_WAKE_LATE_TEST_LINES,
+        ),
+    ];
+
+    for (parent_relative, child_relative, module_path, module, tests, max_lines) in contracts {
+        let parent = fs::read_to_string(crate_dir.join(parent_relative)).unwrap();
+        let child = fs::read_to_string(crate_dir.join(child_relative)).unwrap();
+        assert!(
+            focused_split_test_child_contract(
+                &parent,
+                &child,
+                module_path,
+                module,
+                tests,
+                max_lines,
+            ),
+            "invalid focused split-test contract for {child_relative}",
+        );
+
+        let detached_parent = parent.replacen(&format!("#[path = \"{module_path}\"]"), "", 1);
+        assert_ne!(
+            detached_parent, parent,
+            "attachment mutation did not apply for {parent_relative}",
+        );
+        assert!(!focused_split_test_child_contract(
+            &detached_parent,
+            &child,
+            module_path,
+            module,
+            tests,
+            max_lines,
+        ));
+
+        let disabled_parent = parent.replacen(
+            &format!("#[path = \"{module_path}\"]"),
+            &format!("#[cfg(any())]\nmod disabled_attachment {{\n    #[path = \"{module_path}\"]"),
+            1,
+        );
+        let disabled_parent =
+            disabled_parent.replacen(&format!("mod {module};"), &format!("mod {module};\n}}"), 1);
+        assert_ne!(
+            disabled_parent, parent,
+            "disabled-attachment mutation did not apply for {parent_relative}",
+        );
+        assert!(!focused_split_test_child_contract(
+            &disabled_parent,
+            &child,
+            module_path,
+            module,
+            tests,
+            max_lines,
+        ));
+
+        let globally_disabled_parent = format!("#![cfg(any())]\n{parent}");
+        assert!(!focused_split_test_child_contract(
+            &globally_disabled_parent,
+            &child,
+            module_path,
+            module,
+            tests,
+            max_lines,
+        ));
+
+        let gated_attachment = parent.replacen(
+            &format!("#[path = \"{module_path}\"]"),
+            &format!("#[cfg(any())]\n#[path = \"{module_path}\"]"),
+            1,
+        );
+        assert_ne!(
+            gated_attachment, parent,
+            "gated-attachment mutation did not apply for {parent_relative}",
+        );
+        assert!(!focused_split_test_child_contract(
+            &gated_attachment,
+            &child,
+            module_path,
+            module,
+            tests,
+            max_lines,
+        ));
+
+        let duplicate_gated_attachment =
+            format!("{parent}\n#[cfg(any())]\n#[path = \"{module_path}\"]\nmod {module};\n");
+        assert!(!focused_split_test_child_contract(
+            &duplicate_gated_attachment,
+            &child,
+            module_path,
+            module,
+            tests,
+            max_lines,
+        ));
+
+        let duplicate_compact_path =
+            format!("{parent}\n#[cfg(any())]\n#[path=\"{module_path}\"]\nmod disabled_{module};\n");
+        assert!(!focused_split_test_child_contract(
+            &duplicate_compact_path,
+            &child,
+            module_path,
+            module,
+            tests,
+            max_lines,
+        ));
+
+        let duplicate_raw_path = format!(
+            "{parent}\n#[cfg(any())]\n#[path = r\"{module_path}\"]\nmod raw_disabled_{module};\n"
+        );
+        assert!(!focused_split_test_child_contract(
+            &duplicate_raw_path,
+            &child,
+            module_path,
+            module,
+            tests,
+            max_lines,
+        ));
+
+        let duplicate_commented_path = format!(
+            "{parent}\n#[cfg(any())]\n#[path /* duplicate */ = \"{module_path}\"]\nmod commented_disabled_{module};\n"
+        );
+        assert!(!focused_split_test_child_contract(
+            &duplicate_commented_path,
+            &child,
+            module_path,
+            module,
+            tests,
+            max_lines,
+        ));
+
+        let escaped_path = module_path.replace('/', "\\x2f");
+        let duplicate_escaped_path =
+            format!("{parent}\n#[cfg(any())]\n#[path = \"{escaped_path}\"]\nmod r#{module};\n");
+        assert!(!focused_split_test_child_contract(
+            &duplicate_escaped_path,
+            &child,
+            module_path,
+            module,
+            tests,
+            max_lines,
+        ));
+
+        let missing_test = child.replacen("#[test]", "", 1);
+        assert_ne!(
+            missing_test, child,
+            "test-anchor mutation did not apply for {child_relative}",
+        );
+        assert!(!focused_split_test_child_contract(
+            &parent,
+            &missing_test,
+            module_path,
+            module,
+            tests,
+            max_lines,
+        ));
+
+        let compact_child = child.replacen("\n\n", "\n", 1);
+        assert_ne!(
+            compact_child, child,
+            "hidden-test line-budget mutation did not apply for {child_relative}",
+        );
+        let uninventoried_test =
+            format!("{compact_child}#[ /* hidden */ test] fn uninventoried() {{}}\n");
+        assert!(uninventoried_test.lines().count() <= max_lines);
+        assert!(!focused_split_test_child_contract(
+            &parent,
+            &uninventoried_test,
+            module_path,
+            module,
+            tests,
+            max_lines,
+        ));
+
+        let disabled_test = child.replacen("#[test]", "#[test]\n#[cfg(any())]", 1);
+        assert_ne!(
+            disabled_test, child,
+            "disabled-test mutation did not apply for {child_relative}",
+        );
+        assert!(!focused_split_test_child_contract(
+            &parent,
+            &disabled_test,
+            module_path,
+            module,
+            tests,
+            max_lines,
+        ));
+
+        let disabled_child = format!("#[cfg(any())]\nmod disabled_tests {{\n{child}\n}}\n");
+        assert!(!focused_split_test_child_contract(
+            &parent,
+            &disabled_child,
+            module_path,
+            module,
+            tests,
+            max_lines,
+        ));
+
+        let nested_child = format!("{child}\nmod detached_test_child;\n");
+        assert!(!focused_split_test_child_contract(
+            &parent,
+            &nested_child,
+            module_path,
+            module,
+            tests,
+            max_lines,
+        ));
+
+        let inline_child = format!("{child}\nmod detached_test_child {{}}\n");
+        assert!(!focused_split_test_child_contract(
+            &parent,
+            &inline_child,
+            module_path,
+            module,
+            tests,
+            max_lines,
+        ));
+
+        let oversized = format!(
+            "{child}{}",
+            "\n// source-policy cap mutation".repeat(max_lines + 1)
+        );
+        assert!(!focused_split_test_child_contract(
+            &parent,
+            &oversized,
+            module_path,
+            module,
+            tests,
+            max_lines,
+        ));
+    }
+}
+
+fn focused_split_test_child_contract(
+    parent: &str,
+    child: &str,
+    module_path: &str,
+    module: &str,
+    tests: &[&str],
+    max_lines: usize,
+) -> bool {
+    exact_path_attribute_count(parent, module_path) == 1
+        && active_test_path_owned_module_declaration_count(parent, module_path, module) == 1
+        && rust_module_declaration_count(parent, module) == 1
+        && inner_attribute_lines(parent).is_empty()
+        && child.lines().count() <= max_lines
+        && include_macro_lines(child).is_empty()
+        && rust_module_declaration_lines(child).is_empty()
+        && path_attribute_lines(child).is_empty()
+        && non_test_attribute_lines(child).is_empty()
+        && rust_test_attribute_count(child) == tests.len()
+        && tests
+            .iter()
+            .all(|test| top_level_rust_test_function_definition_count(child, test) == 1)
 }
 
 #[test]
@@ -1120,6 +1476,9 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let pending_staging_path = crate_dir.join("src/o3_runtime_pending_address_staging.rs");
     let issue_root_path = crate_dir.join("src/o3_runtime_issue.rs");
     let issue_service_path = crate_dir.join("src/o3_runtime_issue/service.rs");
+    let issue_service_test_path = crate_dir.join("src/o3_runtime_issue/service_tests.rs");
+    let issue_publication_test_path =
+        crate_dir.join("src/o3_runtime_issue/service_tests/pending_address_publication.rs");
     let issue_transaction_path = crate_dir.join("src/o3_runtime_issue/transaction.rs");
     let issue_calendar_path = crate_dir.join("src/o3_runtime_issue/calendar.rs");
     let issue_pending_path = crate_dir.join("src/o3_runtime_issue/pending_address.rs");
@@ -1141,6 +1500,8 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         &pending_staging_path,
         &issue_root_path,
         &issue_service_path,
+        &issue_service_test_path,
+        &issue_publication_test_path,
         &issue_transaction_path,
         &issue_calendar_path,
         &issue_pending_path,
@@ -1169,6 +1530,8 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let pending_staging = fs::read_to_string(&pending_staging_path).unwrap();
     let issue_root = fs::read_to_string(&issue_root_path).unwrap();
     let issue_service = fs::read_to_string(&issue_service_path).unwrap();
+    let issue_service_test = fs::read_to_string(&issue_service_test_path).unwrap();
+    let issue_publication_test = fs::read_to_string(&issue_publication_test_path).unwrap();
     let issue_transaction = fs::read_to_string(&issue_transaction_path).unwrap();
     let issue_calendar = fs::read_to_string(&issue_calendar_path).unwrap();
     let issue_pending = fs::read_to_string(&issue_pending_path).unwrap();
@@ -1265,6 +1628,15 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     );
     assert_eq!(
         path_owned_module_declaration_count(
+            &issue_service_test,
+            "service_tests/pending_address_publication.rs",
+            "pending_address_publication"
+        ),
+        1,
+        "issue service tests must use the focused pending-address publication child exactly once"
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
             &test_root,
             "o3_runtime_pending_address_tests/multiple.rs",
             "multiple"
@@ -1297,6 +1669,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     assert!(include_macro_lines(&test_root).is_empty());
     assert!(include_macro_lines(&staging_test).is_empty());
     assert!(include_macro_lines(&scheduling_test).is_empty());
+    assert!(include_macro_lines(&issue_publication_test).is_empty());
     assert!(include_macro_lines(&lifecycle_test).is_empty());
     assert!(include_macro_lines(&multiple_test).is_empty());
     assert!(include_macro_lines(&three_pending_test).is_empty());
@@ -1316,6 +1689,8 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
             && path_attribute_lines(&staging_test).is_empty()
             && external_module_declaration_lines(&scheduling_test).is_empty()
             && path_attribute_lines(&scheduling_test).is_empty()
+            && external_module_declaration_lines(&issue_publication_test).is_empty()
+            && path_attribute_lines(&issue_publication_test).is_empty()
             && external_module_declaration_lines(&lifecycle_test).is_empty()
             && path_attribute_lines(&lifecycle_test).is_empty()
             && external_module_declaration_lines(&multiple_test).is_empty()
@@ -1354,6 +1729,11 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     assert!(
         line_count(&scheduling_test_path) <= MAX_O3_RUNTIME_PENDING_ADDRESS_SCHEDULING_TEST_LINES,
         "o3_runtime_pending_address_tests/scheduling.rs exceeds {MAX_O3_RUNTIME_PENDING_ADDRESS_SCHEDULING_TEST_LINES} lines"
+    );
+    assert!(
+        line_count(&issue_publication_test_path)
+            <= MAX_O3_RUNTIME_ISSUE_SERVICE_PENDING_ADDRESS_PUBLICATION_TEST_LINES,
+        "o3_runtime_issue/service_tests/pending_address_publication.rs exceeds {MAX_O3_RUNTIME_ISSUE_SERVICE_PENDING_ADDRESS_PUBLICATION_TEST_LINES} lines"
     );
     assert!(
         line_count(&lifecycle_test_path) <= MAX_O3_RUNTIME_PENDING_ADDRESS_LIFECYCLE_TEST_LINES,
@@ -1642,8 +2022,8 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         .find("self.pending_data_addresses.take_from(sequence)")
         .expect("boundary discard must take all matching collection rows");
     let cleanup_position = discard_definition
-        .find("discard_live_staged_window_from")
-        .expect("boundary discard must clean the staged suffix");
+        .find("discard_replayed_live_staged_window_from")
+        .expect("boundary discard must clean the replayed staged suffix");
     assert!(remove_position < cleanup_position);
     assert!(issue_pending_code.contains("pending.fetch_predecessor_request"));
     assert!(!production_code.contains("producer_fetch"));
@@ -2015,6 +2395,25 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
             rust_function_definition_count(&scheduling_test_code, anchor),
             1,
             "missing or duplicated pending-address scheduling test `{anchor}`"
+        );
+    }
+
+    let expected_publication_tests = [
+        "pending_address_publication_rearms_same_tick_without_replay",
+        "pending_address_late_publication_keeps_ready_tick_and_clamps_wake_to_now",
+    ];
+    let issue_publication_test_code =
+        rust_code_without_comments_and_literals(&issue_publication_test);
+    assert_eq!(
+        issue_publication_test_code.matches("#[test]").count(),
+        expected_publication_tests.len(),
+        "pending-address publication tests must expose exactly the focused inventory"
+    );
+    for anchor in expected_publication_tests {
+        assert_eq!(
+            rust_function_definition_count(&issue_publication_test_code, anchor),
+            1,
+            "missing or duplicated pending-address publication test `{anchor}`"
         );
     }
 
@@ -4185,8 +4584,9 @@ fn o3_persistent_live_issue_cleanup_is_centralized_before_metadata_removal() {
     assert!(lifecycle_cleanup.contains("fn discard_live_issue_suffix_at"));
     assert!(lifecycle_cleanup.contains("fn discard_all_live_issue_transient_state"));
     assert!(lifecycle_cleanup.contains("self.live_issue_identity(sequence)"));
-    assert!(lifecycle_cleanup.contains("self.live_issue_rows_from(boundary)"));
-    assert!(lifecycle_cleanup.contains("self.prepare_live_issue_cleanup_wake("));
+    assert!(lifecycle_cleanup.contains("self.live_issue_rows_from(removal_boundary)"));
+    assert!(lifecycle_cleanup.contains("self.live_staged_issue_rows_from(removal_boundary)"));
+    assert!(lifecycle_cleanup.contains("self.live_issue.prepare_cleanup_wake("));
     let cleanup_identity = compact_rust_code(
         &rust_function_definition(&lifecycle_cleanup, "live_issue_identity")
             .expect("missing live_issue_identity"),
@@ -4200,18 +4600,33 @@ fn o3_persistent_live_issue_cleanup_is_centralized_before_metadata_removal() {
     );
     assert!(ordered_once_for_live_issue_cleanup(
         &exact_cleanup,
-        "self.prepare_live_issue_cleanup_wake(has_survivors,now);",
+        "self.live_issue.prepare_cleanup_wake(has_survivors,now);",
         ".remove_exact_at(sequence,action,pc,issue_class,now)",
     ));
     let suffix_cleanup = compact_rust_code(
-        &rust_function_definition(&lifecycle_cleanup, "discard_live_issue_suffix_at")
-            .expect("missing discard_live_issue_suffix_at"),
+        &rust_function_definition(
+            &lifecycle_cleanup,
+            "discard_live_issue_suffix_with_cleanup_boundary_at",
+        )
+        .expect("missing cleanup-boundary suffix owner"),
     );
-    assert!(ordered_once_for_live_issue_cleanup(
-        &suffix_cleanup,
-        "self.prepare_live_issue_cleanup_wake(first_removed!=0,now);",
-        ".remove_suffix_at(boundary,action,&rows,now)",
-    ));
+    let suffix_prepare = "self.live_issue.prepare_cleanup_wake(first_removed!=0,now);";
+    assert_eq!(suffix_cleanup.matches(suffix_prepare).count(), 1);
+    assert_eq!(
+        rust_method_call_positions(&suffix_cleanup, "remove_suffix_at").len(),
+        1
+    );
+    let suffix_remove = suffix_cleanup.find("remove_suffix_at(").unwrap();
+    assert!(suffix_cleanup.find(suffix_prepare).unwrap() < suffix_remove);
+    for argument in [
+        "removal_boundary",
+        "cleanup_boundary",
+        "action",
+        "&rows",
+        "now",
+    ] {
+        assert!(suffix_cleanup[suffix_remove..].contains(argument));
+    }
 
     let retire = compact_rust_code(
         &rust_function_definition(&live_window, "retire_live_staged_instruction")
@@ -4233,14 +4648,22 @@ fn o3_persistent_live_issue_cleanup_is_centralized_before_metadata_removal() {
         "self.snapshot.reorder_buffer.drain(index..);",
     ));
     let live_suffix = compact_rust_code(
-        &rust_function_definition(&live_window, "discard_live_staged_window_rows_from_at")
-            .expect("missing discard_live_staged_window_rows_from_at"),
+        &rust_function_definition(
+            &live_window,
+            "discard_live_staged_window_rows_from_with_cleanup_boundary_at",
+        )
+        .expect("missing staged cleanup-boundary owner"),
     );
     assert!(ordered_once_for_live_issue_cleanup(
         &live_suffix,
-        "self.discard_live_issue_suffix_at(sequence,O3LiveIssueTraceAction::Squashed,now",
+        "self.discard_live_staged_issue_suffix_with_cleanup_boundary_at(sequence,cleanup_boundary,action,now",
         "self.snapshot.reorder_buffer.retain(",
     ));
+    let replay_suffix = compact_rust_code(
+        &rust_function_definition(&live_window, "discard_replayed_live_staged_window_from")
+            .expect("missing replay-specific staged cleanup owner"),
+    );
+    assert!(replay_suffix.contains("O3LiveIssueTraceAction::Replayed"));
     let pending_suffix = compact_rust_code(
         &rust_function_definition(&pending, "discard_pending_data_address_at_internal")
             .expect("missing discard_pending_data_address_at_internal"),
@@ -4249,6 +4672,11 @@ fn o3_persistent_live_issue_cleanup_is_centralized_before_metadata_removal() {
         &pending_suffix,
         "self.discard_pending_live_issue_suffix_at(sequence,now);",
         "self.pending_data_addresses.take_from(sequence);",
+    ));
+    assert!(ordered_once_for_live_issue_cleanup(
+        &pending_suffix,
+        "self.pending_data_addresses.take_from(sequence);",
+        "self.discard_replayed_live_staged_window_from(first_removed,sequence,now);",
     ));
     let pending_issue_suffix = compact_rust_code(
         &rust_function_definition(&lifecycle_cleanup, "discard_pending_live_issue_suffix_at")
@@ -4279,6 +4707,12 @@ fn o3_persistent_live_issue_lifecycle_boundaries_are_queue_aware() {
         production_rust_source(&fs::read_to_string(crate_dir.join("src/o3_runtime.rs")).unwrap());
     let runtime_handoff = production_rust_source(
         &fs::read_to_string(crate_dir.join("src/o3_runtime_handoff.rs")).unwrap(),
+    );
+    let live_window = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/o3_runtime_live_window.rs")).unwrap(),
+    );
+    let hart_run_state = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/riscv_hart_run_state.rs")).unwrap(),
     );
     let core_handoff = production_rust_source(
         &fs::read_to_string(crate_dir.join("src/riscv_execution_mode_handoff.rs")).unwrap(),
@@ -4343,6 +4777,43 @@ fn o3_persistent_live_issue_lifecycle_boundaries_are_queue_aware() {
             .expect("missing set_detailed_live_retire_gate_enabled"),
     );
     assert!(disable.contains("state.o3_runtime.discard_all_live_issue_transient_state();"));
+    for (owner, lifecycle_anchor) in [
+        (
+            "discard_live_staged_instructions",
+            "self.discard_live_data_access_lifecycle();",
+        ),
+        (
+            "discard_live_staged_instructions_at",
+            "self.discard_live_data_access_lifecycle_at(now);",
+        ),
+    ] {
+        let teardown = compact_rust_code(
+            &rust_function_definition(&live_window, owner)
+                .unwrap_or_else(|| panic!("missing {owner}")),
+        );
+        let clears = teardown
+            .match_indices("self.discard_all_live_issue_transient_state();")
+            .map(|(position, _)| position)
+            .collect::<Vec<_>>();
+        let lifecycle = teardown
+            .find(lifecycle_anchor)
+            .unwrap_or_else(|| panic!("{owner} is missing `{lifecycle_anchor}`"));
+        assert_eq!(
+            clears.len(),
+            2,
+            "{owner} must clear before and after cleanup"
+        );
+        assert!(clears[0] < lifecycle && lifecycle < clears[1]);
+    }
+    let hart_reset = compact_rust_code(
+        &rust_function_definition(&hart_run_state, "enter_supervisor_hart_if")
+            .expect("missing supervisor hart reset owner"),
+    );
+    assert!(ordered_once_for_live_issue_cleanup(
+        &hart_reset,
+        "state.o3_runtime.discard_live_staged_instructions();",
+        "state.o3_runtime.reset_all_writeback_state_preserving_stats();",
+    ));
     assert!(
         checkpoint.contains("constO3_RUNTIME_CHECKPOINT_VERSION_WITH_WRITEBACK_PORT_STATS:u8=23;")
     );
@@ -5154,6 +5625,7 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
     let service_scheduler_request_tests_path =
         crate_dir.join("src/o3_runtime_issue/service_tests/scheduler_request.rs");
     let state_path = crate_dir.join("src/o3_runtime_issue/state.rs");
+    let state_wake_path = crate_dir.join("src/o3_runtime_issue/state/wake.rs");
     let state_tests_path = crate_dir.join("src/o3_runtime_issue/state_tests.rs");
     let decision_path = crate_dir.join("src/o3_runtime_issue/state/decision.rs");
     let decision_state_path = crate_dir.join("src/o3_runtime_issue/state/decision_state.rs");
@@ -5177,6 +5649,7 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
     let service_tests = format!("{service_tests_root}\n{service_scheduler_request_tests}");
     let state_source = fs::read_to_string(&state_path).unwrap();
     let state = production_rust_source(&state_source);
+    let state_wake = production_rust_source(&fs::read_to_string(&state_wake_path).unwrap());
     let state_tests = fs::read_to_string(&state_tests_path).unwrap();
     let decision = production_rust_source(&fs::read_to_string(&decision_path).unwrap());
     let decision_state = production_rust_source(&fs::read_to_string(&decision_state_path).unwrap());
@@ -5197,6 +5670,7 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
             <= MAX_O3_RUNTIME_ISSUE_SERVICE_SCHEDULER_REQUEST_TEST_LINES
     );
     assert!(line_count(&state_path) <= MAX_O3_RUNTIME_ISSUE_STATE_LINES);
+    assert!(line_count(&state_wake_path) <= MAX_O3_RUNTIME_ISSUE_STATE_WAKE_LINES);
     assert!(line_count(&decision_path) <= MAX_O3_RUNTIME_ISSUE_STATE_DECISION_LINES);
     assert!(line_count(&decision_state_path) <= MAX_O3_RUNTIME_ISSUE_STATE_DECISION_STATE_LINES);
     assert!(
@@ -5230,6 +5704,10 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
             "service_tests/scheduler_request.rs",
             "scheduler_request",
         ),
+        1,
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(&state_source, "state/wake.rs", "wake",),
         1,
     );
     assert_eq!(
@@ -5297,6 +5775,7 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
     assert!(o3_live_issue_scheduler_entry_is_pruned(
         &service,
         &state,
+        &state_wake,
         &decision_state,
         &decision_window,
     ));
@@ -6258,7 +6737,7 @@ fn riscv_o3_writeback_wake_lives_in_focused_module() {
         "scheduled: Option<RiscvO3WritebackWake>",
         "detached: Vec<RiscvO3WritebackWake>",
         "fn set_desired_tick(",
-        "if let Some(wake) = self.scheduled.take()",
+        "take_if(|wake| desired.is_none_or(|tick| tick < wake.tick()))",
         "self.detached.push(wake);",
     ];
     for anchor in wake_state_authority_patterns {
@@ -6460,6 +6939,36 @@ fn o3_writeback_wake_callback_services_live_issue_in_structural_order() {
     assert!(
         compact.contains("get_or_insert(RiscvCpuError::O3Runtime(error))"),
         "fired callback must preserve the first live-issue scheduler error as an O3 runtime error"
+    );
+
+    let production_sources = rust_source_files(&crate_dir.join("src"))
+        .into_iter()
+        .filter_map(|path| {
+            let relative = path.strip_prefix(crate_dir).unwrap().to_path_buf();
+            (!is_test_only_rust_source(&relative)).then(|| {
+                let source = production_rust_source(&fs::read_to_string(path).unwrap());
+                (relative, source)
+            })
+        })
+        .collect::<Vec<_>>();
+    let callers = |method: &str| {
+        production_sources
+            .iter()
+            .filter_map(|(relative, source)| {
+                let count = rust_method_call_positions(source, method).len();
+                (count != 0).then(|| (relative.clone(), count))
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        callers("service_live_issue_scheduler_at"),
+        vec![(PathBuf::from("src/riscv_o3_writeback_wake.rs"), 1)],
+        "only the fired writeback callback may enter the live-issue scheduler",
+    );
+    assert_eq!(
+        callers("service_live_issue_queue_at"),
+        vec![(PathBuf::from("src/o3_runtime_issue/service.rs"), 1)],
+        "only the scheduler-facing service owner may call one-tick queue service",
     );
 }
 
@@ -8260,12 +8769,39 @@ fn rust_function_definition_count(source: &str, name: &str) -> usize {
 }
 
 fn rust_test_function_definition_count(source: &str, name: &str) -> usize {
+    rust_test_function_definition_count_at_depth(source, name, None)
+}
+
+fn top_level_rust_test_function_definition_count(source: &str, name: &str) -> usize {
+    rust_test_function_definition_count_at_depth(source, name, Some(0))
+}
+
+fn rust_test_function_definition_count_at_depth(
+    source: &str,
+    name: &str,
+    required_depth: Option<i64>,
+) -> usize {
     let code = rust_code_without_comments_and_literals(source);
     let chars = code.chars().collect::<Vec<_>>();
     let mut index = 0;
     let mut count = 0;
+    let mut brace_depth = 0_i64;
     while index < chars.len() {
+        if chars[index] == '{' {
+            brace_depth += 1;
+            index += 1;
+            continue;
+        }
+        if chars[index] == '}' {
+            brace_depth -= 1;
+            index += 1;
+            continue;
+        }
         if chars.get(index) != Some(&'#') {
+            index += 1;
+            continue;
+        }
+        if required_depth.is_some_and(|required| brace_depth != required) {
             index += 1;
             continue;
         }
@@ -10037,6 +10573,7 @@ fn o3_live_issue_replay_finalization_is_shared(source: &str) -> bool {
 fn o3_live_issue_scheduler_entry_is_pruned(
     service_source: &str,
     state_source: &str,
+    state_wake_source: &str,
     decision_state_source: &str,
     decision_window_source: &str,
 ) -> bool {
@@ -10050,10 +10587,10 @@ fn o3_live_issue_scheduler_entry_is_pruned(
     else {
         return false;
     };
-    let Some(request) = rust_function_definition(state_source, "request_service_at") else {
+    let Some(request) = rust_function_definition(state_wake_source, "request_service_at") else {
         return false;
     };
-    let Some(begin) = rust_function_definition(state_source, "begin_service_at") else {
+    let Some(begin) = rust_function_definition(state_wake_source, "begin_service_at") else {
         return false;
     };
     let Some(state_entry) = rust_function_definition(decision_state_source, "enter_scheduler_at")
@@ -10613,6 +11150,8 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let service = fs::read_to_string(crate_dir.join("src/o3_runtime_issue/service.rs")).unwrap();
     let state = fs::read_to_string(crate_dir.join("src/o3_runtime_issue/state.rs")).unwrap();
+    let state_wake =
+        fs::read_to_string(crate_dir.join("src/o3_runtime_issue/state/wake.rs")).unwrap();
     let decision_state =
         fs::read_to_string(crate_dir.join("src/o3_runtime_issue/state/decision_state.rs")).unwrap();
     let decision_window =
@@ -10621,6 +11160,7 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
     assert!(o3_live_issue_scheduler_entry_is_pruned(
         &service,
         &state,
+        &state_wake,
         &decision_state,
         &decision_window,
     ));
@@ -10634,6 +11174,7 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
                 1,
             ),
             state.clone(),
+            state_wake.clone(),
             decision_state.clone(),
             decision_window.clone(),
         ),
@@ -10645,13 +11186,15 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
                 1,
             ),
             state.clone(),
+            state_wake.clone(),
             decision_state.clone(),
             decision_window.clone(),
         ),
         (
             "request path restores a global clamp",
             service.clone(),
-            state.replacen(
+            state.clone(),
+            state_wake.replacen(
                 "let requested = self\n            .requested_service_tick\n            .map_or(tick, |current| current.min(tick));",
                 "let requested = self.requested_service_tick.map_or(tick, |current| current.min(tick));\n        let requested = self.last_service_generation.map_or(requested, |(floor, _)| requested.max(floor));",
                 1,
@@ -10662,7 +11205,8 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
         (
             "begin path restores a global clamp",
             service.clone(),
-            state.replacen(
+            state.clone(),
+            state_wake.replacen(
                 "if requested > tick {",
                 "if self.last_service_generation.is_some_and(|(floor, _)| tick < floor) { return false; }\n        if requested > tick {",
                 1,
@@ -10678,6 +11222,7 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
                 1,
             ),
             state.clone(),
+            state_wake.clone(),
             decision_state.clone(),
             decision_window.clone(),
         ),
@@ -10685,6 +11230,7 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
             "active decision is not retained before pruning",
             service.clone(),
             state.clone(),
+            state_wake.clone(),
             decision_state.replacen(
                 "self.seal_current_decision();\n        self.scheduler_entry_tick = Some(earliest_tick);",
                 "let _ = self.active_tick.take();\n        self.scheduler_entry_tick = Some(earliest_tick);",
@@ -10696,6 +11242,7 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
             "monotonic scheduler assertion removed",
             service.clone(),
             state.clone(),
+            state_wake.clone(),
             decision_state.replacen(
                 "assert!(\n            self.scheduler_entry_tick\n                .is_none_or(|previous| earliest_tick >= previous),\n            \"live issue scheduler entry tick regressed\"\n        );",
                 "",
@@ -10711,6 +11258,7 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
                 1,
             ),
             state.clone(),
+            state_wake.clone(),
             decision_state.clone(),
             decision_window.clone(),
         ),
@@ -10722,6 +11270,7 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
                 1,
             ),
             state.clone(),
+            state_wake.clone(),
             decision_state.clone(),
             decision_window.clone(),
         ),
@@ -10729,6 +11278,7 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
             "retained decisions never finalize",
             service.clone(),
             state.clone(),
+            state_wake.clone(),
             decision_state.clone(),
             decision_window.replacen(
                 "let retained = self.ticks.split_off(&earliest_tick);",
@@ -10740,6 +11290,7 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
             "equal scheduler tick is finalized too early",
             service.clone(),
             state.clone(),
+            state_wake.clone(),
             decision_state.clone(),
             decision_window.replacen(
                 "let retained = self.ticks.split_off(&earliest_tick);",
@@ -10748,12 +11299,19 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
             ),
         ),
     ];
-    for (description, mutated_service, mutated_state, mutated_decision_state, mutated_window) in
-        mutations
+    for (
+        description,
+        mutated_service,
+        mutated_state,
+        mutated_state_wake,
+        mutated_decision_state,
+        mutated_window,
+    ) in mutations
     {
         assert!(
             mutated_service != service
                 || mutated_state != state
+                || mutated_state_wake != state_wake
                 || mutated_decision_state != decision_state
                 || mutated_window != decision_window,
             "scheduler-entry mutation did not apply: {description}",
@@ -10762,6 +11320,7 @@ fn o3_live_issue_scheduler_entry_policy_rejects_clamps_and_unbounded_tracking() 
             !o3_live_issue_scheduler_entry_is_pruned(
                 &mutated_service,
                 &mutated_state,
+                &mutated_state_wake,
                 &mutated_decision_state,
                 &mutated_window,
             ),
@@ -11904,6 +12463,427 @@ fn include_macro_lines(source: &str) -> Vec<usize> {
         index = end;
     }
     lines
+}
+
+fn inner_attribute_lines(source: &str) -> Vec<usize> {
+    rust_attribute_spans(source)
+        .into_iter()
+        .filter_map(|(inner, _, _, _, line)| inner.then_some(line))
+        .collect()
+}
+
+fn non_test_attribute_lines(source: &str) -> Vec<usize> {
+    let code = rust_code_without_comments_and_literals(source);
+    let chars = code.chars().collect::<Vec<_>>();
+    rust_attribute_spans(source)
+        .into_iter()
+        .filter_map(|(inner, _, open, close, line)| {
+            let attribute = chars[open + 1..close].iter().collect::<String>();
+            (inner || attribute.trim() != "test").then_some(line)
+        })
+        .collect()
+}
+
+fn rust_test_attribute_count(source: &str) -> usize {
+    let code = rust_code_without_comments_and_literals(source);
+    let chars = code.chars().collect::<Vec<_>>();
+    rust_attribute_spans(source)
+        .into_iter()
+        .filter(|(inner, _, open, close, _)| {
+            !*inner && chars[open + 1..*close].iter().collect::<String>().trim() == "test"
+        })
+        .count()
+}
+
+fn rust_attribute_spans(source: &str) -> Vec<(bool, usize, usize, usize, usize)> {
+    let code = rust_code_without_comments_and_literals(source);
+    let chars = code.chars().collect::<Vec<_>>();
+    let mut spans = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] != '#' {
+            index += 1;
+            continue;
+        }
+        let hash = index;
+        let mut open = skip_rust_whitespace(&chars, index + 1);
+        let inner = chars.get(open) == Some(&'!');
+        if inner {
+            open = skip_rust_whitespace(&chars, open + 1);
+        }
+        if chars.get(open) != Some(&'[') {
+            index += 1;
+            continue;
+        }
+        let Some(close) = matching_delimiter(&chars, open, '[', ']') else {
+            break;
+        };
+        let line = chars[..hash]
+            .iter()
+            .filter(|character| **character == '\n')
+            .count()
+            + 1;
+        spans.push((inner, hash, open, close, line));
+        index = close + 1;
+    }
+    spans
+}
+
+fn rust_module_declaration_lines(source: &str) -> Vec<usize> {
+    let code = rust_code_without_comments_and_literals(source);
+    let chars = code.chars().collect::<Vec<_>>();
+    let mut lines = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        if identifier == "mod" {
+            let name_start = skip_rust_whitespace(&chars, end);
+            if let Some((_, name_end)) = rust_module_identifier_at(&chars, name_start) {
+                let terminator = skip_rust_whitespace(&chars, name_end);
+                if matches!(chars.get(terminator), Some(';' | '{')) {
+                    lines.push(
+                        chars[..index]
+                            .iter()
+                            .filter(|character| **character == '\n')
+                            .count()
+                            + 1,
+                    );
+                }
+            }
+        }
+        index = end;
+    }
+    lines
+}
+
+fn active_test_path_owned_module_declaration_count(
+    source: &str,
+    path: &str,
+    module: &str,
+) -> usize {
+    let code = rust_code_without_comments_and_literals(source);
+    let code_chars = code.chars().collect::<Vec<_>>();
+    let source_chars = source.chars().collect::<Vec<_>>();
+    let depths = rust_brace_depths(&code_chars);
+    let attributes = rust_attribute_spans(source);
+    let active_test_scopes = active_cfg_test_module_body_ranges(source);
+    let expected = format!("path = \"{path}\"");
+
+    attributes
+        .iter()
+        .filter(|(inner, hash, open, close, _)| {
+            let active_location = depths.get(*hash) == Some(&0)
+                || (depths.get(*hash) == Some(&1)
+                    && active_test_scopes
+                        .iter()
+                        .any(|(body_open, body_close)| body_open < hash && hash < body_close));
+            if *inner || !active_location {
+                return false;
+            }
+            let attribute = source_chars[open + 1..*close].iter().collect::<String>();
+            if attribute.trim() != expected {
+                return false;
+            }
+            if attributes.iter().any(|(_, _, _, prior_close, _)| {
+                prior_close < hash
+                    && code_chars[prior_close + 1..*hash]
+                        .iter()
+                        .all(|character| character.is_whitespace())
+            }) {
+                return false;
+            }
+            private_external_module_declaration_at(&code_chars, close + 1)
+                .is_some_and(|(declared, _)| declared == module)
+        })
+        .count()
+}
+
+fn exact_path_attribute_count(source: &str, path: &str) -> usize {
+    let source_chars = source.chars().collect::<Vec<_>>();
+    let expected = format!("path = \"{path}\"");
+    rust_attribute_spans(source)
+        .into_iter()
+        .filter(|(inner, _, open, close, _)| {
+            if *inner {
+                return false;
+            }
+            let attribute = source_chars[open + 1..*close].iter().collect::<String>();
+            path_attribute_matches(&attribute, path, &expected)
+        })
+        .count()
+}
+
+fn path_attribute_matches(attribute: &str, path: &str, expected: &str) -> bool {
+    if attribute.trim() == expected {
+        return true;
+    }
+    let compact = compact_rust_attribute(attribute);
+    let Some(literal) = compact.strip_prefix("path=") else {
+        return false;
+    };
+    if decode_rust_string_literal(literal).is_some_and(|value| value == path) {
+        return true;
+    }
+    let Some(raw) = literal.strip_prefix('r') else {
+        return false;
+    };
+    let hashes = raw
+        .chars()
+        .take_while(|character| *character == '#')
+        .count();
+    let delimiter = "#".repeat(hashes);
+    let Some(value) = raw.strip_prefix(&format!("{delimiter}\"")) else {
+        return false;
+    };
+    value
+        .strip_suffix(&format!("\"{delimiter}"))
+        .is_some_and(|value| value == path)
+}
+
+fn decode_rust_string_literal(literal: &str) -> Option<String> {
+    let chars = literal.chars().collect::<Vec<_>>();
+    if chars.first() != Some(&'"') || chars.last() != Some(&'"') {
+        return None;
+    }
+    let mut decoded = String::new();
+    let mut index = 1;
+    let end = chars.len() - 1;
+    while index < end {
+        if chars[index] != '\\' {
+            decoded.push(chars[index]);
+            index += 1;
+            continue;
+        }
+        index += 1;
+        match *chars.get(index)? {
+            '\\' => decoded.push('\\'),
+            '"' => decoded.push('"'),
+            'n' => decoded.push('\n'),
+            'r' => decoded.push('\r'),
+            't' => decoded.push('\t'),
+            '0' => decoded.push('\0'),
+            'x' => {
+                let digits = chars.get(index + 1..index + 3)?.iter().collect::<String>();
+                decoded.push(char::from(u8::from_str_radix(&digits, 16).ok()?));
+                index += 2;
+            }
+            'u' => {
+                if chars.get(index + 1) != Some(&'{') {
+                    return None;
+                }
+                let close = chars[index + 2..end]
+                    .iter()
+                    .position(|character| *character == '}')?
+                    + index
+                    + 2;
+                let digits = chars[index + 2..close]
+                    .iter()
+                    .filter(|character| **character != '_')
+                    .collect::<String>();
+                decoded.push(char::from_u32(u32::from_str_radix(&digits, 16).ok()?)?);
+                index = close;
+            }
+            '\n' => {
+                while chars
+                    .get(index + 1)
+                    .is_some_and(|character| character.is_whitespace())
+                {
+                    index += 1;
+                }
+            }
+            _ => return None,
+        }
+        index += 1;
+    }
+    Some(decoded)
+}
+
+fn compact_rust_attribute(source: &str) -> String {
+    let chars = source.chars().collect::<Vec<_>>();
+    let mut compact = String::new();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index].is_whitespace() {
+            index += 1;
+            continue;
+        }
+        if chars[index] == '/' && chars.get(index + 1) == Some(&'/') {
+            index += 2;
+            while index < chars.len() && chars[index] != '\n' {
+                index += 1;
+            }
+            continue;
+        }
+        if chars[index] == '/' && chars.get(index + 1) == Some(&'*') {
+            let mut depth = 1;
+            index += 2;
+            while index < chars.len() && depth > 0 {
+                if chars[index] == '/' && chars.get(index + 1) == Some(&'*') {
+                    depth += 1;
+                    index += 2;
+                } else if chars[index] == '*' && chars.get(index + 1) == Some(&'/') {
+                    depth -= 1;
+                    index += 2;
+                } else {
+                    index += 1;
+                }
+            }
+            continue;
+        }
+        if chars[index] == 'r' {
+            let mut quote = index + 1;
+            while chars.get(quote) == Some(&'#') {
+                quote += 1;
+            }
+            if chars.get(quote) == Some(&'"') {
+                let start = index;
+                let hashes = quote - start - 1;
+                index = quote + 1;
+                while index < chars.len() {
+                    let closes = chars[index] == '"'
+                        && (0..hashes).all(|offset| chars.get(index + 1 + offset) == Some(&'#'));
+                    index += 1;
+                    if closes {
+                        index += hashes;
+                        break;
+                    }
+                }
+                compact.extend(chars[start..index].iter());
+                continue;
+            }
+        }
+        if chars[index] == '"' {
+            let start = index;
+            index += 1;
+            let mut escaped = false;
+            while index < chars.len() {
+                let current = chars[index];
+                index += 1;
+                if escaped {
+                    escaped = false;
+                } else if current == '\\' {
+                    escaped = true;
+                } else if current == '"' {
+                    break;
+                }
+            }
+            compact.extend(chars[start..index].iter());
+            continue;
+        }
+        compact.push(chars[index]);
+        index += 1;
+    }
+    compact
+}
+
+fn rust_module_declaration_count(source: &str, module: &str) -> usize {
+    let code = rust_code_without_comments_and_literals(source);
+    let chars = code.chars().collect::<Vec<_>>();
+    let mut count = 0;
+    let mut index = 0;
+    while index < chars.len() {
+        let Some((identifier, end)) = rust_identifier_at(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        if identifier == "mod" {
+            let name_start = skip_rust_whitespace(&chars, end);
+            if let Some((name, name_end)) = rust_module_identifier_at(&chars, name_start) {
+                let terminator = skip_rust_whitespace(&chars, name_end);
+                if name == module && matches!(chars.get(terminator), Some(';' | '{')) {
+                    count += 1;
+                }
+            }
+        }
+        index = end;
+    }
+    count
+}
+
+fn rust_module_identifier_at(chars: &[char], start: usize) -> Option<(String, usize)> {
+    if chars.get(start) == Some(&'r') && chars.get(start + 1) == Some(&'#') {
+        return rust_identifier_at(chars, start + 2);
+    }
+    rust_identifier_at(chars, start)
+}
+
+fn active_cfg_test_module_body_ranges(source: &str) -> Vec<(usize, usize)> {
+    let code = rust_code_without_comments_and_literals(source);
+    let chars = code.chars().collect::<Vec<_>>();
+    let depths = rust_brace_depths(&chars);
+    let attributes = rust_attribute_spans(source);
+
+    attributes
+        .iter()
+        .filter_map(|(inner, hash, open, close, _)| {
+            if *inner || depths.get(*hash) != Some(&0) {
+                return None;
+            }
+            let attribute = chars[open + 1..*close]
+                .iter()
+                .filter(|character| !character.is_whitespace())
+                .collect::<String>();
+            if attribute != "cfg(test)"
+                || attributes.iter().any(|(_, _, _, prior_close, _)| {
+                    prior_close < hash
+                        && chars[prior_close + 1..*hash]
+                            .iter()
+                            .all(|character| character.is_whitespace())
+                })
+            {
+                return None;
+            }
+            let (module, body_open) = private_inline_module_declaration_at(&chars, close + 1)?;
+            if module != "tests" {
+                return None;
+            }
+            let body_close = matching_delimiter(&chars, body_open, '{', '}')?;
+            Some((body_open, body_close))
+        })
+        .collect()
+}
+
+fn rust_brace_depths(chars: &[char]) -> Vec<i64> {
+    let mut depth = 0_i64;
+    chars
+        .iter()
+        .map(|character| {
+            let current = depth;
+            match character {
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                _ => {}
+            }
+            current
+        })
+        .collect()
+}
+
+fn private_external_module_declaration_at(chars: &[char], start: usize) -> Option<(String, usize)> {
+    let keyword_start = skip_rust_whitespace(chars, start);
+    let (keyword, keyword_end) = rust_identifier_at(chars, keyword_start)?;
+    if keyword != "mod" {
+        return None;
+    }
+    let name_start = skip_rust_whitespace(chars, keyword_end);
+    let (name, name_end) = rust_module_identifier_at(chars, name_start)?;
+    let terminator = skip_rust_whitespace(chars, name_end);
+    (chars.get(terminator) == Some(&';')).then_some((name, terminator + 1))
+}
+
+fn private_inline_module_declaration_at(chars: &[char], start: usize) -> Option<(String, usize)> {
+    let keyword_start = skip_rust_whitespace(chars, start);
+    let (keyword, keyword_end) = rust_identifier_at(chars, keyword_start)?;
+    if keyword != "mod" {
+        return None;
+    }
+    let name_start = skip_rust_whitespace(chars, keyword_end);
+    let (name, name_end) = rust_module_identifier_at(chars, name_start)?;
+    let body_open = skip_rust_whitespace(chars, name_end);
+    (chars.get(body_open) == Some(&'{')).then_some((name, body_open))
 }
 
 fn path_attribute_lines(source: &str) -> Vec<usize> {
