@@ -8,6 +8,7 @@ const MAX_O3_RUNTIME_ISSUE_QUEUE_LINES: usize = 600;
 const MAX_O3_RUNTIME_ISSUE_QUEUE_MIXED_COMPUTE_TEST_LINES: usize = 450;
 const MAX_O3_RUNTIME_ISSUE_CALENDAR_MIXED_COMPUTE_TEST_LINES: usize = 120;
 const MAX_O3_RUNTIME_ISSUE_SERVICE_MIXED_COMPUTE_TEST_LINES: usize = 120;
+const MIGRATION_LEDGER: &str = "../../docs/architecture/gem5-to-rem6-migration.md";
 
 #[test]
 fn fp_vector_live_issue_uses_one_focused_operand_authority() {
@@ -564,4 +565,57 @@ fn fp_vector_live_issue_locks_task6_external_telemetry_schema() {
         assert!(!source.contains("system_issued_rows"));
     }
     assert!(compact_persistent_iq.contains("constPERSISTENT_IQ_QUEUE_STATS:[(&str,&str);11]"));
+}
+
+#[test]
+fn fp_vector_live_issue_locks_ledger_scope() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let ledger = fs::read_to_string(root.join(MIGRATION_LEDGER)).unwrap();
+    let cpu = ledger
+        .split_once("### CPU Execution Models - 74% representative")
+        .expect("missing CPU execution-model ledger section")
+        .1
+        .split("\n### ")
+        .next()
+        .unwrap();
+
+    for evidence in [
+        "scalar FP and vector-to-scalar",
+        "issued_by_class.scalar_float",
+        "issued_by_class.vector_to_scalar",
+    ] {
+        assert!(cpu.contains(evidence), "CPU ledger missing `{evidence}`");
+    }
+    for remaining_gap in [
+        "vector-destination arithmetic",
+        "FP/vector live-producer forwarding",
+        "positive system issue rows",
+    ] {
+        assert!(
+            cpu.contains(remaining_gap),
+            "CPU ledger missing non-claim `{remaining_gap}`",
+        );
+    }
+    let normalized_ledger = normalized_policy_text(&ledger);
+    for broad_claim in ["persistent vector arithmetic iq", "system issue support"] {
+        assert!(
+            !normalized_ledger.contains(broad_claim),
+            "migration ledger overclaims `{broad_claim}`",
+        );
+    }
+}
+
+fn normalized_policy_text(source: &str) -> String {
+    source
+        .chars()
+        .map(|character| {
+            character
+                .is_ascii_alphanumeric()
+                .then(|| character.to_ascii_lowercase())
+                .unwrap_or(' ')
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }

@@ -30,6 +30,15 @@ const PERSISTENT_IQ_ANCHORS: [&str; 11] = [
     "rem6_run_o3_persistent_iq_checkpoint_boundary",
     "rem6_run_timing_suppresses_o3_persistent_iq_surface",
 ];
+const MIXED_COMPUTE_ANCHORS: [&str; 7] = [
+    "rem6_run_o3_persistent_iq_width_one_serializes_fp_vector_results_direct",
+    "rem6_run_o3_persistent_iq_width_two_coissues_fp_vector_and_blocks_second_fp_direct",
+    "rem6_run_o3_persistent_iq_width_four_mixed_compute_hierarchy",
+    "rem6_run_o3_persistent_iq_dependent_fp_boundary",
+    "rem6_run_o3_persistent_iq_vector_destination_boundary",
+    "rem6_run_o3_persistent_iq_mixed_compute_checkpoint_boundary",
+    "rem6_run_timing_suppresses_o3_mixed_compute_surface",
+];
 const MOVED_GENERAL_IQ_ANCHORS: [&str; 6] = [
     "rem6_run_o3_general_iq_oldest_ready_width_one_direct",
     "rem6_run_o3_general_iq_oldest_ready_width_two_direct",
@@ -137,6 +146,21 @@ fn o3_persistent_iq_focused_owners_exist_and_stay_bounded() {
             "{O3_CLI_DIR} must define `{anchor}` exactly once globally",
         );
     }
+    for anchor in MIXED_COMPUTE_ANCHORS {
+        assert_eq!(
+            CORE_TEST_ANCHORS
+                .lines()
+                .filter(|registered| *registered == anchor)
+                .count(),
+            1,
+            "core_test_anchors.txt must register `{anchor}` exactly once"
+        );
+        assert_eq!(
+            function_definition_count(&global_definitions, anchor),
+            1,
+            "{O3_CLI_DIR} must define `{anchor}` exactly once globally",
+        );
+    }
     for anchor in MOVED_GENERAL_IQ_ANCHORS {
         assert_eq!(
             function_definition_count(&definitions, anchor),
@@ -186,7 +210,10 @@ fn o3_persistent_iq_ledger_claims_match_executable_evidence() {
     ] {
         assert!(cpu.contains(claim), "CPU evidence is missing `{claim}`");
     }
-    for anchor in PERSISTENT_IQ_ANCHORS {
+    for anchor in PERSISTENT_IQ_ANCHORS
+        .into_iter()
+        .chain(MIXED_COMPUTE_ANCHORS)
+    {
         assert!(cpu.contains(anchor), "CPU evidence is missing `{anchor}`");
     }
     for retired in MOVED_GENERAL_IQ_ANCHORS {
@@ -199,9 +226,23 @@ fn o3_persistent_iq_ledger_claims_match_executable_evidence() {
     assert!(!ledger.contains(
         "persistent and cross-class IQ/wakeup/select beyond the derived scalar/control/capacity-three-pending-address live queue"
     ));
+    for claim in [
+        "issued_by_class.scalar_float",
+        "issued_by_class.vector_to_scalar",
+        "scalar FP and vector-to-scalar",
+    ] {
+        assert!(cpu.contains(claim), "CPU evidence is missing `{claim}`");
+    }
     assert!(cpu.contains(
-        "FP/vector arithmetic and system issue rows, a general load/store queue scheduler, dependent stores or arbitrary atomics, arbitrary nonadjacent or unbounded dependency graphs, checkpoint-restorable live IQ/transport state, and a general O3 engine"
+        "vector-destination arithmetic, FP/vector live-producer forwarding and arbitrary mixed dependency graphs, positive system issue rows, a general load/store queue scheduler, dependent stores or arbitrary atomics, checkpoint-restorable live IQ/transport state, and a general O3 engine remain incomplete"
     ));
+    let normalized_ledger = normalized_policy_text(&ledger);
+    for broad_claim in ["persistent vector arithmetic iq", "system issue support"] {
+        assert!(
+            !normalized_ledger.contains(broad_claim),
+            "migration ledger overclaims `{broad_claim}`",
+        );
+    }
 
     let queue_surfaces = [
         "/cores/0/o3_runtime/issue/queue",
@@ -226,20 +267,57 @@ fn o3_persistent_iq_ledger_claims_match_executable_evidence() {
             "O3 host-action note is missing `{surface}`",
         );
     }
+    for class in [
+        "issued_by_class.scalar_float",
+        "issued_by_class.vector_to_scalar",
+    ] {
+        assert!(
+            host_note.contains(class),
+            "O3 host-action note is missing `{class}`",
+        );
+    }
+}
+
+#[test]
+fn o3_persistent_iq_function_inventory_descends_into_inline_modules() {
+    let source = r#"
+        fn anchor() {}
+        mod nested {
+            #[test]
+            fn anchor() {}
+            mod deeper {
+                fn descendant() {}
+            }
+        }
+    "#;
+
+    let definitions = parsed_function_definition_names("synthetic.rs", source);
+
+    assert_eq!(function_definition_count(&definitions, "anchor"), 2);
+    assert_eq!(function_definition_count(&definitions, "descendant"), 1);
 }
 
 fn parsed_function_definition_names(relative: &str, source: &str) -> Vec<String> {
-    syn::parse_file(source)
+    let syntax = syn::parse_file(source)
         .unwrap_or_else(|error| panic!("failed to parse {relative}: {error}"))
-        .items
-        .into_iter()
-        .filter_map(|item| {
-            let syn::Item::Fn(function) = item else {
-                return None;
-            };
-            Some(function.sig.ident.to_string())
-        })
-        .collect()
+        .items;
+    let mut definitions = Vec::new();
+    collect_function_definition_names(&syntax, &mut definitions);
+    definitions
+}
+
+fn collect_function_definition_names(items: &[syn::Item], definitions: &mut Vec<String>) {
+    for item in items {
+        match item {
+            syn::Item::Fn(function) => definitions.push(function.sig.ident.to_string()),
+            syn::Item::Mod(module) => {
+                if let Some((_, items)) = &module.content {
+                    collect_function_definition_names(items, definitions);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 fn function_definition_count(definitions: &[String], anchor: &str) -> usize {
@@ -277,4 +355,19 @@ fn component_section<'a>(ledger: &'a str, heading: &str) -> &'a str {
         .unwrap_or_else(|| panic!("missing component heading `{heading}`"))
         .1;
     after.split("\n### ").next().unwrap_or(after)
+}
+
+fn normalized_policy_text(source: &str) -> String {
+    source
+        .chars()
+        .map(|character| {
+            character
+                .is_ascii_alphanumeric()
+                .then(|| character.to_ascii_lowercase())
+                .unwrap_or(' ')
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
