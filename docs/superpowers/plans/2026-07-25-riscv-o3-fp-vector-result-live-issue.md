@@ -853,10 +853,16 @@ The fixture must:
 1. Initialize `f1`, `f2`, and `f3` with exact S-form bit patterns before detailed mode.
 2. Configure e32/m1 vector state and initialize a vector register before detailed mode.
 3. Switch CPU0 to detailed mode.
-4. Execute a long DIV head.
-5. Execute independent `fadd.s`, `vmv.x.s`, and a second independent FP row.
+4. Execute one independent scalar load with memory depth 1 and live depth 5 so
+   its completed younger window batches one long DIV plus the three mixed rows.
+5. Execute the long DIV, independent `fadd.s`, `vmv.x.s`, and a second
+   independent FP row in that order.
 6. Store the FP result bits and vector-to-scalar integer result to a fixed data area.
 7. Execute `m5_dump_stats` and `m5_exit`.
+
+Use a bounded direct route delay and a widened writeback port so the fixture
+tests issue arbitration rather than frontend trickle or unrelated writeback
+collisions.
 
 Use existing raw helpers plus local helpers:
 
@@ -880,7 +886,10 @@ Use `--dump-memory <address>:<length>` and assert `/memory/0/hex` contains the e
 
 Width 1 must show different selected ticks for FP and vector-result rows. Width 2 must show:
 
+- the DIV and all three mixed rows queued at one common admission tick;
+- the DIV selected at that admission tick;
 - `scalar_float` and `vector_to_scalar` selected at one common tick;
+- the mixed-class coissue exactly one tick after admission;
 - another `scalar_float` row retained with `retained_resource` at that tick;
 - that row selected on a later service tick;
 - `resource_blocked_row_cycles > 0`;
@@ -892,8 +901,8 @@ Use exact PC strings and lifecycle actions, not aggregate committed counts.
 - [ ] **Step 4: Run RED then green CLI tests**
 
 ```bash
-TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run rem6_run_o3_persistent_iq_width_one_serializes_fp_vector_results_direct -- --exact --nocapture
-TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run rem6_run_o3_persistent_iq_width_two_coissues_fp_vector_and_blocks_second_fp_direct -- --exact --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run m5_host_actions::o3::persistent_iq::mixed_compute::rem6_run_o3_persistent_iq_width_one_serializes_fp_vector_results_direct -- --exact --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run m5_host_actions::o3::persistent_iq::mixed_compute::rem6_run_o3_persistent_iq_width_two_coissues_fp_vector_and_blocks_second_fp_direct -- --exact --nocapture
 ```
 
 Expected after Tasks 1-6: PASS with exact memory and queue evidence.

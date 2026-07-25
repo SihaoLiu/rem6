@@ -256,9 +256,13 @@ No `system` issued counter is added because system rows are not admitted.
 
 ### Direct, Width 1
 
-Use a long scalar DIV head to open a four-row live window. Place one independent
-`fadd.s` and one independent `vmv.x.s` behind it, followed by one scalar result
-consumer or architectural witness outside the live window.
+Use one independent direct-memory scalar load as a bounded batching prelude.
+Its five-row live window contains, in order, a long scalar DIV, one independent
+`fadd.s`, one independent `vmv.x.s`, and a second independent scalar FP row.
+The load reservation consumes the initial width-one turn, after which DIV and
+the mixed rows serialize in queue order. This prelude is necessary because the
+direct frontend otherwise binds independent four-byte instructions one fetch
+round trip at a time and never presents a multi-row arbitration turn.
 
 Required evidence:
 
@@ -271,14 +275,17 @@ Required evidence:
 
 ### Direct, Width 2
 
-Use two independent scalar FP rows and one independent vector-to-scalar row
-behind a long head.
+Use the same direct-memory batching prelude. The load reservation and oldest
+DIV consume the first service turn, leaving two independent scalar FP rows and
+one independent vector-to-scalar row resident for the next width-two turn.
 
 Required evidence:
 
 - one FP row and the vector-result row can coissue when both are ready;
 - the second FP row is retained as resource blocked because the FP class has
   one slot;
+- all four younger rows share one queued tick, and DIV is selected exactly one
+  tick before the mixed-class coissue;
 - its selected tick is later than the first FP row; and
 - resource-blocked row-cycle telemetry increases.
 

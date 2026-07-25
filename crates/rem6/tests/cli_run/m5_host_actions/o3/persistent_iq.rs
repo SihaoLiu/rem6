@@ -9,6 +9,11 @@ use super::predicted_control::{
 };
 use super::*;
 
+#[path = "persistent_iq/mixed_compute.rs"]
+mod mixed_compute;
+#[path = "persistent_iq/mixed_compute_fixture.rs"]
+mod mixed_compute_fixture;
+
 const PERSISTENT_IQ_QUEUE_STATS: [(&str, &str); 11] = [
     ("enqueued_rows", "enqueued_rows"),
     ("service_turns", "service_turns"),

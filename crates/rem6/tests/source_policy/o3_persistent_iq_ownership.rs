@@ -2,7 +2,12 @@ use super::*;
 
 const MAX_PERSISTENT_IQ_CLI_LINES: usize = 900;
 const MAX_PERSISTENT_IQ_POLICY_LINES: usize = 600;
+const MAX_PERSISTENT_IQ_MIXED_COMPUTE_FIXTURE_LINES: usize = 320;
+const MAX_PERSISTENT_IQ_MIXED_COMPUTE_TEST_LINES: usize = 320;
 const PERSISTENT_IQ_CLI: &str = "tests/cli_run/m5_host_actions/o3/persistent_iq.rs";
+const MIXED_COMPUTE_FIXTURE: &str =
+    "tests/cli_run/m5_host_actions/o3/persistent_iq/mixed_compute_fixture.rs";
+const MIXED_COMPUTE_TESTS: &str = "tests/cli_run/m5_host_actions/o3/persistent_iq/mixed_compute.rs";
 const MIGRATION_LEDGER: &str = "docs/architecture/gem5-to-rem6-migration.md";
 const O3_CLI_DIR: &str = "tests/cli_run/m5_host_actions/o3";
 const RETIRED_GENERAL_IQ_OWNERS: [&str; 2] = [
@@ -38,7 +43,17 @@ fn o3_persistent_iq_focused_owners_exist_and_stay_bounded() {
     let policy = crate_dir.join("tests/source_policy/o3_persistent_iq_ownership.rs");
 
     assert!(cli.is_file(), "missing {}", cli.display());
+    assert!(crate_dir.join(MIXED_COMPUTE_FIXTURE).is_file());
+    assert!(crate_dir.join(MIXED_COMPUTE_TESTS).is_file());
     assert!(line_count(&cli) <= MAX_PERSISTENT_IQ_CLI_LINES);
+    assert!(
+        line_count(&crate_dir.join(MIXED_COMPUTE_FIXTURE))
+            <= MAX_PERSISTENT_IQ_MIXED_COMPUTE_FIXTURE_LINES
+    );
+    assert!(
+        line_count(&crate_dir.join(MIXED_COMPUTE_TESTS))
+            <= MAX_PERSISTENT_IQ_MIXED_COMPUTE_TEST_LINES
+    );
     assert!(line_count(&policy) <= MAX_PERSISTENT_IQ_POLICY_LINES);
     for retired in RETIRED_GENERAL_IQ_OWNERS {
         assert!(
@@ -48,6 +63,27 @@ fn o3_persistent_iq_focused_owners_exist_and_stay_bounded() {
     }
 
     let source = fs::read_to_string(&cli).unwrap();
+    for (module, path) in [
+        (
+            "mixed_compute_fixture",
+            "persistent_iq/mixed_compute_fixture.rs",
+        ),
+        ("mixed_compute", "persistent_iq/mixed_compute.rs"),
+    ] {
+        assert!(
+            module_has_path_attribute(&source, module, path),
+            "{PERSISTENT_IQ_CLI} must attach {module} from {path}",
+        );
+    }
+    let mixed_compute_source = fs::read_to_string(crate_dir.join(MIXED_COMPUTE_TESTS)).unwrap();
+    let mixed_compute_tests =
+        parsed_enabled_test_definition_names(MIXED_COMPUTE_TESTS, &mixed_compute_source);
+    for anchor in [
+        "rem6_run_o3_persistent_iq_width_one_serializes_fp_vector_results_direct",
+        "rem6_run_o3_persistent_iq_width_two_coissues_fp_vector_and_blocks_second_fp_direct",
+    ] {
+        assert_eq!(function_definition_count(&mixed_compute_tests, anchor), 1);
+    }
     let definitions = parsed_function_definition_names(PERSISTENT_IQ_CLI, &source);
     let global_definitions = rust_source_files(&crate_dir.join(O3_CLI_DIR))
         .into_iter()
@@ -187,6 +223,28 @@ fn function_definition_count(definitions: &[String], anchor: &str) -> usize {
         .iter()
         .filter(|definition| definition.as_str() == anchor)
         .count()
+}
+
+fn parsed_enabled_test_definition_names(relative: &str, source: &str) -> Vec<String> {
+    syn::parse_file(source)
+        .unwrap_or_else(|error| panic!("failed to parse {relative}: {error}"))
+        .items
+        .into_iter()
+        .filter_map(|item| {
+            let syn::Item::Fn(function) = item else {
+                return None;
+            };
+            let is_test = function
+                .attrs
+                .iter()
+                .any(|attribute| attribute.path().is_ident("test"));
+            let is_ignored = function
+                .attrs
+                .iter()
+                .any(|attribute| attribute.path().is_ident("ignore"));
+            (is_test && !is_ignored).then(|| function.sig.ident.to_string())
+        })
+        .collect()
 }
 
 fn component_section<'a>(ledger: &'a str, heading: &str) -> &'a str {
