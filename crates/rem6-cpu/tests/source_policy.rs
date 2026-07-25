@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "source_policy/fp_vector_live_issue.rs"]
+mod fp_vector_live_issue;
 #[path = "source_policy/live_issue_durable_cleanup.rs"]
 mod live_issue_durable_cleanup;
 #[path = "source_policy/live_issue_raw_removal.rs"]

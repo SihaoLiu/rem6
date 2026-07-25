@@ -63,6 +63,8 @@ mod o3_runtime_pending_address;
 #[path = "o3_runtime_pending_address_set.rs"]
 mod o3_runtime_pending_address_set;
 pub(crate) use o3_runtime_pending_address_set::O3_PENDING_DATA_ADDRESS_CAPACITY;
+#[path = "o3_live_compute_operands.rs"]
+mod o3_live_compute_operands;
 #[path = "o3_runtime_pending_address_staging.rs"]
 mod o3_runtime_pending_address_staging;
 #[cfg(test)]
@@ -90,6 +92,10 @@ mod o3_runtime_writeback_tests;
 mod o3_source_operands;
 #[path = "o3_store_forwarding.rs"]
 mod o3_store_forwarding;
+#[allow(unused_imports)]
+pub(crate) use o3_live_compute_operands::{
+    o3_live_compute_operands, O3ArchitecturalRegister, O3LiveComputeClass, O3LiveComputeOperands,
+};
 pub(crate) use o3_runtime_checkpoint::O3LiveRetireGateCheckpointPayload;
 pub use o3_runtime_checkpoint::O3RuntimeCheckpointPayload;
 use o3_runtime_control_window::*;
