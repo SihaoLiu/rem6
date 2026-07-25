@@ -2,8 +2,9 @@ use crate::{
     FloatRegister, Register, RiscvControlFlowSnapshot, RiscvControlFlowUpdate, RiscvCounterBank,
     RiscvCounterEnableCsr, RiscvCounterInhibitCsr, RiscvCounterSnapshot, RiscvFloatStatus,
     RiscvGdbXlen, RiscvInterruptCsr, RiscvPrivilegeMode, RiscvStatusWord, RiscvSv39AccessContext,
-    RiscvVectorConfig, RiscvVectorFixedPointState, RiscvVectorFixedRoundingMode, VectorRegister,
-    RISCV_VECTOR_REGISTER_BYTES,
+    RiscvVectorArchitecturalState, RiscvVectorConfig, RiscvVectorFixedPointState,
+    RiscvVectorFixedRoundingMode, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
+    RISCV_VECTOR_REGISTER_COUNT,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -39,7 +40,7 @@ pub struct RiscvHartState {
     pub(crate) vector_fixed_point: RiscvVectorFixedPointState,
     pub(crate) registers: [u64; 32],
     pub(crate) float_registers: [u64; 32],
-    pub(crate) vector_registers: [[u8; RISCV_VECTOR_REGISTER_BYTES]; 32],
+    pub(crate) vector_registers: [[u8; RISCV_VECTOR_REGISTER_BYTES]; RISCV_VECTOR_REGISTER_COUNT],
 }
 
 impl RiscvHartState {
@@ -82,7 +83,7 @@ impl RiscvHartState {
             ),
             registers: [0; 32],
             float_registers: [0; 32],
-            vector_registers: [[0; RISCV_VECTOR_REGISTER_BYTES]; 32],
+            vector_registers: [[0; RISCV_VECTOR_REGISTER_BYTES]; RISCV_VECTOR_REGISTER_COUNT],
         }
     }
 
@@ -411,6 +412,20 @@ impl RiscvHartState {
 
     pub fn set_vector_fixed_point(&mut self, state: RiscvVectorFixedPointState) {
         self.vector_fixed_point = state;
+    }
+
+    pub const fn vector_architectural_state(&self) -> RiscvVectorArchitecturalState {
+        RiscvVectorArchitecturalState::new(
+            self.vector_config,
+            self.vector_fixed_point,
+            self.vector_registers,
+        )
+    }
+
+    pub fn restore_vector_architectural_state(&mut self, state: &RiscvVectorArchitecturalState) {
+        self.vector_config = state.config();
+        self.vector_fixed_point = state.fixed_point();
+        self.vector_registers = *state.registers();
     }
 
     pub const fn control_flow_snapshot(&self) -> RiscvControlFlowSnapshot {

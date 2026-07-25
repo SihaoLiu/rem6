@@ -31,6 +31,7 @@ mod trap;
 mod trap_csr;
 mod types;
 mod vector;
+mod vector_architectural_state;
 mod vector_averaging;
 mod vector_compress_execute;
 mod vector_config_execute;
@@ -115,6 +116,7 @@ pub use vector::{
     RiscvVectorNarrowOperation, RiscvVectorScalarMoveInstruction, RiscvVectorSlideInstruction,
     RiscvVectorTailPolicy, RiscvVectorWholeMoveInstruction,
 };
+pub use vector_architectural_state::{RiscvVectorArchitecturalState, RISCV_VECTOR_REGISTER_COUNT};
 pub use vector_averaging::RiscvVectorAveragingInstruction;
 pub use vector_fixed_point_csr::{RiscvVectorFixedPointCsr, RiscvVectorFixedPointCsrInstruction};
 pub use vector_fixed_point_shift::RiscvVectorFixedPointShiftInstruction;
