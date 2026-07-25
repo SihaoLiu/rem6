@@ -104,6 +104,66 @@ impl O3LiveIssueHeadReservation {
     }
 }
 
+fn live_issue_head_execution_is_valid(
+    entry: O3ReorderBufferEntry,
+    execution: &RiscvExecutionRecord,
+) -> bool {
+    if let Some(destination) = queue::staged_compute_destination(entry, execution.instruction()) {
+        return queue::valid_recorded_compute_execution(
+            execution,
+            entry.pc(),
+            execution.instruction(),
+            destination,
+        );
+    }
+    valid_control_head_execution(entry, execution)
+}
+
+fn live_issue_head_consumes_writeback_slot(
+    entry: O3ReorderBufferEntry,
+    instruction: RiscvInstruction,
+) -> bool {
+    queue::staged_compute_destination(entry, instruction).is_some()
+        || o3_live_control_operands(instruction).is_some_and(|control| {
+            control
+                .destination()
+                .and_then(|destination| queue::staged_integer_destination(entry, destination))
+                .is_some()
+        })
+}
+
+fn valid_control_head_execution(
+    entry: O3ReorderBufferEntry,
+    execution: &RiscvExecutionRecord,
+) -> bool {
+    if entry.pc() != Address::new(execution.pc())
+        || execution.trap().is_some()
+        || execution.system_event().is_some()
+        || execution.memory_access().is_some()
+        || !execution.float_register_writes().is_empty()
+    {
+        return false;
+    }
+    let Some(control) = o3_live_control_operands(execution.instruction()) else {
+        return false;
+    };
+    let destination = match control.destination() {
+        Some(destination) => match queue::staged_integer_destination(entry, destination) {
+            Some(destination) => Some(destination),
+            None => return false,
+        },
+        None if entry.destination().is_none() && entry.rename_destination().is_none() => None,
+        None => return false,
+    };
+    match destination {
+        Some(destination) => {
+            execution.register_writes().len() == 1
+                && execution_writes_rename_destination(execution, destination)
+        }
+        None => execution.register_writes().is_empty(),
+    }
+}
+
 impl O3RuntimeState {
     pub(crate) fn live_issue_owns_fetch_request(&self, request: MemoryRequestId) -> bool {
         self.live_issue.resident_sequences().iter().any(|sequence| {
@@ -118,12 +178,13 @@ impl O3RuntimeState {
         sequence: u64,
         tick: u64,
     ) -> bool {
-        let Some(rob) = self
+        let Some((index, rob)) = self
             .snapshot
             .reorder_buffer
             .iter()
-            .copied()
-            .find(|entry| entry.is_live_staged() && entry.sequence() == sequence)
+            .enumerate()
+            .map(|(index, entry)| (index, *entry))
+            .find(|(_, entry)| entry.is_live_staged() && entry.sequence() == sequence)
         else {
             return false;
         };
@@ -144,6 +205,13 @@ impl O3RuntimeState {
         let issue_class = if pending.is_some() {
             Some(O3LiveIssueTraceClass::MemoryAgu)
         } else {
+            if !queue::live_issue_instruction_is_supported(packet.instruction()) {
+                return true;
+            }
+            let Some(_) = self.live_issue_scheduling_candidate_from_metadata(index, rob, packet)
+            else {
+                return true;
+            };
             queue::live_issue_trace_class(packet.instruction())
         };
         let Some(issue_class) = issue_class else {
@@ -194,15 +262,8 @@ impl O3RuntimeState {
         else {
             return Ok(false);
         };
-        if entry.pc() != Address::new(execution.pc())
-            || live_issue_op_class(execution.instruction()) != head.op_class
-            || execution.trap().is_some()
-            || execution.system_event().is_some()
-            || execution.memory_access().is_some()
-            || !execution.float_register_writes().is_empty()
-            || staged_rename_entry(entry).is_some_and(|destination| {
-                !execution_writes_rename_destination(&execution, destination)
-            })
+        if live_issue_op_class(execution.instruction()) != head.op_class
+            || !live_issue_head_execution_is_valid(entry, &execution)
         {
             return Ok(false);
         }
@@ -214,7 +275,8 @@ impl O3RuntimeState {
             .ok_or(O3RuntimeError::WritebackTickOverflow {
                 tick: head.issue_tick,
             })?;
-        let consumes_writeback_slot = staged_rename_entry(entry).is_some();
+        let consumes_writeback_slot =
+            live_issue_head_consumes_writeback_slot(entry, execution.instruction());
         let issue_class = live_issue_trace_class(execution.instruction());
         let writeback_reservation = self.reserve_fixed_fu_writeback(
             head.sequence(),

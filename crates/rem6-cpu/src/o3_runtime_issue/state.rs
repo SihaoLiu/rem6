@@ -49,6 +49,8 @@ pub struct O3LiveIssueTelemetry {
     integer_mul_div_issued_rows: u64,
     memory_agu_issued_rows: u64,
     control_issued_rows: u64,
+    scalar_float_issued_rows: u64,
+    vector_to_scalar_issued_rows: u64,
 }
 
 impl O3LiveIssueTelemetry {
@@ -56,6 +58,7 @@ impl O3LiveIssueTelemetry {
     copy_getters!(current_occupancy -> u64, peak_occupancy -> u64);
     copy_getters!(scalar_integer_issued_rows -> u64, integer_mul_div_issued_rows -> u64);
     copy_getters!(memory_agu_issued_rows -> u64, control_issued_rows -> u64);
+    copy_getters!(scalar_float_issued_rows -> u64, vector_to_scalar_issued_rows -> u64);
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -64,6 +67,8 @@ pub enum O3LiveIssueTraceClass {
     IntegerMulDiv,
     MemoryAgu,
     Control,
+    ScalarFloat,
+    VectorToScalar,
 }
 
 impl O3LiveIssueTraceClass {
@@ -73,6 +78,8 @@ impl O3LiveIssueTraceClass {
             Self::IntegerMulDiv => "integer_mul_div",
             Self::MemoryAgu => "memory_agu",
             Self::Control => "control",
+            Self::ScalarFloat => "scalar_float",
+            Self::VectorToScalar => "vector_to_scalar",
         }
     }
 }
@@ -411,6 +418,10 @@ impl O3LiveIssueState {
             O3LiveIssueTraceClass::IntegerMulDiv => &mut self.telemetry.integer_mul_div_issued_rows,
             O3LiveIssueTraceClass::MemoryAgu => &mut self.telemetry.memory_agu_issued_rows,
             O3LiveIssueTraceClass::Control => &mut self.telemetry.control_issued_rows,
+            O3LiveIssueTraceClass::ScalarFloat => &mut self.telemetry.scalar_float_issued_rows,
+            O3LiveIssueTraceClass::VectorToScalar => {
+                &mut self.telemetry.vector_to_scalar_issued_rows
+            }
         };
         *counter = counter.saturating_add(1);
     }

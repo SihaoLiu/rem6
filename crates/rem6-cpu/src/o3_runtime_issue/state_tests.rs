@@ -19,13 +19,10 @@ fn live_issue_state_enqueues_supported_bound_rows_once_and_orders_by_sequence() 
 }
 
 #[test]
-fn live_issue_state_skips_bound_fp_vector_and_system_rows() {
+fn live_issue_state_skips_bound_vector_destination_and_system_rows() {
     let mut runtime = O3RuntimeState::default();
-    for (pc, raw, request_sequence) in [
-        (BRANCH_PC, 0x0020_81d3, 11),
-        (SECOND_PC, 0x0220_81d7, 12),
-        (THIRD_PC, 0x0000_0073, 13),
-    ] {
+    for (pc, raw, request_sequence) in [(BRANCH_PC, 0x0220_81d7, 11), (SECOND_PC, 0x0000_0073, 12)]
+    {
         let decoded = RiscvInstruction::decode_with_length(raw).unwrap();
         runtime
             .stage_live_instruction(Address::new(pc), decoded.instruction(), 0)
@@ -156,6 +153,52 @@ fn live_issue_state_stats_reset_preserves_membership_and_requested_wake() {
     assert_eq!(state.telemetry().integer_mul_div_issued_rows(), 0);
     assert_eq!(state.telemetry().memory_agu_issued_rows(), 0);
     assert_eq!(state.telemetry().control_issued_rows(), 0);
+    assert_eq!(state.telemetry().scalar_float_issued_rows(), 0);
+    assert_eq!(state.telemetry().vector_to_scalar_issued_rows(), 0);
+}
+
+#[test]
+fn live_issue_state_records_each_selected_trace_class_counter() {
+    let mut state = O3LiveIssueState::default();
+    for (index, issue_class) in [
+        O3LiveIssueTraceClass::ScalarInteger,
+        O3LiveIssueTraceClass::IntegerMulDiv,
+        O3LiveIssueTraceClass::MemoryAgu,
+        O3LiveIssueTraceClass::Control,
+        O3LiveIssueTraceClass::ScalarFloat,
+        O3LiveIssueTraceClass::VectorToScalar,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let sequence = u64::try_from(index + 1).unwrap();
+        assert!(state.enqueue_at(
+            sequence,
+            Address::new(0x8020 + sequence * 4),
+            issue_class,
+            41,
+        ));
+        assert!(state.remove_exact_at_for_test(
+            sequence,
+            O3LiveIssueTraceAction::Selected,
+            Address::new(0x8020 + sequence * 4),
+            issue_class,
+            42,
+        ));
+    }
+
+    let telemetry = state.telemetry();
+    assert_eq!(telemetry.scalar_integer_issued_rows(), 1);
+    assert_eq!(telemetry.integer_mul_div_issued_rows(), 1);
+    assert_eq!(telemetry.memory_agu_issued_rows(), 1);
+    assert_eq!(telemetry.control_issued_rows(), 1);
+    assert_eq!(telemetry.scalar_float_issued_rows(), 1);
+    assert_eq!(telemetry.vector_to_scalar_issued_rows(), 1);
+    assert_eq!(O3LiveIssueTraceClass::ScalarFloat.name(), "scalar_float");
+    assert_eq!(
+        O3LiveIssueTraceClass::VectorToScalar.name(),
+        "vector_to_scalar"
+    );
 }
 
 #[test]

@@ -5,6 +5,8 @@ use super::*;
 
 #[path = "queue_tests/materialization.rs"]
 mod materialization;
+#[path = "queue_tests/mixed_compute.rs"]
+mod mixed_compute;
 
 #[test]
 fn live_issue_queue_packet_binding_is_idempotent_and_exact() {

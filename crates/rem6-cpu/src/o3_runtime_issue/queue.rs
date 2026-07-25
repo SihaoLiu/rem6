@@ -4,13 +4,13 @@ use rem6_isa_riscv::{
 use rem6_memory::{Address, MemoryRequestId};
 
 use super::super::o3_runtime_control_window::execution_writes_rename_destination;
-use super::super::o3_runtime_live_window::staged_rename_entry;
 use super::*;
 use crate::branch_predictor::BranchTargetKind;
 use crate::o3_dependency::O3RegisterClass;
 use crate::o3_pipeline::O3IssueOpClass;
-use crate::riscv_fu_latency::riscv_o3_fu_latency_class as o3_fu_latency_class;
-use crate::O3RuntimeFuLatencyClass;
+
+#[path = "queue/compute.rs"]
+mod compute;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::o3_runtime) struct O3LiveIssuePacket {
@@ -63,7 +63,7 @@ pub(crate) struct O3LiveSpeculativeIssueCandidate {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum O3LiveSpeculativeIssueKind {
     PendingDataAddress(O3RenameMapEntry),
-    Scalar(O3RenameMapEntry),
+    Compute(O3RenameMapEntry),
     Control {
         kind: BranchTargetKind,
         destination: Option<O3RenameMapEntry>,
@@ -235,7 +235,7 @@ impl O3LiveSpeculativeIssueCandidate {
     pub(crate) const fn destination(&self) -> Option<O3RenameMapEntry> {
         match self.scheduling.kind {
             O3LiveSpeculativeIssueKind::PendingDataAddress(destination)
-            | O3LiveSpeculativeIssueKind::Scalar(destination) => Some(destination),
+            | O3LiveSpeculativeIssueKind::Compute(destination) => Some(destination),
             O3LiveSpeculativeIssueKind::Control { destination, .. } => destination,
         }
     }
@@ -296,19 +296,18 @@ impl O3LiveSpeculativeIssueCandidate {
             || execution.trap().is_some()
             || execution.system_event().is_some()
             || execution.memory_access().is_some()
-            || !execution.float_register_writes().is_empty()
         {
             return false;
         }
         match self.scheduling.kind {
             O3LiveSpeculativeIssueKind::PendingDataAddress(_) => false,
-            O3LiveSpeculativeIssueKind::Scalar(destination) => {
-                execution.next_pc()
-                    == execution
-                        .pc()
-                        .wrapping_add(u64::from(execution.instruction_bytes()))
-                    && execution.register_writes().len() == 1
-                    && execution_writes_rename_destination(execution, destination)
+            O3LiveSpeculativeIssueKind::Compute(destination) => {
+                compute::valid_recorded_compute_execution(
+                    execution,
+                    self.scheduling.pc(),
+                    self.instruction(),
+                    destination,
+                )
             }
             O3LiveSpeculativeIssueKind::Control { kind, destination } => {
                 o3_live_control_operands(execution.instruction()).is_some_and(|control| {
@@ -320,9 +319,13 @@ impl O3LiveSpeculativeIssueCandidate {
                 }) && match destination {
                     Some(destination) => {
                         execution.register_writes().len() == 1
+                            && execution.float_register_writes().is_empty()
                             && execution_writes_rename_destination(execution, destination)
                     }
-                    None => execution.register_writes().is_empty(),
+                    None => {
+                        execution.register_writes().is_empty()
+                            && execution.float_register_writes().is_empty()
+                    }
                 }
             }
         }
@@ -331,7 +334,7 @@ impl O3LiveSpeculativeIssueCandidate {
     pub(in crate::o3_runtime) const fn consumes_writeback_slot(&self) -> bool {
         matches!(
             self.scheduling.kind,
-            O3LiveSpeculativeIssueKind::Scalar(_)
+            O3LiveSpeculativeIssueKind::Compute(_)
                 | O3LiveSpeculativeIssueKind::Control {
                     destination: Some(_),
                     ..
@@ -358,7 +361,7 @@ impl O3RuntimeState {
         self.materialize_live_speculative_issue_candidate(&scheduling)
     }
 
-    fn live_issue_scheduling_candidate_from_metadata(
+    pub(super) fn live_issue_scheduling_candidate_from_metadata(
         &self,
         index: usize,
         entry: O3ReorderBufferEntry,
@@ -422,39 +425,35 @@ impl O3RuntimeState {
         if !self.live_staged_instruction_matches(entry.sequence(), instruction) {
             return None;
         }
-        let (scalar_destination, control, sources) = if let Some((destination, sources)) =
-            o3_predicted_scalar_descendant_operands(instruction)
+        if let Some(metadata) = compute::compute_candidate_metadata(self, index, entry, instruction)
         {
-            (Some(destination), None, sources)
-        } else {
-            let control = o3_live_control_operands(instruction)?;
-            let sources = control.sources().to_vec();
-            (None, Some(control), sources)
-        };
-        let kind = if let Some(destination) = scalar_destination {
-            O3LiveSpeculativeIssueKind::Scalar(staged_integer_destination(entry, destination)?)
-        } else {
-            let control = control.expect("control candidate has control operands");
-            let destination = match control.destination() {
-                Some(destination) => Some(staged_integer_destination(entry, destination)?),
-                None if entry.destination().is_none() && entry.rename_destination().is_none() => {
-                    None
-                }
-                None => return None,
-            };
-            O3LiveSpeculativeIssueKind::Control {
-                kind: control.kind(),
-                destination,
-            }
+            return Some(O3LiveIssueSchedulingCandidate {
+                sequence,
+                pc,
+                instruction,
+                kind: O3LiveSpeculativeIssueKind::Compute(metadata.destination()),
+                op_class: metadata.op_class(),
+                control_dependency: self.pending_control_sequence_for(sequence),
+                data_producers: self.live_issue_source_producers(index, metadata.integer_sources()),
+            });
+        }
+        let control = o3_live_control_operands(instruction)?;
+        let destination = match control.destination() {
+            Some(destination) => Some(staged_integer_destination(entry, destination)?),
+            None if entry.destination().is_none() && entry.rename_destination().is_none() => None,
+            None => return None,
         };
         Some(O3LiveIssueSchedulingCandidate {
             sequence,
             pc,
             instruction,
-            kind,
+            kind: O3LiveSpeculativeIssueKind::Control {
+                kind: control.kind(),
+                destination,
+            },
             op_class: live_issue_op_class(instruction),
             control_dependency: self.pending_control_sequence_for(sequence),
-            data_producers: self.live_issue_source_producers(index, &sources),
+            data_producers: self.live_issue_source_producers(index, control.sources()),
         })
     }
 
@@ -542,34 +541,41 @@ impl O3RuntimeState {
 }
 
 pub(in crate::o3_runtime) fn live_issue_op_class(instruction: RiscvInstruction) -> O3IssueOpClass {
+    if let Some(op_class) = compute::compute_op_class(instruction) {
+        return op_class;
+    }
     if o3_live_control_operands(instruction).is_some() {
         return O3IssueOpClass::Branch;
     }
-    if matches!(
-        o3_fu_latency_class(instruction),
-        Some(O3RuntimeFuLatencyClass::ScalarIntegerMul | O3RuntimeFuLatencyClass::ScalarIntegerDiv)
-    ) {
-        O3IssueOpClass::IntMult
-    } else {
-        O3IssueOpClass::IntAlu
-    }
+    O3IssueOpClass::IntAlu
+}
+pub(in crate::o3_runtime) fn live_issue_instruction_is_supported(i: RiscvInstruction) -> bool {
+    live_issue_trace_class(i).is_some()
 }
 
 pub(in crate::o3_runtime) fn live_issue_trace_class(
     instruction: RiscvInstruction,
 ) -> Option<O3LiveIssueTraceClass> {
-    live_issue_instruction_is_supported(instruction).then_some(
-        match live_issue_op_class(instruction) {
-            O3IssueOpClass::Branch => O3LiveIssueTraceClass::Control,
-            O3IssueOpClass::IntMult => O3LiveIssueTraceClass::IntegerMulDiv,
-            _ => O3LiveIssueTraceClass::ScalarInteger,
-        },
-    )
+    if let Some(trace_class) = compute::compute_trace_class(instruction) {
+        return Some(trace_class);
+    }
+    o3_live_control_operands(instruction).map(|_| O3LiveIssueTraceClass::Control)
 }
 
-fn live_issue_instruction_is_supported(instruction: RiscvInstruction) -> bool {
-    o3_predicted_scalar_descendant_operands(instruction).is_some()
-        || o3_live_control_operands(instruction).is_some()
+pub(super) fn staged_compute_destination(
+    entry: O3ReorderBufferEntry,
+    instruction: RiscvInstruction,
+) -> Option<O3RenameMapEntry> {
+    compute::staged_compute_destination(entry, instruction)
+}
+
+pub(super) fn valid_recorded_compute_execution(
+    execution: &RiscvExecutionRecord,
+    pc: Address,
+    instruction: RiscvInstruction,
+    destination: O3RenameMapEntry,
+) -> bool {
+    compute::valid_recorded_compute_execution(execution, pc, instruction, destination)
 }
 
 fn control_destination_matches_rename_entry(
@@ -577,21 +583,17 @@ fn control_destination_matches_rename_entry(
     rename: Option<O3RenameMapEntry>,
 ) -> bool {
     match (destination, rename) {
-        (Some(destination), Some(rename)) => rename_matches_integer_register(rename, destination),
+        (Some(destination), Some(rename)) => {
+            compute::rename_matches_integer_register(rename, destination)
+        }
         (None, None) => true,
         (Some(_), None) | (None, Some(_)) => false,
     }
 }
 
-fn staged_integer_destination(
+pub(super) fn staged_integer_destination(
     entry: O3ReorderBufferEntry,
     destination: Register,
 ) -> Option<O3RenameMapEntry> {
-    staged_rename_entry(entry)
-        .filter(|rename| rename_matches_integer_register(*rename, destination))
-}
-
-fn rename_matches_integer_register(rename: O3RenameMapEntry, register: Register) -> bool {
-    rename.register_class() == O3RegisterClass::Integer
-        && rename.architectural() == u32::from(register.index())
+    compute::staged_integer_destination(entry, destination)
 }

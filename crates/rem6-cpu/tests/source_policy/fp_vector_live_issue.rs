@@ -3,6 +3,9 @@ use super::*;
 const MAX_LIVE_COMPUTE_OPERAND_LINES: usize = 320;
 const MAX_LIVE_COMPUTE_OPERAND_TEST_LINES: usize = 320;
 const MAX_O3_RUNTIME_LIVE_WINDOW_MIXED_COMPUTE_TEST_LINES: usize = 120;
+const MAX_LIVE_COMPUTE_QUEUE_LINES: usize = 320;
+const MAX_O3_RUNTIME_ISSUE_QUEUE_LINES: usize = 600;
+const MAX_O3_RUNTIME_ISSUE_QUEUE_MIXED_COMPUTE_TEST_LINES: usize = 450;
 
 #[test]
 fn fp_vector_live_issue_uses_one_focused_operand_authority() {
@@ -252,6 +255,116 @@ fn fp_vector_live_issue_locks_task3_o3ps_vector_codec() {
         assert!(
             compact_tests.contains(test_anchor),
             "missing O3PS boundary test anchor {test_anchor}"
+        );
+    }
+}
+
+#[test]
+fn fp_vector_live_issue_locks_task4_queue_compute_authority() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let queue_path = root.join("src/o3_runtime_issue/queue.rs");
+    let compute_path = root.join("src/o3_runtime_issue/queue/compute.rs");
+    let queue_tests_path = root.join("src/o3_runtime_issue/queue_tests.rs");
+    let mixed_tests_path = root.join("src/o3_runtime_issue/queue_tests/mixed_compute.rs");
+    let issue_path = root.join("src/o3_runtime_issue.rs");
+    let state_path = root.join("src/o3_runtime_issue/state.rs");
+    let state_tests_path = root.join("src/o3_runtime_issue/state_tests.rs");
+
+    assert!(compute_path.exists());
+    assert!(mixed_tests_path.exists());
+    assert!(line_count(&compute_path) <= MAX_LIVE_COMPUTE_QUEUE_LINES);
+    assert!(line_count(&queue_path) <= MAX_O3_RUNTIME_ISSUE_QUEUE_LINES);
+    assert!(line_count(&mixed_tests_path) <= MAX_O3_RUNTIME_ISSUE_QUEUE_MIXED_COMPUTE_TEST_LINES);
+
+    let queue = fs::read_to_string(&queue_path).unwrap();
+    let compute = fs::read_to_string(&compute_path).unwrap();
+    let queue_tests = fs::read_to_string(&queue_tests_path).unwrap();
+    let mixed_tests = fs::read_to_string(&mixed_tests_path).unwrap();
+    let issue = fs::read_to_string(&issue_path).unwrap();
+    let state = fs::read_to_string(&state_path).unwrap();
+    let state_tests = fs::read_to_string(&state_tests_path).unwrap();
+    let compact_queue = compact_rust_code(&production_rust_source(&queue));
+    let compact_compute = compact_rust_code(&production_rust_source(&compute));
+    let compact_head_recording = compact_rust_code(
+        &rust_function_definition(&issue, "record_live_issue_head_execution").unwrap(),
+    );
+    let compact_state = compact_rust_code(&production_rust_source(&state));
+    let compact_state_tests = compact_rust_code(&state_tests);
+
+    assert_eq!(
+        path_owned_module_declaration_count(&queue, "queue/compute.rs", "compute"),
+        1
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &queue_tests,
+            "queue_tests/mixed_compute.rs",
+            "mixed_compute"
+        ),
+        1
+    );
+    assert!(!compact_queue.contains("Scalar(O3RenameMapEntry)"));
+    assert!(compact_queue.contains("Compute(O3RenameMapEntry)"));
+    assert!(compact_compute.contains("o3_live_compute_operands(instruction)"));
+    assert!(compact_compute.contains(
+        "typed_destination_matches_rename_entry(operands.destination(),staged_rename_entry)"
+    ));
+    assert!(!compact_compute.contains("metadata.destination()==staged_rename_entry"));
+    assert!(compact_compute.contains("O3LiveComputeClass::ScalarInteger"));
+    assert!(compact_compute.contains("O3LiveComputeClass::ScalarFloat=>O3IssueOpClass::Float"));
+    assert!(compact_compute.contains("O3LiveComputeClass::VectorToScalar=>O3IssueOpClass::Vector"));
+    assert!(compact_queue.contains("O3LiveSpeculativeIssueKind::Compute"));
+
+    for trace_anchor in ["Self::ScalarFloat=>", "Self::VectorToScalar=>"] {
+        assert!(
+            compact_state.contains(trace_anchor),
+            "missing trace variant {trace_anchor}"
+        );
+    }
+    assert!(state.contains("Self::ScalarFloat => \"scalar_float\""));
+    assert!(state.contains("Self::VectorToScalar => \"vector_to_scalar\""));
+    assert!(compact_state.contains("scalar_float_issued_rows:u64"));
+    assert!(compact_state.contains("vector_to_scalar_issued_rows:u64"));
+    assert!(compact_state.contains("scalar_float_issued_rows->u64"));
+    assert!(compact_state.contains("vector_to_scalar_issued_rows->u64"));
+    assert!(compact_state_tests.contains("O3LiveIssueTraceClass::ScalarFloat"));
+    assert!(compact_state_tests.contains("O3LiveIssueTraceClass::VectorToScalar"));
+
+    assert!(compact_compute.contains("fnexecution_exactly_writes_compute_destination("));
+    assert!(compact_compute.contains("O3RegisterClass::Integer=>{execution.register_writes().len()==1&&execution.float_register_writes().is_empty()&&execution_writes_rename_destination(execution,destination)}"));
+    assert!(compact_compute.contains("O3RegisterClass::FloatingPoint=>{execution.register_writes().is_empty()&&execution.float_register_writes().len()==1&&execution_writes_rename_destination(execution,destination)}"));
+    assert!(compact_compute.contains(
+        "O3RegisterClass::Vector|O3RegisterClass::ConditionCode|O3RegisterClass::Misc=>false"
+    ));
+    assert!(compact_compute.contains("execution.next_pc()==execution.pc().wrapping_add(u64::from(execution.instruction_bytes()))"));
+    assert!(!compact_head_recording.contains("!execution.float_register_writes().is_empty()"));
+
+    for forbidden in [
+        "forwarded_float_register_writes",
+        "forwarded_vector_register_writes",
+        "FloatRegisterWrite",
+        "VectorRegisterWrite",
+        "RiscvInstruction::VectorFloat(",
+        "RiscvInstruction::VectorAddVv{",
+        "RiscvVectorScalarMoveInstruction::MoveFromScalar",
+    ] {
+        assert!(
+            !compact_compute.contains(forbidden),
+            "compute queue authority admitted forbidden surface {forbidden}"
+        );
+    }
+
+    for test_anchor in [
+        "fnlive_issue_queue_materializes_mixed_compute_classes(",
+        "fnlive_issue_queue_rejects_non_integer_live_source_producers(",
+        "fnlive_issue_queue_uses_typed_source_identities(",
+        "fnlive_issue_queue_preserves_integer_producer_forwarding(",
+        "fnlive_issue_candidate_result_validation_is_destination_class_exact(",
+        "fnlive_issue_head_result_validation_matches_candidate_validation(",
+    ] {
+        assert!(
+            compact_rust_code(&mixed_tests).contains(test_anchor),
+            "mixed queue tests missing {test_anchor}"
         );
     }
 }

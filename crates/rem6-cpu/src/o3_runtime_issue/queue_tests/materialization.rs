@@ -90,8 +90,15 @@ fn live_issue_queue_does_not_enqueue_unsupported_bound_packets() {
     let mut runtime = O3RuntimeState::default();
     let load = scalar_load_event();
     assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 20));
+    let unsupported_float_add_d = 0x0220_81d3;
+    assert!(matches!(
+        RiscvInstruction::decode_with_length(unsupported_float_add_d)
+            .unwrap()
+            .instruction(),
+        RiscvInstruction::FloatAddD { .. }
+    ));
     for (pc, raw, request_sequence) in [
-        (BRANCH_PC, 0x0020_81d3, 11),
+        (BRANCH_PC, unsupported_float_add_d, 11),
         (SECOND_PC, 0x0220_81d7, 12),
         (THIRD_PC, 0x0000_0073, 13),
     ] {
