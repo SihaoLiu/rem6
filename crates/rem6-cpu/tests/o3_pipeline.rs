@@ -597,13 +597,13 @@ fn o3_pending_state_checkpoint_payload_decodes_legacy_v1_class_codes() {
 #[test]
 fn o3_pending_state_checkpoint_payload_rejects_vector_code_in_legacy_v1() {
     let queue = O3IssueQueueId::new(0);
-    let vector_sequence = 0x1234;
+    let legacy_sequence = 0x1234;
     let snapshot = O3PendingStateSnapshot::new(
         [],
         [O3ScopedReadyInstruction::new(
-            vector_sequence,
+            legacy_sequence,
             queue,
-            O3IssueOpClass::Vector,
+            O3IssueOpClass::IntAlu,
         )],
         rem6_cpu::O3WritebackTransferSnapshot::new(
             O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 1, 0).unwrap(),
@@ -614,9 +614,10 @@ fn o3_pending_state_checkpoint_payload_rejects_vector_code_in_legacy_v1() {
     let mut payload = O3PendingStateCheckpointPayload::from_snapshot(snapshot)
         .unwrap()
         .encode();
-    let vector_op_class_offset = pending_ready_op_class_offset(&payload, vector_sequence);
-    assert_eq!(payload[vector_op_class_offset], 6);
+    let vector_op_class_offset = pending_ready_op_class_offset(&payload, legacy_sequence);
+    assert_eq!(payload[vector_op_class_offset], 0);
 
+    payload[vector_op_class_offset] = 6;
     payload[O3_PENDING_CHECKPOINT_VERSION_OFFSET] = 1;
     assert_eq!(
         O3PendingStateCheckpointPayload::decode(&payload).unwrap_err(),
