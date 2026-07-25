@@ -29,6 +29,7 @@ pub(super) struct O3PendingDataAddress {
     pub(super) root_head: O3PendingDataAddressRootHead,
     pub(super) destination: O3RenameMapEntry,
     pub(super) expected_lsq_bytes: u32,
+    pub(super) published_producer_ready_tick: Option<u64>,
     pub(super) requested_wake_tick: Option<u64>,
     pub(super) selected_issue_tick: Option<u64>,
     pub(super) materialized: Option<RiscvCpuExecutionEvent>,
@@ -291,6 +292,9 @@ impl O3RuntimeState {
     }
 
     fn pending_data_address_producer_is_consistent(&self, pending: &O3PendingDataAddress) -> bool {
+        if pending.published_producer_ready_tick.is_some() {
+            return true;
+        }
         if self
             .pending_data_addresses
             .find_sequence(pending.producer_sequence)

@@ -816,6 +816,7 @@ enum ScalarIssueCase {
     CrossResource,
     SameMultiply,
     Dependent,
+    LiveDataDependency,
     SameTickAluDependency,
     FanIn,
     MixedControls,
@@ -849,6 +850,9 @@ impl ScalarIssueFixture {
             ScalarIssueCase::CrossResource => [branch(), mul(14, 2, 3), addi(15, 4, 1)],
             ScalarIssueCase::SameMultiply => [branch(), mul(14, 2, 3), mul(15, 4, 5)],
             ScalarIssueCase::Dependent => [branch(), mul(14, 2, 3), addi(15, 14, 5)],
+            ScalarIssueCase::LiveDataDependency => {
+                [addi(14, 12, 1), addi(15, 12, 2), addi(16, 12, 3)]
+            }
             ScalarIssueCase::SameTickAluDependency => [addi(14, 2, 1), addi(15, 14, 1), branch()],
             ScalarIssueCase::FanIn => [mul(14, 2, 3), mul(15, 4, 5), add(16, 14, 15)],
             ScalarIssueCase::MixedControls => [jal(), branch(), jalr()],

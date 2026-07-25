@@ -373,6 +373,7 @@ impl O3RuntimeState {
     }
 
     pub(crate) fn discard_live_staged_instructions(&mut self) {
+        // Commit projected decisions before suffix cleanup removes blocked rows.
         self.discard_all_live_issue_transient_state();
         self.discard_live_writeback_reservations();
         self.discard_live_data_access_lifecycle();
@@ -387,9 +388,12 @@ impl O3RuntimeState {
         self.discard_live_speculative_executions();
         self.stats
             .set_rename_map_entries(self.snapshot.rename_map.len());
+        // Full teardown must also erase terminal traces emitted by cleanup.
+        self.discard_all_live_issue_transient_state();
     }
 
     pub(crate) fn discard_live_staged_instructions_at(&mut self, now: u64) {
+        // Commit projected decisions before suffix cleanup removes blocked rows.
         self.discard_all_live_issue_transient_state();
         self.discard_live_writeback_reservations();
         self.discard_live_data_access_lifecycle_at(now);
@@ -404,6 +408,8 @@ impl O3RuntimeState {
         self.discard_live_speculative_executions_at(now);
         self.stats
             .set_rename_map_entries(self.snapshot.rename_map.len());
+        // Full teardown must also erase terminal traces emitted by cleanup.
+        self.discard_all_live_issue_transient_state();
     }
 
     pub(crate) fn discard_live_speculative_executions(&mut self) {
@@ -449,8 +455,22 @@ impl O3RuntimeState {
     }
 
     pub(super) fn discard_live_staged_window_from_at(&mut self, sequence: u64, now: u64) {
+        self.discard_live_staged_window_from_with_cleanup_boundary_at(sequence, sequence, now);
+    }
+
+    pub(super) fn discard_live_staged_window_from_with_cleanup_boundary_at(
+        &mut self,
+        sequence: u64,
+        cleanup_boundary: u64,
+        now: u64,
+    ) {
         self.discard_future_writeback_from_sequence(sequence, now);
-        self.discard_live_staged_window_rows_from_at(sequence, Some(now));
+        self.discard_live_staged_window_rows_from_with_cleanup_boundary_at(
+            sequence,
+            cleanup_boundary,
+            O3LiveIssueTraceAction::Squashed,
+            Some(now),
+        );
         if self
             .pending_data_addresses
             .first()
@@ -465,13 +485,53 @@ impl O3RuntimeState {
         sequence: u64,
         now: Option<u64>,
     ) {
+        self.discard_live_staged_window_rows_from_with_cleanup_boundary_at(
+            sequence,
+            sequence,
+            O3LiveIssueTraceAction::Squashed,
+            now,
+        );
+    }
+
+    pub(super) fn discard_replayed_live_staged_window_from(
+        &mut self,
+        sequence: u64,
+        cleanup_boundary: u64,
+        now: Option<u64>,
+    ) {
         if let Some(now) = now {
-            self.discard_live_issue_suffix_at(sequence, O3LiveIssueTraceAction::Squashed, now);
+            self.discard_future_writeback_from_sequence(sequence, now);
+        } else {
+            self.discard_live_writeback_from_sequence(sequence);
+        }
+        self.discard_live_staged_window_rows_from_with_cleanup_boundary_at(
+            sequence,
+            cleanup_boundary,
+            O3LiveIssueTraceAction::Replayed,
+            now,
+        );
+    }
+
+    fn discard_live_staged_window_rows_from_with_cleanup_boundary_at(
+        &mut self,
+        sequence: u64,
+        cleanup_boundary: u64,
+        action: O3LiveIssueTraceAction,
+        now: Option<u64>,
+    ) {
+        if let Some(now) = now {
+            self.discard_live_staged_issue_suffix_with_cleanup_boundary_at(
+                sequence,
+                cleanup_boundary,
+                action,
+                now,
+            );
         } else {
             let cleanup_tick = self.live_issue_service_tick().unwrap_or_default();
-            self.discard_live_issue_suffix_at(
+            self.discard_live_staged_issue_suffix_with_cleanup_boundary_at(
                 sequence,
-                O3LiveIssueTraceAction::Squashed,
+                cleanup_boundary,
+                action,
                 cleanup_tick,
             );
         }

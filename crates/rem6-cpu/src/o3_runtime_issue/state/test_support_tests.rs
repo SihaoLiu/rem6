@@ -19,6 +19,6 @@ impl O3LiveIssueState {
         rows: &[(u64, Address, O3LiveIssueTraceClass)],
         tick: u64,
     ) -> usize {
-        self.remove_suffix_at(boundary, action, rows, tick)
+        self.remove_suffix_at(boundary, boundary, action, rows, tick)
     }
 }

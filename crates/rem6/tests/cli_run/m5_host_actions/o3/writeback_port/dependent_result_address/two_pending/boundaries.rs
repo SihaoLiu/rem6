@@ -14,6 +14,10 @@ enum BoundaryCase {
 
 #[test]
 fn rem6_run_o3_two_pending_result_address_replays_first_failure() {
+    let _ = persistent_iq_first_replay_json();
+}
+
+pub(in crate::m5_host_actions::o3) fn persistent_iq_first_replay_json() -> Value {
     let fixture = BoundaryFixture::new(BoundaryCase::FirstReplay);
     let completed = fixture.run(BOUNDARY_MAX_TICK);
     let resident = fixture.before_head_response(&completed);
@@ -23,12 +27,25 @@ fn rem6_run_o3_two_pending_result_address_replays_first_failure() {
     assert_eq!(completed_load_bytes(&resident, MMIO_POINTER), 0);
     assert_eq!(load_count(&resident, MMIO_POINTER), 0);
     assert_eq!(load_count(&resident, SECOND_POINTER), 0);
-    let replay = fixture.run(
-        event_u64(
-            memory_result_event_at_pc(&completed, HEAD_PC),
-            "writeback_tick",
-        ) + 1,
+    let head_writeback_tick = event_u64(
+        memory_result_event_at_pc(&completed, HEAD_PC),
+        "writeback_tick",
     );
+    let replay_tick = completed
+        .pointer("/debug/o3_trace/0/issue_queue/events")
+        .and_then(Value::as_array)
+        .and_then(|events| {
+            events.iter().find(|event| {
+                event.pointer("/action").and_then(Value::as_str) == Some("replayed")
+                    && event.pointer("/sequence").and_then(Value::as_u64) == Some(original[0])
+                    && event.pointer("/cleanup_boundary").and_then(Value::as_u64)
+                        == Some(original[0])
+            })
+        })
+        .map(|event| event_u64(event, "service_tick"))
+        .unwrap_or_else(|| panic!("missing exact first replay boundary: {completed}"));
+    assert_eq!(replay_tick, head_writeback_tick + 1);
+    let replay = fixture.run(replay_tick + 1);
     assert_eq!(data_requests_sent(&replay).len(), 1);
     assert_eq!(load_count(&replay, MMIO_POINTER), 0);
     assert_eq!(load_count(&replay, SECOND_POINTER), 0);
@@ -48,6 +65,7 @@ fn rem6_run_o3_two_pending_result_address_replays_first_failure() {
     assert_eq!(completed_load_bytes(&completed, MMIO_POINTER), 8);
     assert_eq!(load_count(&completed, SECOND_POINTER), 1);
     assert_boundary_architecture(BoundaryCase::FirstReplay, &completed);
+    completed
 }
 
 #[test]

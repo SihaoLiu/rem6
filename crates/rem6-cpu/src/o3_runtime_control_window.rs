@@ -233,7 +233,9 @@ impl O3RuntimeState {
 
     pub(super) fn completed_live_data_access_ready_tick(&self, sequence: u64) -> Option<u64> {
         let live = self.live_data_accesses.iter().find(|live| {
-            live.sequence == sequence && live.outcome == O3LiveDataAccessOutcome::Completed
+            live.sequence == sequence
+                && live.outcome == O3LiveDataAccessOutcome::Completed
+                && live.event_taken
         })?;
         let rob = self
             .snapshot
@@ -386,7 +388,11 @@ impl O3RuntimeState {
 
     fn discard_live_control_descendant_rows_from_at(&mut self, branch_sequence: u64, now: u64) {
         if let Some(descendant_sequence) = branch_sequence.checked_add(1) {
-            self.discard_live_staged_window_from_at(descendant_sequence, now);
+            self.discard_live_staged_window_from_with_cleanup_boundary_at(
+                descendant_sequence,
+                branch_sequence,
+                now,
+            );
         }
         self.live_control_lineages
             .retain(|sequence, _| *sequence <= branch_sequence);

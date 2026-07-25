@@ -3,8 +3,6 @@ use super::*;
 
 #[path = "predicted_control/coroutine.rs"]
 mod coroutine;
-#[path = "predicted_control/general_iq.rs"]
-mod general_iq;
 #[path = "predicted_control/link_kind.rs"]
 mod link_kind;
 #[path = "predicted_control/link_return.rs"]
@@ -28,10 +26,10 @@ mod three_deep;
 #[path = "predicted_control/window_support.rs"]
 mod window_support;
 
-const LOAD_PC: &str = "0x80000024";
-const BRANCH_PC: &str = "0x80000028";
-const MUL_PC: &str = "0x8000002c";
-const ADD_PC: &str = "0x80000030";
+pub(super) const LOAD_PC: &str = "0x80000024";
+pub(super) const BRANCH_PC: &str = "0x80000028";
+pub(super) const MUL_PC: &str = "0x8000002c";
+pub(super) const ADD_PC: &str = "0x80000030";
 const DATA_ADDRESS: &str = "0x800000c0";
 const TAKEN_LOAD_PC: &str = "0x8000002c";
 const TAKEN_BRANCH_PC: &str = "0x80000030";
@@ -242,7 +240,7 @@ fn rem6_run_o3_load_dependent_branch_suppresses_predicted_descendants() {
     );
 }
 
-fn predicted_control_binary(
+pub(super) fn predicted_control_binary(
     name: &str,
     branch_taken: bool,
     wrong_path_store: bool,
@@ -321,7 +319,7 @@ fn predicted_taken_control_binary(name: &str) -> std::path::PathBuf {
     temp_binary(name, &elf)
 }
 
-fn predicted_control_command(
+pub(super) fn predicted_control_command(
     path: &Path,
     memory_system: &str,
     max_tick: u64,
@@ -355,7 +353,7 @@ fn predicted_control_command(
     command
 }
 
-fn run_predicted_control_json(
+pub(super) fn run_predicted_control_json(
     path: &Path,
     memory_system: &str,
     max_tick: u64,
@@ -374,7 +372,7 @@ fn run_predicted_control_json(
         .unwrap_or_else(|error| panic!("invalid predicted-control JSON: {error}"))
 }
 
-fn register_value(json: &Value, register: &str) -> u64 {
+pub(super) fn register_value(json: &Value, register: &str) -> u64 {
     json.pointer(&format!("/cores/0/registers/{register}"))
         .and_then(Value::as_str)
         .map(|value| u64::from_str_radix(value.trim_start_matches("0x"), 16).unwrap())
@@ -441,7 +439,7 @@ fn transfer_component_with_context<'a>(
     )
 }
 
-fn transfer_o3_runtime_chunk<'a>(transfer: &'a Value, component: &str) -> &'a Value {
+pub(super) fn transfer_o3_runtime_chunk<'a>(transfer: &'a Value, component: &str) -> &'a Value {
     transfer_o3_runtime_chunk_with_context(transfer, component, "transfer artifact")
 }
 
@@ -471,7 +469,10 @@ fn transfer_o3_runtime_chunk_with_context<'a>(
         .unwrap_or_else(|| panic!("{context}: missing decoded O3 runtime chunk: {transfer}"))
 }
 
-fn transfer_live_data_handoff_chunk<'a>(transfer: &'a Value, component: &str) -> &'a Value {
+pub(super) fn transfer_live_data_handoff_chunk<'a>(
+    transfer: &'a Value,
+    component: &str,
+) -> &'a Value {
     transfer_live_data_handoff_chunk_with_context(transfer, component, "transfer artifact")
 }
 
@@ -501,7 +502,7 @@ fn transfer_live_data_handoff_chunk_with_context<'a>(
         .unwrap_or_else(|| panic!("{context}: missing decoded live-data handoff chunk: {transfer}"))
 }
 
-fn checkpoint_component<'a>(checkpoint: &'a Value, component: &str) -> &'a Value {
+pub(super) fn checkpoint_component<'a>(checkpoint: &'a Value, component: &str) -> &'a Value {
     checkpoint_component_with_context(checkpoint, component, "checkpoint artifact")
 }
 
@@ -523,7 +524,7 @@ fn checkpoint_component_with_context<'a>(
     )
 }
 
-fn checkpoint_component_chunks(component: &Value) -> &[Value] {
+pub(super) fn checkpoint_component_chunks(component: &Value) -> &[Value] {
     checkpoint_component_chunks_with_context(component, "checkpoint artifact")
 }
 

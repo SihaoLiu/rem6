@@ -1,8 +1,5 @@
 use super::*;
 
-#[path = "scoped_issue/general_iq.rs"]
-mod general_iq;
-
 const LOAD_PC: &str = "0x80000030";
 const BRANCH_PC: &str = "0x80000034";
 const SECOND_ROW_PC: &str = "0x80000038";
@@ -248,8 +245,7 @@ fn rem6_run_o3_scoped_issue_width_one_serializes_direct_window() {
     assert_scoped_issue_native_stats(&json, issue);
 }
 
-#[test]
-fn rem6_run_o3_scoped_issue_text_stats_expose_arbitration_counters() {
+pub(super) fn persistent_iq_text_stats_fixture() -> (Value, String) {
     let path = scoped_issue_binary("o3-scoped-issue-text-stats", ScopedIssueCase::CrossResource);
     let json = scoped_issue_json(&path, "direct", 1, 1_500);
 
@@ -296,6 +292,8 @@ fn rem6_run_o3_scoped_issue_text_stats_expose_arbitration_counters() {
         }
         assert_text_stat_occurs_once(&stdout, &path);
     }
+
+    (json, stdout)
 }
 
 #[test]
@@ -421,8 +419,7 @@ fn rem6_run_o3_scoped_issue_dependency_waits_for_multiply() {
     );
 }
 
-#[test]
-fn rem6_run_o3_scoped_issue_stats_dump_exposes_arbitration_counters() {
+pub(super) fn persistent_iq_stats_dump_fixture() -> Value {
     let path = scoped_issue_stats_dump_binary("o3-scoped-issue-stats-dump");
     let json = scoped_issue_json(&path, "direct", 1, 1_500);
 
@@ -458,6 +455,8 @@ fn rem6_run_o3_scoped_issue_stats_dump_exposes_arbitration_counters() {
     assert_stats_dump_after_scoped_issue_activity(&json, dump, dump_event);
     let issue = scoped_issue_artifact(&json);
     assert_scoped_issue_stats_dump(dump, issue);
+
+    json
 }
 
 #[test]
@@ -1167,6 +1166,120 @@ fn scoped_issue_fu_json(
     );
     serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"))
+}
+
+pub(super) fn persistent_iq_oldest_ready_fixture(issue_width: usize) -> Value {
+    let path =
+        general_iq_oldest_ready_binary(&format!("o3-general-iq-oldest-ready-width-{issue_width}",));
+    let json = general_iq_oldest_ready_json(&path, issue_width, 4_000);
+    assert_final_witness(
+        &json,
+        GENERAL_IQ_RESULTS,
+        [
+            ("x5", "0x9"),
+            ("x6", "0xc"),
+            ("x7", "0x1"),
+            ("x8", "0x5"),
+            ("x9", "0x24c"),
+        ],
+    );
+
+    let load = event_at_pc(&json, GENERAL_IQ_LOAD_PC);
+    let producer = event_at_pc(&json, GENERAL_IQ_PRODUCER_PC);
+    let blocked = event_at_pc(&json, GENERAL_IQ_BLOCKED_PC);
+    let alu = event_at_pc(&json, GENERAL_IQ_ALU_PC);
+    let multiply = event_at_pc(&json, GENERAL_IQ_MUL_PC);
+    let load_issue_tick = event_u64(load, "issue_tick");
+    for pc in [
+        GENERAL_IQ_PRODUCER_PC,
+        GENERAL_IQ_BLOCKED_PC,
+        GENERAL_IQ_ALU_PC,
+        GENERAL_IQ_MUL_PC,
+    ] {
+        assert!(
+            fetch_tick_at_pc(&json, pc) < load_issue_tick,
+            "general-IQ row {pc} must be fetched before the load issues: load={load}"
+        );
+    }
+    let sequences = [producer, blocked, alu, multiply].map(|event| event_u64(event, "sequence"));
+    assert!(sequences.windows(2).all(|pair| pair[0] < pair[1]));
+    let producer_issue_tick = event_u64(producer, "issue_tick");
+    let alu_issue_tick = event_u64(alu, "issue_tick");
+    let multiply_issue_tick = event_u64(multiply, "issue_tick");
+    let issue = scoped_issue_artifact(&json);
+    assert_eq!(
+        event_u64(blocked, "issue_tick"),
+        event_u64(producer, "writeback_tick"),
+        "blocked row must wake exactly at DIV writeback: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
+    );
+    assert!(
+        alu_issue_tick < event_u64(blocked, "issue_tick"),
+        "ready ALU must issue before the older blocked row: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
+    );
+    assert!(
+        multiply_issue_tick < event_u64(blocked, "issue_tick"),
+        "ready multiply must issue before the older blocked row: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
+    );
+    if issue_width == 1 {
+        assert_eq!(
+            producer_issue_tick,
+            load_issue_tick + 1,
+            "width one must select the older ready DIV immediately after the load head consumes the issue slot: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
+        );
+        assert_eq!(
+            alu_issue_tick,
+            producer_issue_tick + 1,
+            "width one must select the younger ready ALU immediately after the older DIV: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
+        );
+        assert_eq!(
+            multiply_issue_tick,
+            alu_issue_tick + 1,
+            "width one must select the younger ready MUL immediately after the ALU: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
+        );
+        assert!(
+            alu_issue_tick < multiply_issue_tick,
+            "width one must serialize ready rows: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
+        );
+    } else {
+        assert_eq!(
+            producer_issue_tick,
+            load_issue_tick,
+            "width two must co-issue the older ready DIV with the load head: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
+        );
+        assert_eq!(
+            alu_issue_tick,
+            load_issue_tick + 1,
+            "width two must select the younger ready ALU one cycle after the load/DIV pair: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
+        );
+        assert_eq!(
+            multiply_issue_tick,
+            load_issue_tick + 1,
+            "width two must select the younger ready MUL one cycle after the load/DIV pair: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
+        );
+        assert_eq!(
+            alu_issue_tick,
+            multiply_issue_tick,
+            "width two must co-issue ready rows: load={load}, producer={producer}, blocked={blocked}, alu={alu}, multiply={multiply}, issue={issue}"
+        );
+    }
+    let commits =
+        [load, producer, blocked, alu, multiply].map(|event| event_u64(event, "commit_tick"));
+    assert!(commits.windows(2).all(|pair| pair[0] <= pair[1]));
+    assert_eq!(issue_u64(issue, "issued_rows"), 4);
+    assert_eq!(issue_u64(issue, "max_rows_per_cycle"), issue_width as u64);
+
+    json
+}
+
+fn fetch_tick_at_pc(json: &Value, pc: &str) -> u64 {
+    json.pointer("/debug/fetch_trace")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing general-IQ fetch trace: {json}"))
+        .iter()
+        .find(|record| record.pointer("/pc").and_then(Value::as_str) == Some(pc))
+        .and_then(|record| record.pointer("/tick"))
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing general-IQ fetch tick for {pc}: {json}"))
 }
 
 fn general_iq_oldest_ready_json(path: &Path, issue_width: usize, max_tick: u64) -> Value {

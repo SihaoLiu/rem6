@@ -16,7 +16,10 @@ pub(super) fn desired_o3_writeback_wake(
     let memory_result = state
         .o3_runtime
         .earliest_unpublished_memory_result_writeback_tick();
-    let pending_address = state.o3_runtime.pending_data_address_wake_tick();
+    let pending_address = state
+        .o3_runtime
+        .pending_data_address_wake_tick()
+        .map(|tick| tick.max(now));
     let live_issue = state
         .o3_runtime
         .live_issue_service_tick()

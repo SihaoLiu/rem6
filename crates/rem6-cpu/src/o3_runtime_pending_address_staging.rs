@@ -104,6 +104,7 @@ impl O3RuntimeState {
                 root_head,
                 destination,
                 expected_lsq_bytes: PENDING_DATA_ADDRESS_LSQ_BYTES,
+                published_producer_ready_tick: None,
                 requested_wake_tick: None,
                 selected_issue_tick: None,
                 materialized: None,

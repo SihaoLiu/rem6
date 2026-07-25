@@ -148,6 +148,40 @@ fn service_live_issue_queue_at_requests_earliest_dependency_ready_tick() {
 }
 
 #[test]
+fn service_live_issue_queue_at_live_data_dependency_requests_follow_up_tick() {
+    let mut fixture = ScalarIssueFixture::new_unbound(2, ScalarIssueCase::LiveDataDependency);
+    fixture.bind_row(0);
+    let producer = fixture.runtime.live_data_accesses[0].sequence;
+    fixture.runtime.live_data_accesses[0].outcome = O3LiveDataAccessOutcome::Completed;
+    fixture.runtime.live_data_accesses[0].response_tick = Some(20);
+    fixture.runtime.snapshot.reorder_buffer[0].mark_ready_at(20);
+    fixture
+        .runtime
+        .reserve_writeback_completions([O3LiveWritebackReady::memory_result(producer, 20)])
+        .unwrap();
+
+    let outcome = fixture
+        .runtime
+        .service_live_issue_queue_at(&fixture.hart, 20)
+        .unwrap();
+
+    assert_eq!(outcome.issued_rows(), 0);
+    assert_eq!(outcome.next_service_tick(), Some(20));
+    assert_eq!(fixture.runtime.live_issue_service_tick(), Some(20));
+    assert_eq!(fixture.runtime.live_issue.resident_sequences().len(), 1);
+    let retained = fixture
+        .runtime
+        .live_issue_trace_records()
+        .iter()
+        .find(|record| {
+            record.service_tick() == 20
+                && record.action() == O3LiveIssueTraceAction::RetainedDependency
+        })
+        .expect("live-data-dependent row remains resident");
+    assert_eq!(retained.next_wake_tick(), Some(20));
+}
+
+#[test]
 fn service_live_issue_queue_at_allows_capacity_remaining_same_tick_reentry() {
     assert_eq!(
         crate::riscv_fu_latency::riscv_execute_wait_cycles(addi(14, 2, 1)),

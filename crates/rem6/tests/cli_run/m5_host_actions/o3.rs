@@ -46,6 +46,8 @@ mod lsq_store_load_partial;
 mod lsq_store_prefix;
 #[path = "o3/lsq_store_store_load.rs"]
 mod lsq_store_store_load;
+#[path = "o3/persistent_iq.rs"]
+mod persistent_iq;
 #[path = "o3/predicted_control.rs"]
 mod predicted_control;
 #[path = "o3/rename_live.rs"]

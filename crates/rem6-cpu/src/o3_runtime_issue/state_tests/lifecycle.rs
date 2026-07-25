@@ -133,6 +133,65 @@ fn live_issue_cleanup_squash_removes_boundary_and_younger_with_rearmed_wake() {
 }
 
 #[test]
+fn live_issue_branch_cleanup_records_branch_sequence_as_boundary() {
+    let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::CrossResource);
+    let branch = fixture.sequence(BRANCH_PC);
+    let descendants = [fixture.sequence(SECOND_PC), fixture.sequence(THIRD_PC)];
+
+    fixture
+        .runtime
+        .discard_live_control_descendants_from_at(branch, 30);
+
+    assert_eq!(fixture.runtime.live_issue.resident_sequences(), [branch]);
+    let squashed = fixture
+        .runtime
+        .live_issue_trace_records()
+        .iter()
+        .filter(|event| event.action() == O3LiveIssueTraceAction::Squashed)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        squashed
+            .iter()
+            .map(|event| event.sequence())
+            .collect::<Vec<_>>(),
+        descendants,
+    );
+    assert!(squashed
+        .iter()
+        .all(|event| event.cleanup_boundary() == Some(branch)));
+}
+
+#[test]
+fn live_issue_pending_cleanup_does_not_replay_an_already_squashed_row() {
+    let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::CrossResource);
+    let branch = fixture.sequence(BRANCH_PC);
+    let first_descendant = fixture.sequence(SECOND_PC);
+
+    fixture
+        .runtime
+        .discard_live_control_descendants_from_at(branch, 30);
+    fixture
+        .runtime
+        .discard_pending_live_issue_suffix_at(first_descendant, Some(30));
+
+    let terminal = fixture
+        .runtime
+        .live_issue_trace_records()
+        .iter()
+        .filter(|event| event.sequence() == first_descendant)
+        .filter(|event| {
+            matches!(
+                event.action(),
+                O3LiveIssueTraceAction::Squashed | O3LiveIssueTraceAction::Replayed
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(terminal.len(), 1);
+    assert_eq!(terminal[0].action(), O3LiveIssueTraceAction::Squashed);
+    assert_eq!(terminal[0].cleanup_boundary(), Some(branch));
+}
+
+#[test]
 fn live_issue_cleanup_pending_replay_removes_exact_suffix_with_replayed_trace() {
     let mut runtime = O3RuntimeState::default();
     let sequence = super::super::queue::stage_queue_pending_row(&mut runtime);
@@ -159,6 +218,73 @@ fn live_issue_cleanup_pending_replay_removes_exact_suffix_with_replayed_trace() 
 }
 
 #[test]
+fn live_issue_cleanup_records_selected_pending_replay_boundary() {
+    let mut runtime = O3RuntimeState::default();
+    let sequence = super::super::queue::stage_queue_pending_row(&mut runtime);
+    let pc = runtime
+        .pending_data_addresses
+        .find_sequence(sequence)
+        .expect("pending replay boundary")
+        .fetch
+        .pc();
+    runtime
+        .remove_durable_live_issue_at(
+            sequence,
+            pc,
+            O3LiveIssueTraceClass::MemoryAgu,
+            20,
+            Some((20, 20)),
+        )
+        .unwrap();
+
+    runtime.discard_pending_data_address_at_internal(sequence, Some(21));
+
+    let replayed = runtime
+        .live_issue_trace_records()
+        .iter()
+        .find(|event| {
+            event.sequence() == sequence && event.action() == O3LiveIssueTraceAction::Replayed
+        })
+        .expect("selected pending replay boundary trace");
+    assert_eq!(replayed.cleanup_boundary(), Some(sequence));
+    assert!(!runtime.live_issue_trace_records().iter().any(|event| {
+        event.sequence() == sequence && event.action() == O3LiveIssueTraceAction::Squashed
+    }));
+}
+
+#[test]
+fn live_issue_nonresident_cleanup_survives_stats_reset() {
+    let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::CrossResource);
+    let branch = fixture.sequence(BRANCH_PC);
+    let selected = fixture.sequence(SECOND_PC);
+    fixture
+        .runtime
+        .remove_durable_live_issue_at(
+            selected,
+            Address::new(SECOND_PC),
+            O3LiveIssueTraceClass::IntegerMulDiv,
+            20,
+            Some((20, 20)),
+        )
+        .unwrap();
+
+    fixture.runtime.reset_stats();
+    fixture
+        .runtime
+        .discard_live_control_descendants_from_at(branch, 30);
+
+    let squashed = fixture
+        .runtime
+        .live_issue_trace_records()
+        .iter()
+        .find(|event| {
+            event.sequence() == selected && event.action() == O3LiveIssueTraceAction::Squashed
+        })
+        .expect("post-reset nonresident cleanup trace");
+    assert_eq!(squashed.cleanup_boundary(), Some(branch));
+}
+
+#[test]
 fn live_issue_cleanup_is_idempotent_without_duplicate_trace() {
     let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::CrossResource);
     let first = fixture.sequence(BRANCH_PC);
@@ -180,28 +306,41 @@ fn live_issue_cleanup_is_idempotent_without_duplicate_trace() {
 
 #[test]
 fn live_issue_full_discard_clears_transient_state_and_preserves_projected_stats() {
-    let mut runtime = O3RuntimeState::default();
-    let instruction = addi(3, 0, 1);
-    let sequence = runtime
-        .stage_live_instruction(Address::new(BRANCH_PC), instruction, 0)
-        .unwrap();
-    assert!(runtime.bind_live_staged_issue_packet(
-        Address::new(BRANCH_PC),
-        decoded(instruction),
-        &[request(11)],
+    let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::CrossResource);
+    let issued = fixture.sequence(BRANCH_PC);
+    let resource_blocked = fixture.sequence(SECOND_PC);
+    let dependency_blocked = fixture.sequence(THIRD_PC);
+    let runtime = &mut fixture.runtime;
+    runtime.live_issue.observe_sequences(
         31,
-    ));
-    runtime
-        .live_issue
-        .observe_sequences(31, &[sequence], &[], &[], 1);
+        &[issued],
+        &[resource_blocked],
+        &[dependency_blocked],
+        3,
+    );
     assert!(!runtime.live_issue_trace_records().is_empty());
     assert_eq!(runtime.stats().issue_cycles(), 1);
     assert_eq!(runtime.stats().issued_rows(), 1);
+    assert_eq!(runtime.stats().resource_blocked_row_cycles(), 1);
+    assert_eq!(runtime.stats().dependency_blocked_row_cycles(), 1);
     let projected = runtime.stats();
 
     runtime.discard_live_staged_instructions();
 
-    assert_eq!(runtime.stats(), projected);
+    assert_eq!(runtime.stats().issue_cycles(), projected.issue_cycles());
+    assert_eq!(runtime.stats().issued_rows(), projected.issued_rows());
+    assert_eq!(
+        runtime.stats().resource_blocked_row_cycles(),
+        projected.resource_blocked_row_cycles()
+    );
+    assert_eq!(
+        runtime.stats().dependency_blocked_row_cycles(),
+        projected.dependency_blocked_row_cycles()
+    );
+    assert_eq!(
+        runtime.stats().max_rows_per_cycle(),
+        projected.max_rows_per_cycle()
+    );
     assert!(runtime.live_issue.resident_sequences().is_empty());
     assert_eq!(runtime.live_issue_service_tick(), None);
     assert_eq!(

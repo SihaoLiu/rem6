@@ -48,9 +48,14 @@ impl O3RuntimeState {
             .filter(|pending| {
                 pending.materialized.is_none() && pending.producer_sequence == sequence
             })
-            .filter_map(|pending| pending.requested_wake_tick)
+            .filter_map(|pending| {
+                pending.published_producer_ready_tick.or_else(|| {
+                    pending
+                        .requested_wake_tick
+                        .map(|tick| tick.saturating_sub(1))
+                })
+            })
             .min()
-            .map(|tick| tick.saturating_sub(1))
     }
 
     pub(in crate::o3_runtime) fn pending_data_address_committed_producer_ready_tick(
@@ -65,9 +70,54 @@ impl O3RuntimeState {
                     && pending.producer_sequence == sequence
                     && pending.producer_register == source
             })
-            .filter_map(|pending| pending.requested_wake_tick)
+            .filter_map(|pending| {
+                pending.published_producer_ready_tick.or_else(|| {
+                    pending
+                        .requested_wake_tick
+                        .map(|tick| tick.saturating_sub(1))
+                })
+            })
             .min()
-            .map(|tick| tick.saturating_sub(1))
+    }
+
+    pub(in crate::o3_runtime) fn record_pending_data_address_producer_publication(
+        &mut self,
+        execution: &RiscvCpuExecutionEvent,
+        publication_tick: u64,
+        current_tick: u64,
+    ) {
+        let Some(producer_sequence) = self
+            .live_data_accesses
+            .iter()
+            .find(|live| {
+                live.fetch_request == execution.fetch().request_id()
+                    && live.outcome == O3LiveDataAccessOutcome::Completed
+                    && live.event_taken
+            })
+            .map(|live| live.sequence)
+        else {
+            return;
+        };
+        let dependent_sequences = self
+            .pending_data_addresses
+            .iter()
+            .filter(|pending| {
+                pending.materialized.is_none() && pending.producer_sequence == producer_sequence
+            })
+            .map(O3PendingDataAddress::sequence)
+            .collect::<Vec<_>>();
+        for sequence in dependent_sequences {
+            let pending = self
+                .pending_data_addresses
+                .find_sequence_mut(sequence)
+                .expect("published producer dependent remains resident");
+            pending.published_producer_ready_tick = Some(
+                pending
+                    .published_producer_ready_tick
+                    .map_or(publication_tick, |tick| tick.min(publication_tick)),
+            );
+            pending.requested_wake_tick = Some(current_tick);
+        }
     }
 
     pub(super) fn pending_data_address_sequence_for_replay(&self, sequence: u64) -> Option<u64> {

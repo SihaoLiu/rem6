@@ -217,10 +217,7 @@ impl O3RuntimeState {
         self.snapshot
             .load_store_queue
             .retain(|entry| !removed.iter().any(|row| row.sequence == entry.sequence()));
-        match now {
-            Some(now) => self.discard_live_staged_window_from_at(first_removed, now),
-            None => self.discard_live_staged_window_from(first_removed),
-        }
+        self.discard_replayed_live_staged_window_from(first_removed, sequence, now);
     }
 
     pub(super) fn discard_pending_data_address_from(&mut self, sequence: u64) {

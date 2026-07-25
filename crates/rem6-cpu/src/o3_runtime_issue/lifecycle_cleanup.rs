@@ -35,6 +35,21 @@ impl O3RuntimeState {
             .collect()
     }
 
+    fn live_staged_issue_rows_from(
+        &self,
+        boundary: u64,
+    ) -> Vec<(u64, Address, O3LiveIssueTraceClass)> {
+        self.snapshot
+            .reorder_buffer
+            .iter()
+            .filter(|entry| entry.is_live_staged() && entry.sequence() >= boundary)
+            .filter_map(|entry| {
+                self.live_issue_identity(entry.sequence())
+                    .map(|(pc, issue_class)| (entry.sequence(), pc, issue_class))
+            })
+            .collect()
+    }
+
     pub(in crate::o3_runtime) fn discard_live_issue_exact_at(
         &mut self,
         sequence: u64,
@@ -66,19 +81,59 @@ impl O3RuntimeState {
         action: O3LiveIssueTraceAction,
         now: u64,
     ) {
+        self.discard_live_issue_suffix_with_cleanup_boundary_at(boundary, boundary, action, now);
+    }
+
+    fn discard_live_issue_suffix_with_cleanup_boundary_at(
+        &mut self,
+        removal_boundary: u64,
+        cleanup_boundary: u64,
+        action: O3LiveIssueTraceAction,
+        now: u64,
+    ) {
         let first_removed = self
             .live_issue
             .resident_sequences()
-            .partition_point(|sequence| *sequence < boundary);
+            .partition_point(|sequence| *sequence < removal_boundary);
         if first_removed == self.live_issue.resident_sequences().len() {
             return;
         }
-        let rows = self.live_issue_rows_from(boundary);
+        let rows = self.live_issue_rows_from(removal_boundary);
         self.prepare_live_issue_cleanup_wake(first_removed != 0, now);
-        let removed = self
-            .live_issue
-            .remove_suffix_at(boundary, action, &rows, now);
+        let removed = self.live_issue.remove_suffix_at(
+            removal_boundary,
+            cleanup_boundary,
+            action,
+            &rows,
+            now,
+        );
         debug_assert_ne!(removed, 0);
+    }
+
+    pub(in crate::o3_runtime) fn discard_live_staged_issue_suffix_with_cleanup_boundary_at(
+        &mut self,
+        removal_boundary: u64,
+        cleanup_boundary: u64,
+        action: O3LiveIssueTraceAction,
+        now: u64,
+    ) {
+        let rows = self.live_staged_issue_rows_from(removal_boundary);
+        self.discard_live_issue_suffix_with_cleanup_boundary_at(
+            removal_boundary,
+            cleanup_boundary,
+            action,
+            now,
+        );
+        for (sequence, pc, issue_class) in rows {
+            self.live_issue.record_nonresident_cleanup_at(
+                sequence,
+                cleanup_boundary,
+                action,
+                pc,
+                issue_class,
+                now,
+            );
+        }
     }
 
     pub(in crate::o3_runtime) fn discard_pending_live_issue_suffix_at(
@@ -87,6 +142,35 @@ impl O3RuntimeState {
         now: Option<u64>,
     ) {
         if let Some(cleanup_tick) = now.or_else(|| self.live_issue_service_tick()) {
+            let already_squashed = self
+                .live_issue
+                .resident_sequences()
+                .binary_search(&sequence)
+                .is_err()
+                && self.live_issue.trace_records().iter().any(|record| {
+                    record.sequence() == sequence
+                        && record.action() == O3LiveIssueTraceAction::Squashed
+                });
+            if already_squashed {
+                return;
+            }
+            if self
+                .live_issue
+                .resident_sequences()
+                .binary_search(&sequence)
+                .is_err()
+            {
+                if let Some((pc, issue_class)) = self.live_issue_identity(sequence) {
+                    self.live_issue.record_nonresident_cleanup_at(
+                        sequence,
+                        sequence,
+                        O3LiveIssueTraceAction::Replayed,
+                        pc,
+                        issue_class,
+                        cleanup_tick,
+                    );
+                }
+            }
             self.discard_live_issue_suffix_at(
                 sequence,
                 O3LiveIssueTraceAction::Replayed,

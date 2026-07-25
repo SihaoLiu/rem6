@@ -1164,6 +1164,13 @@ impl crate::RiscvCore {
         state.wake_ready_o3_data_access_younger_window(wake_tick, &fetch_events);
         state
             .o3_runtime
+            .record_pending_data_address_producer_publication(&execution, wake_tick, current_tick);
+        state
+            .o3_runtime
+            .live_issue
+            .request_live_issue_after_writeback_change(current_tick);
+        state
+            .o3_runtime
             .record_retired_instruction_with_trace(&execution, trace_enabled);
         state.refresh_o3_writeback_wake(current_tick);
         Some(execution)

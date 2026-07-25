@@ -5,13 +5,10 @@ const DEPENDENT_PC: &str = "0x80000010";
 const SCALAR_LOAD_PC: &str = "0x80000014";
 const SCALAR_DIV_PC: &str = "0x80000018";
 const SCALAR_LOAD_DEPENDENT_PC: &str = "0x8000001c";
-const WRONG_PATH_OUTER_BRANCH_PC: &str = "0x80000024";
-const WRONG_PATH_BRANCH_PC: &str = "0x80000028";
-const WRONG_PATH_DIV_PC: &str = "0x8000002c";
-const WRONG_PATH_DEPENDENT_PC: &str = "0x80000030";
-const WRONG_PATH_TARGET_PC: &str = "0x80000034";
-const WRONG_PATH_PRE_SQUASH_TICK: u64 = 197;
-const WRONG_PATH_POST_SQUASH_TICK: u64 = 230;
+const WRONG_PATH_BRANCH_PC: &str = "0x80000024";
+const WRONG_PATH_DIV_PC: &str = "0x80000028";
+const WRONG_PATH_CONTROL_PC: &str = "0x8000002c";
+const WRONG_PATH_TARGET_PC: &str = "0x80000030";
 const DUMP_STATS_PC: &str = "0x80000028";
 const WRITEBACK_PORT_STATS: [(&str, &str); 6] = [
     ("cycles", "Cycle"),
@@ -30,6 +27,7 @@ fn writeback_json(writeback_width: usize) -> Value {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct WritebackRunConfig<'a> {
     memory_system: &'a str,
+    issue_width: usize,
     writeback_width: usize,
     route_delay: u64,
     max_tick: u64,
@@ -46,6 +44,7 @@ impl<'a> WritebackRunConfig<'a> {
     ) -> Self {
         Self {
             memory_system,
+            issue_width: 4,
             writeback_width,
             route_delay,
             max_tick,
@@ -60,6 +59,11 @@ impl<'a> WritebackRunConfig<'a> {
 
     const fn with_switch_mode(mut self, switch_mode: &'a str) -> Self {
         self.switch_mode = switch_mode;
+        self
+    }
+
+    const fn with_issue_width(mut self, issue_width: usize) -> Self {
+        self.issue_width = issue_width;
         self
     }
 
@@ -142,7 +146,7 @@ fn writeback_command(path: &std::path::Path, config: WritebackRunConfig<'_>) -> 
     }
     command.args([
         "--riscv-o3-issue-width",
-        "4",
+        &config.issue_width.to_string(),
         "--riscv-o3-writeback-width",
         &config.writeback_width.to_string(),
         "--memory-system",
@@ -443,10 +447,9 @@ fn wrong_path_writeback_binary() -> std::path::PathBuf {
         i_type(84, 0, 0x0, 7, 0x13),
         i_type(2, 0, 0x0, 8, 0x13),
         i_type(0, 10, 0b010, 12, 0x03),
-        b_type(16, 1, 2, 0b000),
         b_type(12, 6, 6, 0b000),
         r_type(0x01, 8, 7, 0b100, 13, 0x33),
-        i_type(1, 13, 0x0, 14, 0x13),
+        b_type(8, 13, 0, 0b001),
         i_type(-33, 12, 0x0, 15, 0x13),
     ]);
     append_host_stop(&mut words);
@@ -499,7 +502,9 @@ mod store_conditional_result;
 mod younger_atomic_result;
 
 #[path = "writeback_port/dependent_result_address.rs"]
-mod dependent_result_address;
+pub(in crate::m5_host_actions::o3) mod dependent_result_address;
 
 #[path = "writeback_port/fixed_fu.rs"]
-mod fixed_fu;
+pub(in crate::m5_host_actions::o3) mod fixed_fu;
+
+pub(in crate::m5_host_actions::o3) use fixed_fu::persistent_iq_writeback_replan_json;

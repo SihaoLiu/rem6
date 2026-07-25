@@ -417,6 +417,68 @@ mod tests {
     }
 
     #[test]
+    fn live_data_publication_rearms_same_tick_issue_wake() {
+        let core = core_with_scalar_load_and_dependent();
+        assert_eq!(core.requested_o3_writeback_wake_tick(10), Some(10));
+        let (initial_scheduler, initial_event) = wake(10);
+        core.mark_o3_writeback_wake_scheduled(initial_scheduler, initial_event);
+        core.mark_o3_writeback_wake_fired(10);
+        assert_eq!(core.pending_callback_error(), None);
+
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            let load = state.events[0].clone();
+            complete_scalar_load(&mut state.o3_runtime, &load, memory_request(20), 19, 0x2a);
+            state.refresh_o3_writeback_wake(19);
+        }
+
+        assert_eq!(core.requested_o3_writeback_wake_tick(10), Some(20));
+        let (publication_scheduler, publication_event) = wake(20);
+        core.mark_o3_writeback_wake_scheduled(publication_scheduler, publication_event);
+        core.mark_o3_writeback_wake_fired(20);
+        assert_eq!(core.pending_callback_error(), None);
+        assert!(core
+            .record_ready_o3_data_access_event_with_trace(20, false)
+            .is_some());
+
+        {
+            let state = core.state.lock().expect("riscv core lock");
+            assert_eq!(
+                state.o3_runtime.live_issue_service_tick(),
+                Some(20),
+                "publication changed queue authority: quiescent={} trace={:?}",
+                state.o3_runtime.live_issue_is_quiescent(),
+                state.o3_runtime.live_issue_trace_records(),
+            );
+        }
+        assert_eq!(core.requested_o3_writeback_wake_tick(20), Some(20));
+        let (issue_scheduler, issue_event) = wake(20);
+        core.mark_o3_writeback_wake_scheduled(issue_scheduler, issue_event);
+        core.mark_o3_writeback_wake_fired(20);
+        assert_eq!(core.pending_callback_error(), None);
+
+        let state = core.state.lock().expect("riscv core lock");
+        let dependent = state
+            .o3_runtime
+            .live_issue_trace_records()
+            .iter()
+            .find(|record| {
+                record.pc() == Address::new(0x8004)
+                    && record.action().name() == "selected"
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "same-tick wake did not select the published load dependent: service={:?} quiescent={} trace={:?}",
+                    state.o3_runtime.live_issue_service_tick(),
+                    state.o3_runtime.live_issue_is_quiescent(),
+                    state.o3_runtime.live_issue_trace_records(),
+                )
+            });
+        assert_eq!(dependent.service_tick(), 20);
+        assert!(state.o3_runtime.live_issue_is_quiescent());
+    }
+
+    #[test]
     fn restored_live_retire_gate_without_owned_scheduler_wake_requests_gate_tick() {
         let core = core();
         let request = memory_request(31);
@@ -606,6 +668,32 @@ mod tests {
             .issued_data_for_fetches
             .extend([older.fetch().request_id(), younger.fetch().request_id()]);
         state.events.extend([older, younger]);
+        state.o3_runtime = runtime;
+        drop(state);
+        core
+    }
+
+    fn core_with_scalar_load_and_dependent() -> RiscvCore {
+        let load = scalar_load_event(0x8000, 10, 12, 0x9000);
+        let dependent = addi_instruction(13, 12, 1);
+        let mut runtime = crate::o3_runtime::O3RuntimeState::default();
+        assert!(runtime.stage_live_data_access_issue_for_test(&load, memory_request(20), 10));
+        runtime.stage_live_data_access_younger_window(
+            load.fetch().request_id(),
+            [(Address::new(0x8004), dependent)],
+        );
+        assert!(runtime.bind_live_staged_issue_packet(
+            Address::new(0x8004),
+            decoded(dependent),
+            &[memory_request(11)],
+            10,
+        ));
+        let core = core();
+        let mut state = core.state.lock().expect("riscv core lock");
+        state
+            .issued_data_for_fetches
+            .insert(load.fetch().request_id());
+        state.events.push(load);
         state.o3_runtime = runtime;
         drop(state);
         core

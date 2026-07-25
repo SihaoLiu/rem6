@@ -240,12 +240,13 @@ impl O3LiveIssueState {
 
     pub(super) fn remove_suffix_at(
         &mut self,
-        boundary: u64,
+        removal_boundary: u64,
+        cleanup_boundary: u64,
         action: O3LiveIssueTraceAction,
         rows: &[(u64, Address, O3LiveIssueTraceClass)],
         tick: u64,
     ) -> usize {
-        let removed = self.take_suffix(boundary);
+        let removed = self.take_suffix(removal_boundary);
         let metadata = rows
             .iter()
             .copied()
@@ -264,11 +265,44 @@ impl O3LiveIssueState {
                     next_wake_tick,
                     raw_writeback_tick: None,
                     admitted_writeback_tick: None,
-                    cleanup_boundary: Some(boundary),
+                    cleanup_boundary: Some(cleanup_boundary),
                 });
             }
         }
         removed.len()
+    }
+
+    pub(super) fn record_nonresident_cleanup_at(
+        &mut self,
+        sequence: u64,
+        boundary: u64,
+        action: O3LiveIssueTraceAction,
+        pc: Address,
+        issue_class: O3LiveIssueTraceClass,
+        tick: u64,
+    ) -> bool {
+        if self.resident_sequences.binary_search(&sequence).is_ok()
+            || self.trace_records.iter().any(|record| {
+                record.sequence == sequence
+                    && record.action == action
+                    && record.cleanup_boundary == Some(boundary)
+            })
+        {
+            return false;
+        }
+        self.mark_mutated();
+        self.trace_records.push(O3LiveIssueTraceRecord {
+            sequence,
+            pc,
+            action,
+            issue_class,
+            service_tick: tick,
+            next_wake_tick: self.requested_service_tick,
+            raw_writeback_tick: None,
+            admitted_writeback_tick: None,
+            cleanup_boundary: Some(boundary),
+        });
+        true
     }
 
     pub(in crate::o3_runtime) fn discard_all(&mut self) {

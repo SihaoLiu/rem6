@@ -9,7 +9,7 @@ use super::*;
 mod boundaries;
 
 #[path = "dependent_result_address/two_pending.rs"]
-mod two_pending;
+pub(in crate::m5_host_actions::o3) mod two_pending;
 
 #[path = "dependent_result_address/three_pending.rs"]
 mod three_pending;

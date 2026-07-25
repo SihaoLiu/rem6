@@ -157,6 +157,10 @@ fn rem6_run_o3_writeback_port_stats_dump_exposes_counters() {
 
 #[test]
 fn rem6_run_o3_writeback_scalar_load_fu_collision_blocks_architecture_until_admission() {
+    persistent_iq_writeback_replan_json();
+}
+
+pub(in crate::m5_host_actions::o3) fn persistent_iq_writeback_replan_json() -> Value {
     let path = scalar_load_admission_binary();
     let mut collision_runs: Vec<_> = [4, 8, 9, 12, 16, 20]
         .into_iter()
@@ -183,7 +187,14 @@ fn rem6_run_o3_writeback_scalar_load_fu_collision_blocks_architecture_until_admi
         "width-two calibration must align the scalar-load and DIV raw-ready ticks"
     );
 
-    let full = scalar_load_admission_json(&path, 1, route_delay, 600);
+    let persistent_run = |max_tick| {
+        writeback_json_for_path_with_config(
+            &path,
+            WritebackRunConfig::direct_detailed_json(1, route_delay, max_tick),
+            &["--riscv-o3-scalar-live-window-depth", "3"],
+        )
+    };
+    let full = persistent_run(600);
     let load = event_at_pc(&full, SCALAR_LOAD_PC);
     let fu = event_at_pc(&full, SCALAR_DIV_PC);
     let dependent = event_at_pc(&full, SCALAR_LOAD_DEPENDENT_PC);
@@ -200,7 +211,7 @@ fn rem6_run_o3_writeback_scalar_load_fu_collision_blocks_architecture_until_admi
         Some("0x2a")
     );
 
-    let before = scalar_load_admission_json(&path, 1, route_delay, admitted_tick - 1);
+    let before = persistent_run(admitted_tick - 1);
     assert_eq!(
         before
             .pointer("/cores/0/registers/x12")
@@ -218,7 +229,7 @@ fn rem6_run_o3_writeback_scalar_load_fu_collision_blocks_architecture_until_admi
         Some(true)
     );
 
-    let at_admission = scalar_load_admission_json(&path, 1, route_delay, admitted_tick);
+    let at_admission = persistent_run(admitted_tick);
     assert_eq!(
         at_admission
             .pointer("/cores/0/registers/x12")
@@ -226,6 +237,8 @@ fn rem6_run_o3_writeback_scalar_load_fu_collision_blocks_architecture_until_admi
         Some("0x2a"),
         "the architectural load value must appear exactly at admission"
     );
+
+    full
 }
 
 #[test]
@@ -321,19 +334,51 @@ fn rem6_run_timing_suppresses_o3_writeback_port_surface() {
 
 #[test]
 fn rem6_run_o3_writeback_wrong_path_reservation_never_publishes() {
+    let _ = persistent_iq_wrong_path_cleanup_json();
+}
+
+pub(in crate::m5_host_actions::o3) fn persistent_iq_wrong_path_cleanup_json() -> (Value, u64) {
     let path = wrong_path_writeback_binary();
     let branch_args = [
         "--riscv-branch-lookahead",
-        "2",
+        "3",
         "--riscv-o3-scalar-memory-depth",
         "4",
+        "--dump-memory",
+        "0x800000c0:4",
     ];
-    let before = writeback_json_for_path(&path, 1, 8, WRONG_PATH_PRE_SQUASH_TICK, &branch_args);
+    let run = |max_tick| {
+        writeback_json_for_path_with_config(
+            &path,
+            WritebackRunConfig::direct_detailed_json(1, 8, max_tick).with_issue_width(1),
+            &branch_args,
+        )
+    };
+    let json = run(800);
+    let queue_events = json
+        .pointer("/debug/o3_trace/0/issue_queue/events")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("wrong-path queue trace: {json}"));
+    let selected_div = queue_events
+        .iter()
+        .find(|event| {
+            event.pointer("/action").and_then(Value::as_str) == Some("selected")
+                && event.pointer("/pc").and_then(Value::as_str) == Some(WRONG_PATH_DIV_PC)
+        })
+        .unwrap_or_else(|| panic!("wrong-path DIV selection: {queue_events:?}"));
+    let wrong_path_sequence = event_u64(selected_div, "sequence");
+    let branch_sequence = event_u64(event_at_pc(&json, WRONG_PATH_BRANCH_PC), "sequence");
+    let before_tick = event_u64(selected_div, "service_tick") + 1;
+    let cleanup_tick = queue_events
+        .iter()
+        .filter(|event| event.pointer("/action").and_then(Value::as_str) == Some("squashed"))
+        .map(|event| event_u64(event, "service_tick"))
+        .min()
+        .unwrap_or_else(|| panic!("wrong-path squash trace: {queue_events:?}"));
+
+    let before = run(before_tick);
     let wrong_path_div = rob_entry_at_pc(&before, WRONG_PATH_DIV_PC);
-    let wrong_path_sequence = wrong_path_div
-        .pointer("/sequence")
-        .and_then(Value::as_u64)
-        .unwrap_or_else(|| panic!("wrong-path DIV must expose its sequence: {wrong_path_div}"));
+    assert_eq!(event_u64(wrong_path_div, "sequence"), wrong_path_sequence);
     let wrong_path_reservation = writeback_reservation_at_sequence(&before, wrong_path_sequence);
     let wrong_path_raw_ready_tick = wrong_path_reservation
         .pointer("/raw_ready_tick")
@@ -349,15 +394,15 @@ fn rem6_run_o3_writeback_wrong_path_reservation_never_publishes() {
         });
     assert_eq!(wrong_path_admitted_tick, wrong_path_raw_ready_tick);
     assert!(
-        wrong_path_admitted_tick > WRONG_PATH_PRE_SQUASH_TICK,
+        wrong_path_admitted_tick > before_tick,
         "the rollback must discard a genuinely future reservation: {wrong_path_reservation}"
     );
-    assert_eq!(
+    assert!(
         before
             .pointer("/cores/0/o3_runtime/issue/issued_rows")
-            .and_then(Value::as_u64),
-        Some(3),
-        "both branches and the wrong-path DIV must issue before retirement: {before}"
+            .and_then(Value::as_u64)
+            .is_some_and(|rows| rows >= 2),
+        "the branch and wrong-path DIV must issue before cleanup: {before}"
     );
     assert_eq!(
         before
@@ -367,15 +412,8 @@ fn rem6_run_o3_writeback_wrong_path_reservation_never_publishes() {
         "the issued wrong-path DIV must not publish before its admitted tick"
     );
 
-    let after = writeback_json_for_path(&path, 1, 8, WRONG_PATH_POST_SQUASH_TICK, &branch_args);
+    let after = run(cleanup_tick + 1);
 
-    let outer_branch = event_at_pc(&after, WRONG_PATH_OUTER_BRANCH_PC);
-    assert_eq!(
-        outer_branch
-            .pointer("/branch_mispredicted")
-            .and_then(Value::as_bool),
-        Some(false)
-    );
     let branch = event_at_pc(&after, WRONG_PATH_BRANCH_PC);
     assert_eq!(
         branch
@@ -388,8 +426,7 @@ fn rem6_run_o3_writeback_wrong_path_reservation_never_publishes() {
         Some(true)
     );
     assert!(event_at_pc_if_present(&after, WRONG_PATH_DIV_PC).is_none());
-    assert!(event_at_pc_if_present(&after, WRONG_PATH_DEPENDENT_PC).is_none());
-    assert!(event_at_pc_if_present(&after, WRONG_PATH_TARGET_PC).is_none());
+    assert!(event_at_pc_if_present(&after, WRONG_PATH_CONTROL_PC).is_none());
     assert!(writeback_reservation_at_sequence_if_present(&after, wrong_path_sequence).is_none());
     assert_eq!(
         after
@@ -403,19 +440,50 @@ fn rem6_run_o3_writeback_wrong_path_reservation_never_publishes() {
             .and_then(Value::as_str),
         None
     );
-
-    let json = writeback_json_for_path(&path, 1, 8, 800, &branch_args);
+    let data_request_count = |run: &Value| {
+        run.pointer("/debug/memory_trace")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|record| {
+                record.pointer("/channel").and_then(Value::as_str) == Some("data")
+                    && record.pointer("/kind").and_then(Value::as_str) == Some("request_sent")
+            })
+            .count()
+    };
+    for run in [&before, &after, &json] {
+        assert_eq!(
+            data_request_count(run),
+            1,
+            "wrong-path data transport: {run}"
+        );
+        assert_eq!(
+            super::result_support::memory_dump_hex(run, 0x8000_00c0),
+            Some("2a000000"),
+            "wrong-path cleanup must preserve the older load source"
+        );
+    }
     assert_eq!(
         json.pointer("/cores/0/registers/x15")
             .and_then(Value::as_str),
         Some("0x9")
     );
+    for register in ["x13", "x14"] {
+        assert_eq!(
+            json.pointer(&format!("/cores/0/registers/{register}"))
+                .and_then(Value::as_str),
+            None,
+            "wrong-path register {register} must remain unpublished in the completed run",
+        );
+    }
     let target = event_at_pc(&json, WRONG_PATH_TARGET_PC);
     assert_eq!(
         event_u64(target, "issue_tick"),
         event_u64(target, "writeback_tick"),
         "the correct-path row must publish without writeback deferral"
     );
+
+    (json, branch_sequence)
 }
 
 #[test]

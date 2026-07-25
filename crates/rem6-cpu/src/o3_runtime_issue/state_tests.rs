@@ -61,19 +61,11 @@ fn live_issue_state_requests_current_tick_on_admission() {
 
 #[test]
 fn live_issue_full_discard_clears_persistent_state_without_trace() {
-    let mut runtime = O3RuntimeState::default();
-    let instruction = addi(3, 0, 1);
-    runtime
-        .stage_live_instruction(Address::new(BRANCH_PC), instruction, 0)
-        .unwrap();
-    assert!(runtime.bind_live_staged_issue_packet(
-        Address::new(BRANCH_PC),
-        decoded(instruction),
-        &[request(11)],
-        31,
-    ));
-    assert_eq!(runtime.live_issue.resident_sequences().len(), 1);
-    assert_eq!(runtime.live_issue_service_tick(), Some(31));
+    let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::CrossResource);
+    let runtime = &mut fixture.runtime;
+    assert_eq!(runtime.live_issue.resident_sequences().len(), 3);
+    assert!(runtime.live_issue_service_tick().is_some());
+    assert!(!runtime.live_data_access_lifecycle_is_quiescent());
 
     runtime.discard_live_staged_instructions();
 
@@ -89,19 +81,11 @@ fn live_issue_full_discard_clears_persistent_state_without_trace() {
 
 #[test]
 fn live_issue_timed_full_discard_clears_persistent_state_without_trace() {
-    let mut runtime = O3RuntimeState::default();
-    let instruction = addi(3, 0, 1);
-    runtime
-        .stage_live_instruction(Address::new(BRANCH_PC), instruction, 0)
-        .unwrap();
-    assert!(runtime.bind_live_staged_issue_packet(
-        Address::new(BRANCH_PC),
-        decoded(instruction),
-        &[request(11)],
-        31,
-    ));
-    assert_eq!(runtime.live_issue.resident_sequences().len(), 1);
-    assert_eq!(runtime.live_issue_service_tick(), Some(31));
+    let mut fixture = ScalarIssueFixture::new(2, ScalarIssueCase::CrossResource);
+    let runtime = &mut fixture.runtime;
+    assert_eq!(runtime.live_issue.resident_sequences().len(), 3);
+    assert!(runtime.live_issue_service_tick().is_some());
+    assert!(!runtime.live_data_access_lifecycle_is_quiescent());
 
     runtime.discard_live_staged_instructions_at(32);
 

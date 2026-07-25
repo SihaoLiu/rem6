@@ -402,6 +402,15 @@ impl O3RuntimeState {
             .or(live.response_tick)
     }
 
+    pub(super) fn completed_live_data_access_publication_tick(&self, sequence: u64) -> Option<u64> {
+        let live = self.live_data_accesses.iter().find(|live| {
+            live.sequence == sequence
+                && live.outcome == O3LiveDataAccessOutcome::Completed
+                && !live.event_taken
+        })?;
+        self.live_data_access_publication_tick(live)
+    }
+
     pub(crate) fn ready_live_data_access_event_kind(&self) -> Option<RiscvDataAccessEventKind> {
         let live = self.live_data_accesses.first()?;
         if live.outcome == O3LiveDataAccessOutcome::Resident || live.event_taken {

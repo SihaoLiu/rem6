@@ -338,10 +338,6 @@ impl O3RuntimeState {
                 self.record_pending_data_address_resource_blocked(sequence, now);
                 self.pending_data_address_wake_tick()
             });
-        let next_service_tick = [same_tick, resource_tick, dependency_tick, pending_tick]
-            .into_iter()
-            .flatten()
-            .min();
         let only_dependency_blocked =
             post_plan.issued().is_empty() && post_plan.resource_blocked().is_empty();
         let waits_for_pending_dependency = only_dependency_blocked
@@ -365,6 +361,26 @@ impl O3RuntimeState {
                     })
                 })
             });
+        let waits_for_due_live_data_dependency = waits_for_live_data_dependency
+            && post_plan.dependency_blocked().iter().any(|row| {
+                queue.entry(row.sequence()).is_some_and(|entry| {
+                    entry.scheduling().data_producers().iter().any(|producer| {
+                        self.completed_live_data_access_publication_tick(producer.sequence())
+                            .is_some_and(|tick| tick <= now)
+                    })
+                })
+            });
+        let live_data_tick = waits_for_due_live_data_dependency.then_some(now);
+        let next_service_tick = [
+            same_tick,
+            resource_tick,
+            dependency_tick,
+            pending_tick,
+            live_data_tick,
+        ]
+        .into_iter()
+        .flatten()
+        .min();
         let waits_for_external_dependency =
             waits_for_pending_dependency || waits_for_live_data_dependency;
         let no_wake_sequence = (next_service_tick.is_none() && !waits_for_external_dependency)

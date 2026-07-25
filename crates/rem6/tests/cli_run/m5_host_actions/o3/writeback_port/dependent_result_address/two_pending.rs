@@ -1,14 +1,19 @@
 use super::*;
 
 #[path = "two_pending/boundaries.rs"]
-mod boundaries;
+pub(in crate::m5_host_actions::o3) mod boundaries;
 
 const FIRST_PENDING_PC: &str = "0x80000034";
 const SECOND_PENDING_PC: &str = "0x80000038";
 const SCALAR_SUFFIX_PC: &str = "0x8000003c";
+const CLASS_HEAD_PC: &str = "0x80000040";
+const INTEGER_MUL_DIV_PC: &str = "0x80000044";
+const CONTROL_PC: &str = "0x80000048";
 const WITNESS0_PC: &str = "0x80000040";
 const WITNESS1_PC: &str = "0x80000044";
 const WITNESS2_PC: &str = "0x80000048";
+const WITNESS_PCS: [&str; 3] = [WITNESS0_PC, WITNESS1_PC, WITNESS2_PC];
+const PERSISTENT_IQ_WIDTH_FOUR_WITNESS_PCS: [&str; 3] = ["0x8000004c", "0x80000050", "0x80000054"];
 const TWO_PENDING_DATA_START: u64 = 0x8000_0100;
 const FIRST_POINTER: u64 = TWO_PENDING_DATA_START + 64;
 const SECOND_POINTER: u64 = TWO_PENDING_DATA_START + 96;
@@ -49,7 +54,7 @@ const TWO_PENDING_ROWS: [TwoPendingRow; 6] = [
         topology: TwoPendingTopology::Sibling,
         head: DependentAddressHead::ScalarLoad,
         memory_system: "cache-fabric-dram",
-        issue_width: 2,
+        issue_width: 4,
         scalar_uses_head_only: true,
         max_tick: 2_000,
     },
@@ -92,9 +97,8 @@ fn rem6_run_o3_two_pending_result_address_sibling_width_one_direct() {
     run_two_pending_row(TWO_PENDING_ROWS[0]);
 }
 
-#[test]
-fn rem6_run_o3_general_iq_pending_address_and_scalar_hierarchy() {
-    run_two_pending_row(TWO_PENDING_ROWS[1]);
+pub(in crate::m5_host_actions::o3) fn persistent_iq_width_four_hierarchy_json() -> Value {
+    completed_two_pending_row(TWO_PENDING_ROWS[1])
 }
 
 #[test]
@@ -118,10 +122,15 @@ fn rem6_run_o3_two_pending_result_address_atomic_chain_hierarchy() {
 }
 
 fn run_two_pending_row(row: TwoPendingRow) {
+    let _ = completed_two_pending_row(row);
+}
+
+fn completed_two_pending_row(row: TwoPendingRow) -> Value {
     let fixture = TwoPendingFixture::new(row);
     let completed = fixture.run(row.max_tick);
     let resident = assert_two_pending_resident(&fixture, &completed);
     assert_two_pending_completed(&fixture, &completed, &resident);
+    completed
 }
 
 struct TwoPendingFixture {
@@ -147,6 +156,9 @@ impl TwoPendingFixture {
             switch_mode,
         );
         add_two_pending_memory_dumps(&mut command);
+        if is_persistent_iq_width_four_row(self.row) {
+            command.args(["--riscv-o3-scalar-live-window-depth", "6"]);
+        }
         command
     }
 
@@ -245,7 +257,15 @@ fn assert_two_pending_completed(fixture: &TwoPendingFixture, completed: &Value, 
     let first = memory_result_event_at_pc(completed, FIRST_PENDING_PC);
     let second = memory_result_event_at_pc(completed, SECOND_PENDING_PC);
     let scalar = event_at_pc(completed, SCALAR_SUFFIX_PC);
-    let witnesses = [WITNESS0_PC, WITNESS1_PC, WITNESS2_PC].map(|pc| event_at_pc(completed, pc));
+    let class_head = is_persistent_iq_width_four_row(row)
+        .then(|| memory_result_event_at_pc(completed, CLASS_HEAD_PC));
+    let class_rows = is_persistent_iq_width_four_row(row).then(|| {
+        [
+            event_at_pc(completed, INTEGER_MUL_DIV_PC),
+            event_at_pc(completed, CONTROL_PC),
+        ]
+    });
+    let witnesses = witness_pcs(row).map(|pc| event_at_pc(completed, pc));
 
     if row.topology == TwoPendingTopology::Sibling {
         assert_eq!(
@@ -256,7 +276,7 @@ fn assert_two_pending_completed(fixture: &TwoPendingFixture, completed: &Value, 
     } else {
         assert!(event_u64(second, "issue_tick") >= event_u64(first, "writeback_tick"));
     }
-    if row.issue_width == 2 && row.scalar_uses_head_only {
+    if row.scalar_uses_head_only {
         assert_eq!(
             event_u64(scalar, "issue_tick"),
             event_u64(first, "issue_tick")
@@ -283,10 +303,13 @@ fn assert_two_pending_completed(fixture: &TwoPendingFixture, completed: &Value, 
     }
 
     let requests = data_requests_sent(completed);
+    let mut request_events = vec![head, first, second];
+    request_events.extend(class_head);
+    request_events.extend(witnesses);
     assert_eq!(
         requests.len(),
-        6,
-        "head, two pending loads, and three witnesses: {requests:?}"
+        request_events.len(),
+        "head, two pending loads, optional class head, and three witnesses: {requests:?}"
     );
     let younger_requests = &requests[1..3];
     assert_eq!(younger_requests.len(), 2);
@@ -294,33 +317,36 @@ fn assert_two_pending_completed(fixture: &TwoPendingFixture, completed: &Value, 
         event_u64(younger_requests[0], "request"),
         event_u64(younger_requests[1], "request")
     );
-    for (request, event) in requests.iter().copied().zip([
-        head,
-        first,
-        second,
-        witnesses[0],
-        witnesses[1],
-        witnesses[2],
-    ]) {
+    for (request, event) in requests.iter().copied().zip(request_events) {
         assert!(
             event_u64(request, "tick") >= event_u64(event, "issue_tick"),
             "{row:?} request {request} precedes issue {event}"
         );
     }
 
-    let window = [head, first, second, scalar];
-    let sequences = window.map(|event| event_u64(event, "sequence"));
+    let mut window = vec![head, first, second, scalar];
+    window.extend(class_head);
+    if let Some(class_rows) = class_rows {
+        window.extend(class_rows);
+    }
+    let sequences = window
+        .iter()
+        .map(|event| event_u64(event, "sequence"))
+        .collect::<Vec<_>>();
     assert!(sequences.windows(2).all(|pair| pair[0] < pair[1]));
-    let commits = window.map(|event| event_u64(event, "commit_tick"));
+    let commits = window
+        .iter()
+        .map(|event| event_u64(event, "commit_tick"))
+        .collect::<Vec<_>>();
     assert!(
         commits.windows(2).all(|pair| pair[0] <= pair[1]),
         "{row:?} commits: {commits:?}"
     );
     let witness_sequences = witnesses.map(|event| event_u64(event, "sequence"));
     assert!(witness_sequences.windows(2).all(|pair| pair[0] < pair[1]));
-    assert!(sequences[3] < witness_sequences[0]);
+    assert!(sequences.last().copied().unwrap() < witness_sequences[0]);
     let witness_commits = witnesses.map(|event| event_u64(event, "commit_tick"));
-    assert!(commits[3] <= witness_commits[0]);
+    assert!(commits.last().copied().unwrap() <= witness_commits[0]);
     assert!(witness_commits.windows(2).all(|pair| pair[0] <= pair[1]));
 
     assert_two_pending_counters(row, completed, resident);
@@ -391,6 +417,18 @@ fn expected_pending_addresses(topology: TwoPendingTopology) -> [u64; 2] {
             TwoPendingTopology::Chain => SECOND_POINTER + 8,
         },
     ]
+}
+
+fn is_persistent_iq_width_four_row(row: TwoPendingRow) -> bool {
+    row == TWO_PENDING_ROWS[1]
+}
+
+fn witness_pcs(row: TwoPendingRow) -> [&'static str; 3] {
+    if is_persistent_iq_width_four_row(row) {
+        PERSISTENT_IQ_WIDTH_FOUR_WITNESS_PCS
+    } else {
+        WITNESS_PCS
+    }
 }
 
 fn expected_registers(row: TwoPendingRow) -> (u64, u64, u64) {
@@ -466,6 +504,15 @@ fn two_pending_binary(row: TwoPendingRow) -> std::path::PathBuf {
                 TwoPendingTopology::Chain => r_type(0, 5, 7, 0, 8, 0x33),
             }
         },
+    ]);
+    if is_persistent_iq_width_four_row(row) {
+        words.extend([
+            i_type(24, 9, 0b011, 13, 0x03),
+            r_type(1, 0, 0, 0b000, 14, 0x33),
+            b_type(8, 0, 0, 0b001),
+        ]);
+    }
+    words.extend([
         s_type((WITNESS_BASE - TWO_PENDING_DATA_START) as i32, 6, 9, 0b011),
         s_type(
             (WITNESS_BASE + 8 - TWO_PENDING_DATA_START) as i32,

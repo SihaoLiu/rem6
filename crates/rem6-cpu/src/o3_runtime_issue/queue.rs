@@ -419,7 +419,7 @@ impl O3RuntimeState {
                 data_producers,
             });
         }
-        if index == 0 || !self.live_staged_instruction_matches(entry.sequence(), instruction) {
+        if !self.live_staged_instruction_matches(entry.sequence(), instruction) {
             return None;
         }
         let (scalar_destination, control, sources) = if let Some((destination, sources)) =
