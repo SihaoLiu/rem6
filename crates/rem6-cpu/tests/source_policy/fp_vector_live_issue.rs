@@ -202,7 +202,7 @@ fn fp_vector_live_issue_locks_task3_o3ps_vector_codec() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let pipeline_source = fs::read_to_string(root.join("src/o3_pipeline.rs")).unwrap();
     let pipeline_tests = fs::read_to_string(root.join("tests/o3_pipeline.rs")).unwrap();
-    let compact_source = compact_rust_code(&pipeline_source);
+    let compact_source = compact_rust_code(&production_rust_source(&pipeline_source));
     let compact_tests = compact_rust_code(&pipeline_tests);
 
     assert!(compact_source.contains("constO3_PENDING_STATE_CHECKPOINT_VERSION:u8=2;"));
