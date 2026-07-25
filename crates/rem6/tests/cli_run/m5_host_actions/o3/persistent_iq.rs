@@ -11,6 +11,8 @@ use super::*;
 
 #[path = "persistent_iq/mixed_compute.rs"]
 mod mixed_compute;
+#[path = "persistent_iq/mixed_compute_boundaries.rs"]
+mod mixed_compute_boundaries;
 #[path = "persistent_iq/mixed_compute_fixture.rs"]
 mod mixed_compute_fixture;
 

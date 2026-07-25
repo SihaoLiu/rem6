@@ -22,6 +22,31 @@ fn rem6_run_o3_persistent_iq_width_two_coissues_fp_vector_and_blocks_second_fp_d
     assert_fp_add_timing(&json);
 }
 
+#[test]
+fn rem6_run_o3_persistent_iq_width_four_mixed_compute_hierarchy() {
+    let json = run_width_four_mixed_compute_json();
+    assert_exact_architectural_results(&json);
+    assert_eq!(
+        json.pointer("/cores/0/o3_runtime/issue/max_rows_per_cycle")
+            .and_then(Value::as_u64),
+        Some(4),
+    );
+    for pointer in [
+        "/memory_resources/cache/data/activity",
+        "/memory_resources/transport/data/activity",
+        "/memory_resources/fabric/activity",
+        "/memory_resources/dram/activity",
+    ] {
+        assert!(
+            json.pointer(pointer)
+                .and_then(Value::as_u64)
+                .is_some_and(|activity| activity > 0),
+            "missing hierarchy activity {pointer}: {json}",
+        );
+    }
+    assert_mixed_width_four_batch(&json);
+}
+
 fn assert_mixed_batch_admission(json: &Value) -> u64 {
     let queued = [DIV_PC, FP_ADD_PC, VECTOR_RESULT_PC, SECOND_FP_PC]
         .map(|pc| queue_event_at_pc(json, pc, "queued"));
@@ -203,23 +228,6 @@ fn selected_event_at_pc<'a>(json: &'a Value, pc: &str) -> &'a Value {
     queue_event_at_pc(json, pc, "selected")
 }
 
-fn queue_event_at_pc<'a>(json: &'a Value, pc: &str, action: &str) -> &'a Value {
-    let matches = super::queue_events(json)
-        .iter()
-        .filter(|event| {
-            event.pointer("/pc").and_then(Value::as_str) == Some(pc)
-                && event.pointer("/action").and_then(Value::as_str) == Some(action)
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        matches.len(),
-        1,
-        "expected one {action} mixed-compute row at {pc}: {:#?}",
-        super::queue_events(json),
-    );
-    matches[0]
-}
-
 fn event_class(event: &Value) -> &str {
     event
         .pointer("/issue_class")
@@ -234,7 +242,7 @@ fn event_tick(event: &Value) -> u64 {
         .expect("mixed-compute service tick")
 }
 
-fn o3_event_at_pc<'a>(json: &'a Value, pc: &str) -> &'a Value {
+pub(super) fn o3_event_at_pc<'a>(json: &'a Value, pc: &str) -> &'a Value {
     let matches = json
         .pointer("/debug/o3_trace/0/events")
         .and_then(Value::as_array)

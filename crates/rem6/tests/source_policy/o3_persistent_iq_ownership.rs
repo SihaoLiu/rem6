@@ -4,10 +4,13 @@ const MAX_PERSISTENT_IQ_CLI_LINES: usize = 900;
 const MAX_PERSISTENT_IQ_POLICY_LINES: usize = 600;
 const MAX_PERSISTENT_IQ_MIXED_COMPUTE_FIXTURE_LINES: usize = 320;
 const MAX_PERSISTENT_IQ_MIXED_COMPUTE_TEST_LINES: usize = 320;
+const MAX_PERSISTENT_IQ_MIXED_COMPUTE_BOUNDARY_LINES: usize = 320;
 const PERSISTENT_IQ_CLI: &str = "tests/cli_run/m5_host_actions/o3/persistent_iq.rs";
 const MIXED_COMPUTE_FIXTURE: &str =
     "tests/cli_run/m5_host_actions/o3/persistent_iq/mixed_compute_fixture.rs";
 const MIXED_COMPUTE_TESTS: &str = "tests/cli_run/m5_host_actions/o3/persistent_iq/mixed_compute.rs";
+const MIXED_COMPUTE_BOUNDARIES: &str =
+    "tests/cli_run/m5_host_actions/o3/persistent_iq/mixed_compute_boundaries.rs";
 const MIGRATION_LEDGER: &str = "docs/architecture/gem5-to-rem6-migration.md";
 const O3_CLI_DIR: &str = "tests/cli_run/m5_host_actions/o3";
 const RETIRED_GENERAL_IQ_OWNERS: [&str; 2] = [
@@ -45,6 +48,7 @@ fn o3_persistent_iq_focused_owners_exist_and_stay_bounded() {
     assert!(cli.is_file(), "missing {}", cli.display());
     assert!(crate_dir.join(MIXED_COMPUTE_FIXTURE).is_file());
     assert!(crate_dir.join(MIXED_COMPUTE_TESTS).is_file());
+    assert!(crate_dir.join(MIXED_COMPUTE_BOUNDARIES).is_file());
     assert!(line_count(&cli) <= MAX_PERSISTENT_IQ_CLI_LINES);
     assert!(
         line_count(&crate_dir.join(MIXED_COMPUTE_FIXTURE))
@@ -53,6 +57,10 @@ fn o3_persistent_iq_focused_owners_exist_and_stay_bounded() {
     assert!(
         line_count(&crate_dir.join(MIXED_COMPUTE_TESTS))
             <= MAX_PERSISTENT_IQ_MIXED_COMPUTE_TEST_LINES
+    );
+    assert!(
+        line_count(&crate_dir.join(MIXED_COMPUTE_BOUNDARIES))
+            <= MAX_PERSISTENT_IQ_MIXED_COMPUTE_BOUNDARY_LINES
     );
     assert!(line_count(&policy) <= MAX_PERSISTENT_IQ_POLICY_LINES);
     for retired in RETIRED_GENERAL_IQ_OWNERS {
@@ -69,6 +77,10 @@ fn o3_persistent_iq_focused_owners_exist_and_stay_bounded() {
             "persistent_iq/mixed_compute_fixture.rs",
         ),
         ("mixed_compute", "persistent_iq/mixed_compute.rs"),
+        (
+            "mixed_compute_boundaries",
+            "persistent_iq/mixed_compute_boundaries.rs",
+        ),
     ] {
         assert!(
             module_has_path_attribute(&source, module, path),
@@ -81,8 +93,20 @@ fn o3_persistent_iq_focused_owners_exist_and_stay_bounded() {
     for anchor in [
         "rem6_run_o3_persistent_iq_width_one_serializes_fp_vector_results_direct",
         "rem6_run_o3_persistent_iq_width_two_coissues_fp_vector_and_blocks_second_fp_direct",
+        "rem6_run_o3_persistent_iq_width_four_mixed_compute_hierarchy",
     ] {
         assert_eq!(function_definition_count(&mixed_compute_tests, anchor), 1);
+    }
+    let boundary_source = fs::read_to_string(crate_dir.join(MIXED_COMPUTE_BOUNDARIES)).unwrap();
+    let boundary_tests =
+        parsed_enabled_test_definition_names(MIXED_COMPUTE_BOUNDARIES, &boundary_source);
+    for anchor in [
+        "rem6_run_o3_persistent_iq_dependent_fp_boundary",
+        "rem6_run_o3_persistent_iq_vector_destination_boundary",
+        "rem6_run_o3_persistent_iq_mixed_compute_checkpoint_boundary",
+        "rem6_run_timing_suppresses_o3_mixed_compute_surface",
+    ] {
+        assert_eq!(function_definition_count(&boundary_tests, anchor), 1);
     }
     let definitions = parsed_function_definition_names(PERSISTENT_IQ_CLI, &source);
     let global_definitions = rust_source_files(&crate_dir.join(O3_CLI_DIR))
