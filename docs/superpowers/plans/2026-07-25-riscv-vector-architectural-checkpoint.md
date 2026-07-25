@@ -191,10 +191,11 @@ system production edits, add these rows:
    proving marker validation wins over missing-state and legacy handling.
 8. Vector payload size, payload version, and reserved-high-`vcsr` errors,
    each without PC/integer/FP/vector mutation.
-9. A valid vector payload paired with a valid-size PMP chunk whose NA4 range
-   overflows during `restore_pmp_snapshot`; assert `InvalidPmpSnapshot` and
-   prove destination vector state remains unchanged because vector application
-   is later than this post-decode failure.
+9. Source policy proves vector application remains after every fallible restore
+   call. Existing decode validates all currently constructible PMP, pipeline,
+   predictor, and O3 payload failures before apply, so no test-only hook or
+   weakened predecode path is added merely to manufacture a restore-only
+   failure.
 
 - [ ] **Step 4: Add all failing multicore tests**
 
