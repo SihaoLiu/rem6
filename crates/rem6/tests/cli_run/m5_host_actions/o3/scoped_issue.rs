@@ -35,7 +35,7 @@ const SCOPED_ISSUE_STATS: [(&str, &str, &str); 5] = [
     ("max_rows_per_cycle", "max_rows_per_cycle", "Count"),
 ];
 
-const ISSUE_QUEUE_STATS: [(&str, &str); 9] = [
+const ISSUE_QUEUE_STATS: [(&str, &str); 11] = [
     ("enqueued_rows", "enqueued_rows"),
     ("service_turns", "service_turns"),
     ("wake_requests", "wake_requests"),
@@ -51,6 +51,14 @@ const ISSUE_QUEUE_STATS: [(&str, &str); 9] = [
     ),
     ("issued_by_class/memory_agu", "issued_by_class.memory_agu"),
     ("issued_by_class/control", "issued_by_class.control"),
+    (
+        "issued_by_class/scalar_float",
+        "issued_by_class.scalar_float",
+    ),
+    (
+        "issued_by_class/vector_to_scalar",
+        "issued_by_class.vector_to_scalar",
+    ),
 ];
 
 #[test]
@@ -69,10 +77,17 @@ fn core_summary_json_o3_issue_queue() {
     assert!(queue_u64(queue, "wake_requests") > 0);
     assert_eq!(queue_u64(queue, "current_occupancy"), 0);
     assert!(queue_u64(queue, "peak_occupancy") > 0);
-    let issued_by_class = ["scalar_integer", "integer_mul_div", "memory_agu", "control"]
-        .into_iter()
-        .map(|issue_class| queue_u64(queue, &format!("issued_by_class/{issue_class}")))
-        .sum::<u64>();
+    let issued_by_class = [
+        "scalar_integer",
+        "integer_mul_div",
+        "memory_agu",
+        "control",
+        "scalar_float",
+        "vector_to_scalar",
+    ]
+    .into_iter()
+    .map(|issue_class| queue_u64(queue, &format!("issued_by_class/{issue_class}")))
+    .sum::<u64>();
     assert!(issued_by_class > 0);
 }
 

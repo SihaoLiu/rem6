@@ -9,7 +9,7 @@ use super::predicted_control::{
 };
 use super::*;
 
-const PERSISTENT_IQ_QUEUE_STATS: [(&str, &str); 9] = [
+const PERSISTENT_IQ_QUEUE_STATS: [(&str, &str); 11] = [
     ("enqueued_rows", "enqueued_rows"),
     ("service_turns", "service_turns"),
     ("wake_requests", "wake_requests"),
@@ -25,6 +25,14 @@ const PERSISTENT_IQ_QUEUE_STATS: [(&str, &str); 9] = [
     ),
     ("issued_by_class/memory_agu", "issued_by_class.memory_agu"),
     ("issued_by_class/control", "issued_by_class.control"),
+    (
+        "issued_by_class/scalar_float",
+        "issued_by_class.scalar_float",
+    ),
+    (
+        "issued_by_class/vector_to_scalar",
+        "issued_by_class.vector_to_scalar",
+    ),
 ];
 const WIDTH_FOUR_CLASS_HEAD_PC: &str = "0x80000040";
 
@@ -749,6 +757,8 @@ fn rem6_run_o3_persistent_iq_checkpoint_boundary() {
         ("issued_by_class/integer_mul_div", 0),
         ("issued_by_class/memory_agu", 0),
         ("issued_by_class/control", 0),
+        ("issued_by_class/scalar_float", 0),
+        ("issued_by_class/vector_to_scalar", 0),
     ] {
         assert_eq!(
             queue.pointer(&format!("/{field}")).and_then(Value::as_u64),

@@ -1,7 +1,7 @@
 use super::super::cpu::update_resettable_counter_delta;
 use super::*;
 
-const ISSUE_QUEUE_PATHS: [&str; 9] = [
+const ISSUE_QUEUE_PATHS: [&str; 11] = [
     "enqueued_rows",
     "service_turns",
     "wake_requests",
@@ -11,6 +11,8 @@ const ISSUE_QUEUE_PATHS: [&str; 9] = [
     "issued_by_class.integer_mul_div",
     "issued_by_class.memory_agu",
     "issued_by_class.control",
+    "issued_by_class.scalar_float",
+    "issued_by_class.vector_to_scalar",
 ];
 
 #[test]

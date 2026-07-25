@@ -119,6 +119,8 @@ pub(super) struct RiscvO3RuntimeCpuStats {
     issue_queue_integer_mul_div_issued_rows: StatId,
     issue_queue_memory_agu_issued_rows: StatId,
     issue_queue_control_issued_rows: StatId,
+    issue_queue_scalar_float_issued_rows: StatId,
+    issue_queue_vector_to_scalar_issued_rows: StatId,
     writeback_port_cycles: StatId,
     writeback_port_admitted_rows: StatId,
     writeback_port_deferred_rows: StatId,
@@ -612,6 +614,18 @@ impl RiscvO3RuntimeCpuStats {
                 registry,
                 &prefix,
                 "issue_queue.issued_by_class.control",
+                "Count",
+            )?,
+            issue_queue_scalar_float_issued_rows: register_o3_counter(
+                registry,
+                &prefix,
+                "issue_queue.issued_by_class.scalar_float",
+                "Count",
+            )?,
+            issue_queue_vector_to_scalar_issued_rows: register_o3_counter(
+                registry,
+                &prefix,
+                "issue_queue.issued_by_class.vector_to_scalar",
                 "Count",
             )?,
             writeback_port_cycles: register_o3_counter(
@@ -1200,6 +1214,16 @@ impl RiscvO3RuntimeCpuStats {
                 self.issue_queue_control_issued_rows,
                 previous_live_issue.control_issued_rows(),
                 current_live_issue.control_issued_rows(),
+            ),
+            (
+                self.issue_queue_scalar_float_issued_rows,
+                previous_live_issue.scalar_float_issued_rows(),
+                current_live_issue.scalar_float_issued_rows(),
+            ),
+            (
+                self.issue_queue_vector_to_scalar_issued_rows,
+                previous_live_issue.vector_to_scalar_issued_rows(),
+                current_live_issue.vector_to_scalar_issued_rows(),
             ),
         ] {
             update_resettable_counter_delta(registry, stat, previous, current)?;

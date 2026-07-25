@@ -13,6 +13,8 @@ struct O3IssueQueueTelemetryValue {
     integer_mul_div_issued_rows: u64,
     memory_agu_issued_rows: u64,
     control_issued_rows: u64,
+    scalar_float_issued_rows: u64,
+    vector_to_scalar_issued_rows: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -40,6 +42,8 @@ impl From<O3LiveIssueTelemetry> for O3IssueQueueTelemetryValue {
             integer_mul_div_issued_rows: telemetry.integer_mul_div_issued_rows(),
             memory_agu_issued_rows: telemetry.memory_agu_issued_rows(),
             control_issued_rows: telemetry.control_issued_rows(),
+            scalar_float_issued_rows: telemetry.scalar_float_issued_rows(),
+            vector_to_scalar_issued_rows: telemetry.vector_to_scalar_issued_rows(),
         }
     }
 }
@@ -108,11 +112,13 @@ fn optional_u64_json(value: Option<u64>) -> String {
 
 fn telemetry_json(telemetry: O3IssueQueueTelemetryValue) -> String {
     let issued_by_class = format!(
-        "{{\"scalar_integer\":{},\"integer_mul_div\":{},\"memory_agu\":{},\"control\":{}}}",
+        "{{\"scalar_integer\":{},\"integer_mul_div\":{},\"memory_agu\":{},\"control\":{},\"scalar_float\":{},\"vector_to_scalar\":{}}}",
         telemetry.scalar_integer_issued_rows,
         telemetry.integer_mul_div_issued_rows,
         telemetry.memory_agu_issued_rows,
         telemetry.control_issued_rows,
+        telemetry.scalar_float_issued_rows,
+        telemetry.vector_to_scalar_issued_rows,
     );
     format!(
         "{{\"enqueued_rows\":{},\"service_turns\":{},\"wake_requests\":{},\"current_occupancy\":{},\"peak_occupancy\":{},\"issued_by_class\":{}}}",
@@ -155,6 +161,8 @@ mod tests {
                 integer_mul_div_issued_rows: 1,
                 memory_agu_issued_rows: 1,
                 control_issued_rows: 1,
+                scalar_float_issued_rows: 1,
+                vector_to_scalar_issued_rows: 1,
             },
             &[],
         );
@@ -173,6 +181,8 @@ mod tests {
                         "integer_mul_div": 1,
                         "memory_agu": 1,
                         "control": 1,
+                        "scalar_float": 1,
+                        "vector_to_scalar": 1,
                     },
                 },
                 "events": [],

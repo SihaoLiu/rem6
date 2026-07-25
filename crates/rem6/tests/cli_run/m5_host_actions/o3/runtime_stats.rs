@@ -612,6 +612,8 @@ fn rem6_run_does_not_record_o3_runtime_stats_after_timing_switch() {
         "issued_by_class.integer_mul_div",
         "issued_by_class.memory_agu",
         "issued_by_class.control",
+        "issued_by_class.scalar_float",
+        "issued_by_class.vector_to_scalar",
     ] {
         assert_json_stat_absent(&json, &format!("sim.cpu0.o3.issue_queue.{path}"));
     }
@@ -691,6 +693,8 @@ fn rem6_run_text_stats_omit_o3_runtime_aliases_after_timing_switch() {
         "sim.cpu0.o3.issue_queue.issued_by_class.integer_mul_div",
         "sim.cpu0.o3.issue_queue.issued_by_class.memory_agu",
         "sim.cpu0.o3.issue_queue.issued_by_class.control",
+        "sim.cpu0.o3.issue_queue.issued_by_class.scalar_float",
+        "sim.cpu0.o3.issue_queue.issued_by_class.vector_to_scalar",
         "sim.cpu0.o3.commit.committed_inst_type.mem_read",
         "sim.cpu0.o3.commit.committed_inst_type.mem_write",
         "sim.cpu0.o3.commit.committed_inst_type.int_mul",

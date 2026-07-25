@@ -245,6 +245,14 @@ impl RiscvO3RuntimeCpuStats {
                 self.issue_queue_control_issued_rows,
                 live_issue.control_issued_rows(),
             ),
+            (
+                self.issue_queue_scalar_float_issued_rows,
+                live_issue.scalar_float_issued_rows(),
+            ),
+            (
+                self.issue_queue_vector_to_scalar_issued_rows,
+                live_issue.vector_to_scalar_issued_rows(),
+            ),
         ] {
             registry.set_resettable_counter(stat, value)?;
         }

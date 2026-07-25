@@ -469,3 +469,90 @@ fn fp_vector_live_issue_locks_task5_calendar_and_service_proof() {
     );
     assert!(compact_service_proof.contains("assert_eq!(second.issued_rows(),1)"));
 }
+
+#[test]
+fn fp_vector_live_issue_locks_task6_external_telemetry_schema() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let system_cpu =
+        fs::read_to_string(root.join("../rem6-system/src/riscv_o3_runtime_stats/cpu.rs")).unwrap();
+    let system_snapshot =
+        fs::read_to_string(root.join("../rem6-system/src/riscv_o3_runtime_stats/cpu/snapshot.rs"))
+            .unwrap();
+    let core_summary = fs::read_to_string(root.join("../rem6/src/core_summary_json.rs")).unwrap();
+    let stats_output =
+        fs::read_to_string(root.join("../rem6/src/stats_output/o3_runtime_issue.rs")).unwrap();
+    let debug_output =
+        fs::read_to_string(root.join("../rem6/src/debug_output/o3_issue_queue_json.rs")).unwrap();
+    let persistent_iq =
+        fs::read_to_string(root.join("../rem6/tests/cli_run/m5_host_actions/o3/persistent_iq.rs"))
+            .unwrap();
+
+    let compact_system_cpu = compact_rust_code(&production_rust_source(&system_cpu));
+    let compact_system_snapshot = compact_rust_code(&production_rust_source(&system_snapshot));
+    let compact_core_summary = compact_rust_code(&production_rust_source(&core_summary));
+    let compact_stats_output = compact_rust_code(&production_rust_source(&stats_output));
+    let compact_debug_output = compact_rust_code(&production_rust_source(&debug_output));
+    let compact_persistent_iq = compact_rust_code(&persistent_iq);
+
+    for (class, getter) in [
+        ("scalar_float", "scalar_float_issued_rows"),
+        ("vector_to_scalar", "vector_to_scalar_issued_rows"),
+    ] {
+        let stat_path = format!("issue_queue.issued_by_class.{class}");
+        assert!(system_cpu.contains(&stat_path));
+        assert!(compact_system_cpu.contains(&format!("issue_queue_{getter}:StatId")));
+        assert!(compact_system_cpu.contains(&format!("previous_live_issue.{getter}()")));
+        assert!(compact_system_cpu.contains(&format!("current_live_issue.{getter}()")));
+        assert!(compact_system_snapshot.contains(&format!("live_issue.{getter}()")));
+        assert!(core_summary.contains(&format!("\\\"{class}\\\"")));
+        assert!(compact_core_summary.contains(&format!("queue.{getter}()")));
+        assert!(stats_output.contains(&format!("issued_by_class.{class}")));
+        assert!(compact_stats_output.contains(&format!("queue.{getter}()")));
+        assert!(debug_output.contains(&format!("\\\"{class}\\\"")));
+        assert!(compact_debug_output.contains(&format!("telemetry.{getter}()")));
+        assert!(compact_persistent_iq.contains(&format!("issued_by_class/{class}")));
+        assert!(compact_persistent_iq.contains(&format!("(\"issued_by_class/{class}\",0)")));
+    }
+
+    for (source, control, scalar_float, vector_to_scalar) in [
+        (
+            &system_cpu,
+            "issue_queue.issued_by_class.control",
+            "issue_queue.issued_by_class.scalar_float",
+            "issue_queue.issued_by_class.vector_to_scalar",
+        ),
+        (
+            &stats_output,
+            "issued_by_class.control",
+            "issued_by_class.scalar_float",
+            "issued_by_class.vector_to_scalar",
+        ),
+        (
+            &persistent_iq,
+            "issued_by_class/control",
+            "issued_by_class/scalar_float",
+            "issued_by_class/vector_to_scalar",
+        ),
+    ] {
+        let control = source.find(control).unwrap();
+        let scalar_float = source.find(scalar_float).unwrap();
+        let vector_to_scalar = source.find(vector_to_scalar).unwrap();
+        assert!(control < scalar_float && scalar_float < vector_to_scalar);
+    }
+    let appended_json_classes =
+        "\\\"control\\\":{},\\\"scalar_float\\\":{},\\\"vector_to_scalar\\\":{}";
+    assert!(core_summary.contains(appended_json_classes));
+    assert!(debug_output.contains(appended_json_classes));
+
+    for source in [
+        &system_cpu,
+        &system_snapshot,
+        &core_summary,
+        &stats_output,
+        &debug_output,
+    ] {
+        assert!(!source.contains("issued_by_class.system"));
+        assert!(!source.contains("system_issued_rows"));
+    }
+    assert!(compact_persistent_iq.contains("constPERSISTENT_IQ_QUEUE_STATS:[(&str,&str);11]"));
+}

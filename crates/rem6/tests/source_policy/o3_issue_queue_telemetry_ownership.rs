@@ -3,7 +3,7 @@ use std::path::Path;
 
 use super::rust_source_files;
 
-const QUEUE_FIELDS: [(&str, &str, &str); 9] = [
+const QUEUE_FIELDS: [(&str, &str, &str); 11] = [
     ("enqueued_rows", "enqueued_rows", "enqueued_rows"),
     ("service_turns", "service_turns", "service_turns"),
     ("wake_requests", "wake_requests", "wake_requests"),
@@ -29,6 +29,16 @@ const QUEUE_FIELDS: [(&str, &str, &str); 9] = [
         "memory_agu_issued_rows",
     ),
     ("control", "issued_by_class.control", "control_issued_rows"),
+    (
+        "scalar_float",
+        "issued_by_class.scalar_float",
+        "scalar_float_issued_rows",
+    ),
+    (
+        "vector_to_scalar",
+        "issued_by_class.vector_to_scalar",
+        "vector_to_scalar_issued_rows",
+    ),
 ];
 
 #[test]

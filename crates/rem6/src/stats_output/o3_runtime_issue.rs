@@ -49,6 +49,14 @@ pub(super) fn emit_o3_runtime_issue_stats(
         ),
         ("issued_by_class.memory_agu", queue.memory_agu_issued_rows()),
         ("issued_by_class.control", queue.control_issued_rows()),
+        (
+            "issued_by_class.scalar_float",
+            queue.scalar_float_issued_rows(),
+        ),
+        (
+            "issued_by_class.vector_to_scalar",
+            queue.vector_to_scalar_issued_rows(),
+        ),
     ] {
         increment_stat(
             stats,

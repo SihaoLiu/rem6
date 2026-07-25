@@ -188,7 +188,7 @@ fn o3_runtime_iq_json(summary: &Rem6CoreSummary) -> String {
 fn o3_runtime_issue_json(summary: &Rem6CoreSummary) -> String {
     let queue = summary.o3_runtime_live_issue_telemetry;
     let queue = format!(
-        "{{\"enqueued_rows\":{},\"service_turns\":{},\"wake_requests\":{},\"current_occupancy\":{},\"peak_occupancy\":{},\"issued_by_class\":{{\"scalar_integer\":{},\"integer_mul_div\":{},\"memory_agu\":{},\"control\":{}}}}}",
+        "{{\"enqueued_rows\":{},\"service_turns\":{},\"wake_requests\":{},\"current_occupancy\":{},\"peak_occupancy\":{},\"issued_by_class\":{{\"scalar_integer\":{},\"integer_mul_div\":{},\"memory_agu\":{},\"control\":{},\"scalar_float\":{},\"vector_to_scalar\":{}}}}}",
         queue.enqueued_rows(),
         queue.service_turns(),
         queue.wake_requests(),
@@ -198,6 +198,8 @@ fn o3_runtime_issue_json(summary: &Rem6CoreSummary) -> String {
         queue.integer_mul_div_issued_rows(),
         queue.memory_agu_issued_rows(),
         queue.control_issued_rows(),
+        queue.scalar_float_issued_rows(),
+        queue.vector_to_scalar_issued_rows(),
     );
     format!(
         "{{\"configured_width\":{},\"configured_memory_width\":{},\"cycles\":{},\"issued_rows\":{},\"resource_blocked_row_cycles\":{},\"dependency_blocked_row_cycles\":{},\"max_rows_per_cycle\":{},\"queue\":{queue}}}",
