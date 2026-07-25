@@ -6,6 +6,8 @@ const MAX_O3_RUNTIME_LIVE_WINDOW_MIXED_COMPUTE_TEST_LINES: usize = 120;
 const MAX_LIVE_COMPUTE_QUEUE_LINES: usize = 320;
 const MAX_O3_RUNTIME_ISSUE_QUEUE_LINES: usize = 600;
 const MAX_O3_RUNTIME_ISSUE_QUEUE_MIXED_COMPUTE_TEST_LINES: usize = 450;
+const MAX_O3_RUNTIME_ISSUE_CALENDAR_MIXED_COMPUTE_TEST_LINES: usize = 120;
+const MAX_O3_RUNTIME_ISSUE_SERVICE_MIXED_COMPUTE_TEST_LINES: usize = 120;
 
 #[test]
 fn fp_vector_live_issue_uses_one_focused_operand_authority() {
@@ -375,4 +377,95 @@ fn fp_vector_live_issue_locks_task4_queue_compute_authority() {
             "mixed queue tests missing {test_anchor}"
         );
     }
+}
+
+#[test]
+fn fp_vector_live_issue_locks_task5_calendar_and_service_proof() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let calendar_path = root.join("src/o3_runtime_issue/calendar.rs");
+    let calendar_tests_path = root.join("src/o3_runtime_issue/calendar_tests.rs");
+    let mixed_tests_path = root.join("src/o3_runtime_issue/calendar_tests/mixed_compute.rs");
+    let service_tests_path = root.join("src/o3_runtime_issue/service_tests.rs");
+    let mixed_service_tests_path = root.join("src/o3_runtime_issue/service_tests/mixed_compute.rs");
+    assert!(mixed_tests_path.exists());
+    assert!(mixed_service_tests_path.exists());
+    assert!(
+        line_count(&mixed_tests_path) <= MAX_O3_RUNTIME_ISSUE_CALENDAR_MIXED_COMPUTE_TEST_LINES
+    );
+    assert!(
+        line_count(&mixed_service_tests_path)
+            <= MAX_O3_RUNTIME_ISSUE_SERVICE_MIXED_COMPUTE_TEST_LINES
+    );
+
+    let calendar = fs::read_to_string(&calendar_path).unwrap();
+    let calendar_tests = fs::read_to_string(&calendar_tests_path).unwrap();
+    let mixed_tests = fs::read_to_string(&mixed_tests_path).unwrap();
+    let service_tests = fs::read_to_string(&service_tests_path).unwrap();
+    let mixed_service_tests = fs::read_to_string(&mixed_service_tests_path).unwrap();
+    let production_calendar = production_rust_source(&calendar);
+    let compact_calendar = compact_rust_code(&production_calendar);
+    let compact_capacities = compact_rust_code(
+        &rust_function_definition(
+            &production_calendar,
+            "live_issue_capacities_after_reservations",
+        )
+        .unwrap(),
+    );
+    let compact_mixed_tests = compact_rust_code(&mixed_tests);
+    let compact_service_proof = compact_rust_code(
+        &rust_function_definition(
+            &mixed_service_tests,
+            "mixed_compute_service_coissues_fp_vector_and_retries_second_fp",
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &calendar_tests,
+            "calendar_tests/mixed_compute.rs",
+            "mixed_compute",
+        ),
+        1
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &service_tests,
+            "service_tests/mixed_compute.rs",
+            "mixed_compute",
+        ),
+        1
+    );
+    assert!(compact_calendar.contains("float:usize"));
+    assert!(compact_calendar.contains("vector:usize"));
+    assert!(
+        compact_calendar.contains("O3IssueOpClass::Float=>self.float=self.float.saturating_add(1)")
+    );
+    assert!(compact_calendar
+        .contains("O3IssueOpClass::Vector=>self.vector=self.vector.saturating_add(1)"));
+    assert!(compact_calendar.contains("O3IssueOpClass::System=>{}"));
+    assert!(compact_capacities
+        .contains("O3IssueOpClass::Float,1_usize.saturating_sub(reservations.float)"));
+    assert!(compact_capacities
+        .contains("O3IssueOpClass::Vector,1_usize.saturating_sub(reservations.vector)"));
+    assert!(!compact_capacities.contains("O3IssueOpClass::System"));
+
+    for anchor in [
+        "fnlive_issue_calendar_width_two_coissues_float_and_vector(",
+        "fnlive_issue_calendar_serializes_two_float_rows(",
+        "fnlive_issue_calendar_rebuild_reserves_float_without_blocking_vector(",
+    ] {
+        assert!(compact_mixed_tests.contains(anchor));
+    }
+    assert!(!mixed_tests.contains("rustfmt::skip"));
+    assert!(compact_service_proof.contains("runtime.set_issue_width(2)"));
+    assert!(compact_service_proof.contains("assert_eq!(first.issued_rows(),2)"));
+    assert!(compact_service_proof.contains("(*first_fp,O3LiveIssueTraceAction::Selected)"));
+    assert!(compact_service_proof.contains("(*vector,O3LiveIssueTraceAction::Selected)"));
+    assert!(compact_service_proof.contains("(*second_fp,O3LiveIssueTraceAction::RetainedResource)"));
+    assert!(compact_service_proof.contains("assert_eq!(first.next_service_tick(),Some(21))"));
+    assert!(
+        compact_service_proof.contains("assert_eq!(runtime.live_issue_service_tick(),Some(21))")
+    );
+    assert!(compact_service_proof.contains("assert_eq!(second.issued_rows(),1)"));
 }

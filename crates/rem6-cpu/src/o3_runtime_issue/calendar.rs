@@ -27,8 +27,10 @@ struct O3LiveIssueReservations {
     width: usize,
     int_alu: usize,
     int_mult: usize,
+    float: usize,
     branch: usize,
     memory: usize,
+    vector: usize,
 }
 
 impl O3LiveIssueCalendar {
@@ -163,9 +165,11 @@ impl O3LiveIssueReservations {
         match op_class {
             O3IssueOpClass::IntAlu => self.int_alu = self.int_alu.saturating_add(1),
             O3IssueOpClass::IntMult => self.int_mult = self.int_mult.saturating_add(1),
+            O3IssueOpClass::Float => self.float = self.float.saturating_add(1),
             O3IssueOpClass::Branch => self.branch = self.branch.saturating_add(1),
             O3IssueOpClass::Memory => self.memory = self.memory.saturating_add(1),
-            O3IssueOpClass::Float | O3IssueOpClass::System | O3IssueOpClass::Vector => {}
+            O3IssueOpClass::Vector => self.vector = self.vector.saturating_add(1),
+            O3IssueOpClass::System => {}
         }
     }
 }
@@ -185,12 +189,20 @@ fn live_issue_capacities_after_reservations(
             1_usize.saturating_sub(reservations.int_mult),
         ),
         (
+            O3IssueOpClass::Float,
+            1_usize.saturating_sub(reservations.float),
+        ),
+        (
             O3IssueOpClass::Branch,
             1_usize.saturating_sub(reservations.branch),
         ),
         (
             O3IssueOpClass::Memory,
             memory_issue_width.saturating_sub(reservations.memory),
+        ),
+        (
+            O3IssueOpClass::Vector,
+            1_usize.saturating_sub(reservations.vector),
         ),
     ]
     .into_iter()

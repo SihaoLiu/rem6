@@ -7,6 +7,9 @@ use super::super::o3_runtime_issue::calendar::{
 };
 use super::*;
 
+#[path = "calendar_tests/mixed_compute.rs"]
+mod mixed_compute;
+
 #[test]
 fn live_issue_calendar_derives_fixed_fu_reservations_without_caller_head() {
     let mut runtime = O3RuntimeState::default();

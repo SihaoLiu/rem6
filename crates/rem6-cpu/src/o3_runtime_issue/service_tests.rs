@@ -5,6 +5,8 @@ use crate::o3_runtime::o3_runtime_pending_address_tests::multiple::ready_two_pen
 #[cfg(test)]
 #[path = "service_tests/legacy_driver.rs"]
 mod legacy_driver;
+#[path = "service_tests/mixed_compute.rs"]
+mod mixed_compute;
 #[path = "service_tests/pending_address_publication.rs"]
 mod pending_address_publication;
 #[path = "service_tests/scheduler_request.rs"]
