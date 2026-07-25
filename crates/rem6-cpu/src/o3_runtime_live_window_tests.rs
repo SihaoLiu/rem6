@@ -1,7 +1,6 @@
 use rem6_isa_riscv::{
-    FloatRegister, Immediate, MemoryAccessKind, MemoryWidth, Register, RegisterWrite,
-    RiscvExecutionRecord, RiscvFloatRoundingMode, RiscvTrap, RiscvTrapKind,
-    RiscvVectorScalarMoveInstruction, VectorRegister,
+    Immediate, MemoryAccessKind, MemoryWidth, Register, RegisterWrite, RiscvExecutionRecord,
+    RiscvTrap, RiscvTrapKind,
 };
 use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, AgentId};
@@ -13,6 +12,8 @@ use crate::{CpuFetchEvent, CpuFetchRecord};
 
 #[path = "o3_runtime_live_window_identity_tests.rs"]
 mod identity;
+#[path = "o3_runtime_live_window_tests/mixed_compute.rs"]
+mod mixed_compute;
 
 fn div_x3() -> RiscvInstruction {
     RiscvInstruction::Div {
@@ -987,25 +988,23 @@ fn snapshot_without_live_rename_overlay_equals_public_reconstruction() {
 
     assert_eq!(runtime.snapshot(), default_o3_runtime_snapshot());
 }
+
 #[test]
-#[rustfmt::skip]
-fn live_rename_overlay_preserves_canonical_register_order() { let mut runtime = O3RuntimeState::default(); runtime.publish_live_rename_entry(O3RenameMapEntry::new(O3RegisterClass::Integer, 10, O3PhysicalRegisterId::new(40))); runtime.next_physical_register = 41; runtime.stage_live_retire_window(Address::new(0x8000), div_x3(), 29, None); assert_eq!(runtime.snapshot().rename_map().iter().map(|entry| entry.architectural()).collect::<Vec<_>>(), vec![3, 10]); }
-#[test]
-#[rustfmt::skip]
-fn stage_live_instruction_tracks_mixed_compute_destinations() {
+fn live_rename_overlay_preserves_canonical_register_order() {
     let mut runtime = O3RuntimeState::default();
-    runtime.publish_live_rename_entry(O3RenameMapEntry::new(O3RegisterClass::Integer, 10, O3PhysicalRegisterId::new(40)));
+    runtime.publish_live_rename_entry(O3RenameMapEntry::new(
+        O3RegisterClass::Integer,
+        10,
+        O3PhysicalRegisterId::new(40),
+    ));
     runtime.next_physical_register = 41;
-    let fadd = RiscvInstruction::FloatAddS { rd: FloatRegister::new(4).unwrap(), rs1: FloatRegister::new(1).unwrap(), rs2: FloatRegister::new(2).unwrap(), rounding_mode: RiscvFloatRoundingMode::RoundNearestEven };
-    let move_to_scalar = RiscvInstruction::VectorScalarMove(RiscvVectorScalarMoveInstruction::MoveToScalar { rd: Register::new(11).unwrap(), vs2: VectorRegister::new(3).unwrap() });
-    assert!(runtime.stage_live_instruction(Address::new(0x8000), div_x3(), 29).is_some());
-    assert!(runtime.stage_live_instruction(Address::new(0x8004), fadd, 7).is_some());
-    assert!(runtime.stage_live_instruction(Address::new(0x8008), move_to_scalar, 8).is_some());
-    assert!(runtime.stage_live_instruction(Address::new(0x800c), addi(0, 1), 9).is_some());
+    runtime.stage_live_retire_window(Address::new(0x8000), div_x3(), 29, None);
+
     let snapshot = runtime.snapshot();
-    let rob = snapshot.reorder_buffer();
-    assert_eq!((rob[1].rename_destination(), rob[1].destination().is_some(), rob[2].rename_destination(), rob[2].destination().is_some(), rob[3].rename_destination(), rob[3].destination()), (Some((O3RegisterClass::FloatingPoint, 4)), true, Some((O3RegisterClass::Integer, 11)), true, None, None));
-    assert_eq!(runtime.snapshot().rename_map().iter().map(|entry| (entry.register_class(), entry.architectural())).collect::<Vec<_>>(), vec![(O3RegisterClass::Integer, 3), (O3RegisterClass::Integer, 10), (O3RegisterClass::Integer, 11), (O3RegisterClass::FloatingPoint, 4)]);
+    let rename_map = snapshot.rename_map();
+    assert_eq!(rename_map.len(), 2);
+    assert_eq!(rename_map[0].architectural(), 3);
+    assert_eq!(rename_map[1].architectural(), 10);
 }
 
 fn execution_event(

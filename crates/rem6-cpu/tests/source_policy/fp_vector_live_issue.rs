@@ -2,6 +2,7 @@ use super::*;
 
 const MAX_LIVE_COMPUTE_OPERAND_LINES: usize = 320;
 const MAX_LIVE_COMPUTE_OPERAND_TEST_LINES: usize = 320;
+const MAX_O3_RUNTIME_LIVE_WINDOW_MIXED_COMPUTE_TEST_LINES: usize = 120;
 
 #[test]
 fn fp_vector_live_issue_uses_one_focused_operand_authority() {
@@ -151,8 +152,18 @@ fn fp_vector_live_issue_locks_task2_window_and_staging_ownership() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let window_source = fs::read_to_string(root.join("src/riscv_o3_window_policy.rs")).unwrap();
     let staging_source = fs::read_to_string(root.join("src/o3_runtime_live_window.rs")).unwrap();
+    let live_window_tests_path = root.join("src/o3_runtime_live_window_tests.rs");
+    let mixed_compute_tests_path = root.join("src/o3_runtime_live_window_tests/mixed_compute.rs");
+    let live_window_tests = fs::read_to_string(&live_window_tests_path).unwrap();
+    assert!(mixed_compute_tests_path.exists());
+    assert!(
+        line_count(&mixed_compute_tests_path)
+            <= MAX_O3_RUNTIME_LIVE_WINDOW_MIXED_COMPUTE_TEST_LINES
+    );
+    let mixed_compute_tests = fs::read_to_string(&mixed_compute_tests_path).unwrap();
     let compact_window = compact_rust_code(&window_source);
     let compact_staging = compact_rust_code(&staging_source);
+    let compact_mixed_compute_tests = compact_rust_code(&mixed_compute_tests);
 
     assert!(window_source.contains("unresolved_destinations: Vec<O3ArchitecturalRegister>"));
     assert!(window_source.contains("live_destinations: Vec<O3ArchitecturalRegister>"));
@@ -170,4 +181,18 @@ fn fp_vector_live_issue_locks_task2_window_and_staging_ownership() {
     assert!(staging_source.contains(".map(O3ArchitecturalRegister::integer)"));
     assert!(compact_staging
         .contains(".map(|destination|(destination.register_class(),destination.architectural()))"));
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &live_window_tests,
+            "o3_runtime_live_window_tests/mixed_compute.rs",
+            "mixed_compute",
+        ),
+        1
+    );
+    assert!(compact_mixed_compute_tests
+        .contains("fnstage_live_instruction_tracks_mixed_compute_destinations("));
+    assert!(compact_mixed_compute_tests.contains("addi(0,1)"));
+    assert!(compact_mixed_compute_tests.contains("O3RegisterClass::FloatingPoint,4"));
+    assert!(compact_mixed_compute_tests.contains("O3RegisterClass::Integer,11"));
+    assert!(!mixed_compute_tests.contains("rustfmt::skip"));
 }
