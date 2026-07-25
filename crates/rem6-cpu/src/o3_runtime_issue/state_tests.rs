@@ -19,10 +19,20 @@ fn live_issue_state_enqueues_supported_bound_rows_once_and_orders_by_sequence() 
 }
 
 #[test]
-fn live_issue_state_skips_bound_vector_destination_and_system_rows() {
+fn live_issue_state_skips_bound_unsupported_float_vector_destination_and_system_rows() {
     let mut runtime = O3RuntimeState::default();
-    for (pc, raw, request_sequence) in [(BRANCH_PC, 0x0220_81d7, 11), (SECOND_PC, 0x0000_0073, 12)]
-    {
+    let unsupported_float_add_d = 0x0220_81d3;
+    assert!(matches!(
+        RiscvInstruction::decode_with_length(unsupported_float_add_d)
+            .unwrap()
+            .instruction(),
+        RiscvInstruction::FloatAddD { .. }
+    ));
+    for (pc, raw, request_sequence) in [
+        (BRANCH_PC, unsupported_float_add_d, 11),
+        (SECOND_PC, 0x0220_81d7, 12),
+        (THIRD_PC, 0x0000_0073, 13),
+    ] {
         let decoded = RiscvInstruction::decode_with_length(raw).unwrap();
         runtime
             .stage_live_instruction(Address::new(pc), decoded.instruction(), 0)
@@ -141,6 +151,27 @@ fn live_issue_state_stats_reset_preserves_membership_and_requested_wake() {
         O3LiveIssueTraceClass::IntegerMulDiv,
         41,
     ));
+    for (sequence, issue_class) in [
+        (8, O3LiveIssueTraceClass::ScalarFloat),
+        (9, O3LiveIssueTraceClass::VectorToScalar),
+    ] {
+        assert!(state.enqueue_at(
+            sequence,
+            Address::new(0x8020 + sequence * 4),
+            issue_class,
+            41,
+        ));
+        assert!(state.remove_exact_at_for_test(
+            sequence,
+            O3LiveIssueTraceAction::Selected,
+            Address::new(0x8020 + sequence * 4),
+            issue_class,
+            42,
+        ));
+    }
+    assert_eq!(state.telemetry().scalar_float_issued_rows(), 1);
+    assert_eq!(state.telemetry().vector_to_scalar_issued_rows(), 1);
+
     state.reset_stats_baseline();
     assert_eq!(state.resident_sequences(), [7]);
     assert_eq!(state.requested_service_tick(), Some(41));

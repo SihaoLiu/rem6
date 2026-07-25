@@ -283,10 +283,14 @@ fn fp_vector_live_issue_locks_task4_queue_compute_authority() {
     let issue = fs::read_to_string(&issue_path).unwrap();
     let state = fs::read_to_string(&state_path).unwrap();
     let state_tests = fs::read_to_string(&state_tests_path).unwrap();
+    let production_issue = production_rust_source(&issue);
     let compact_queue = compact_rust_code(&production_rust_source(&queue));
     let compact_compute = compact_rust_code(&production_rust_source(&compute));
     let compact_head_recording = compact_rust_code(
-        &rust_function_definition(&issue, "record_live_issue_head_execution").unwrap(),
+        &rust_function_definition(&production_issue, "record_live_issue_head_execution").unwrap(),
+    );
+    let compact_head_validation = compact_rust_code(
+        &rust_function_definition(&production_issue, "live_issue_head_execution_is_valid").unwrap(),
     );
     let compact_state = compact_rust_code(&production_rust_source(&state));
     let compact_state_tests = compact_rust_code(&state_tests);
@@ -337,6 +341,10 @@ fn fp_vector_live_issue_locks_task4_queue_compute_authority() {
         "O3RegisterClass::Vector|O3RegisterClass::ConditionCode|O3RegisterClass::Misc=>false"
     ));
     assert!(compact_compute.contains("execution.next_pc()==execution.pc().wrapping_add(u64::from(execution.instruction_bytes()))"));
+    assert!(
+        compact_head_recording.contains("!live_issue_head_execution_is_valid(entry,&execution)")
+    );
+    assert!(compact_head_validation.contains("queue::valid_recorded_compute_execution(execution,entry.pc(),execution.instruction(),destination,)"));
     assert!(!compact_head_recording.contains("!execution.float_register_writes().is_empty()"));
 
     for forbidden in [
