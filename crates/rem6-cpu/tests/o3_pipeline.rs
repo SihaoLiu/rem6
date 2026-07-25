@@ -16,6 +16,8 @@ const O3_WRITEBACK_CHECKPOINT_HEADER_BYTES: usize = 22;
 const O3_PENDING_CHECKPOINT_MAGIC_OFFSET: usize = 0;
 const O3_PENDING_CHECKPOINT_VERSION_OFFSET: usize = 4;
 const O3_PENDING_CHECKPOINT_HEADER_BYTES: usize = 17;
+const CHECKPOINT_U32_BYTES: usize = 4;
+const CHECKPOINT_U64_BYTES: usize = 8;
 
 #[test]
 fn o3_unblock_policy_signals_before_skid_buffer_is_empty() {
@@ -494,12 +496,17 @@ fn o3_pending_state_checkpoint_payload_round_trips_issue_dependencies_and_writeb
                 .with_produces([produced_scope]),
             O3ScopedReadyInstruction::new(22, queue, O3IssueOpClass::IntAlu)
                 .with_waits_on([produced_scope]),
+            O3ScopedReadyInstruction::new(23, queue, O3IssueOpClass::Vector)
+                .with_waits_on([produced_scope]),
         ],
         writeback.snapshot(),
     )
     .unwrap();
     let payload = O3PendingStateCheckpointPayload::from_snapshot(snapshot).unwrap();
-    let decoded = O3PendingStateCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+    let encoded = payload.encode();
+    assert_eq!(encoded[O3_PENDING_CHECKPOINT_VERSION_OFFSET], 2);
+
+    let decoded = O3PendingStateCheckpointPayload::decode(encoded.as_slice()).unwrap();
     let restored = decoded.snapshot();
 
     assert_eq!(restored.resolved_dependency_scopes(), &[resolved_scope]);
@@ -509,14 +516,18 @@ fn o3_pending_state_checkpoint_payload_round_trips_issue_dependencies_and_writeb
             .iter()
             .map(|instruction| instruction.sequence())
             .collect::<Vec<_>>(),
-        vec![21, 22]
+        vec![21, 22, 23]
     );
     assert_eq!(restored.ready()[0].waits_on(), &[resolved_scope]);
     assert_eq!(restored.ready()[0].produces(), &[produced_scope]);
+    assert_eq!(restored.ready()[2].op_class(), O3IssueOpClass::Vector);
 
     let scheduler = O3ScopedIssueScheduler::new(
         2,
-        [O3IssueQueueCapacity::new(queue, O3IssueOpClass::IntAlu, 2).unwrap()],
+        [
+            O3IssueQueueCapacity::new(queue, O3IssueOpClass::IntAlu, 2).unwrap(),
+            O3IssueQueueCapacity::new(queue, O3IssueOpClass::Vector, 1).unwrap(),
+        ],
     )
     .unwrap();
     let issue_plan = scheduler.plan(
@@ -535,6 +546,81 @@ fn o3_pending_state_checkpoint_payload_round_trips_issue_dependencies_and_writeb
     assert_eq!(
         second_writeback.admitted_sequences().collect::<Vec<_>>(),
         vec![52, 53]
+    );
+}
+
+#[test]
+fn o3_pending_state_checkpoint_payload_decodes_legacy_v1_class_codes() {
+    let queue = O3IssueQueueId::new(7);
+    let classes = [
+        O3IssueOpClass::IntAlu,
+        O3IssueOpClass::IntMult,
+        O3IssueOpClass::Float,
+        O3IssueOpClass::Memory,
+        O3IssueOpClass::Branch,
+        O3IssueOpClass::System,
+    ];
+    let snapshot = O3PendingStateSnapshot::new(
+        [],
+        classes.iter().enumerate().map(|(index, op_class)| {
+            O3ScopedReadyInstruction::new(100 + index as u64, queue, *op_class)
+        }),
+        rem6_cpu::O3WritebackTransferSnapshot::new(
+            O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 1, 0).unwrap(),
+            [],
+        ),
+    )
+    .unwrap();
+    let mut payload = O3PendingStateCheckpointPayload::from_snapshot(snapshot)
+        .unwrap()
+        .encode();
+
+    assert_eq!(payload[O3_PENDING_CHECKPOINT_VERSION_OFFSET], 2);
+    for (index, expected_code) in (0_u8..=5).enumerate() {
+        let offset = pending_ready_op_class_offset(&payload, 100 + index as u64);
+        assert_eq!(payload[offset], expected_code);
+    }
+
+    payload[O3_PENDING_CHECKPOINT_VERSION_OFFSET] = 1;
+    let decoded = O3PendingStateCheckpointPayload::decode(&payload).unwrap();
+    assert_eq!(
+        decoded
+            .snapshot()
+            .ready()
+            .iter()
+            .map(|instruction| instruction.op_class())
+            .collect::<Vec<_>>(),
+        classes
+    );
+}
+
+#[test]
+fn o3_pending_state_checkpoint_payload_rejects_vector_code_in_legacy_v1() {
+    let queue = O3IssueQueueId::new(0);
+    let vector_sequence = 0x1234;
+    let snapshot = O3PendingStateSnapshot::new(
+        [],
+        [O3ScopedReadyInstruction::new(
+            vector_sequence,
+            queue,
+            O3IssueOpClass::Vector,
+        )],
+        rem6_cpu::O3WritebackTransferSnapshot::new(
+            O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 1, 0).unwrap(),
+            [],
+        ),
+    )
+    .unwrap();
+    let mut payload = O3PendingStateCheckpointPayload::from_snapshot(snapshot)
+        .unwrap()
+        .encode();
+    let vector_op_class_offset = pending_ready_op_class_offset(&payload, vector_sequence);
+    assert_eq!(payload[vector_op_class_offset], 6);
+
+    payload[O3_PENDING_CHECKPOINT_VERSION_OFFSET] = 1;
+    assert_eq!(
+        O3PendingStateCheckpointPayload::decode(&payload).unwrap_err(),
+        O3PipelineError::InvalidCheckpointOpClassCode { code: 6 }
     );
 }
 
@@ -574,10 +660,10 @@ fn o3_pending_state_checkpoint_payload_rejects_malformed_bytes() {
     );
 
     let mut unsupported_version = payload.clone();
-    unsupported_version[O3_PENDING_CHECKPOINT_VERSION_OFFSET] = 2;
+    unsupported_version[O3_PENDING_CHECKPOINT_VERSION_OFFSET] = 3;
     assert_eq!(
         O3PendingStateCheckpointPayload::decode(&unsupported_version).unwrap_err(),
-        O3PipelineError::UnsupportedCheckpointVersion { version: 2 }
+        O3PipelineError::UnsupportedCheckpointVersion { version: 3 }
     );
 
     let mut truncated = payload.clone();
@@ -589,6 +675,51 @@ fn o3_pending_state_checkpoint_payload_rejects_malformed_bytes() {
             actual: payload.len() - 1,
         }
     );
+}
+
+fn pending_ready_op_class_offset(payload: &[u8], target_sequence: u64) -> usize {
+    let writeback_payload_len =
+        checkpoint_u32_at(payload, O3_PENDING_CHECKPOINT_MAGIC_OFFSET + 5) as usize;
+    let resolved_count =
+        checkpoint_u32_at(payload, O3_PENDING_CHECKPOINT_MAGIC_OFFSET + 9) as usize;
+    let ready_count = checkpoint_u32_at(payload, O3_PENDING_CHECKPOINT_MAGIC_OFFSET + 13) as usize;
+    let mut offset = O3_PENDING_CHECKPOINT_HEADER_BYTES
+        + writeback_payload_len
+        + resolved_count * CHECKPOINT_U64_BYTES;
+
+    for _ in 0..ready_count {
+        let sequence = checkpoint_u64_at(payload, offset);
+        let op_class_offset = offset + CHECKPOINT_U64_BYTES + CHECKPOINT_U32_BYTES;
+        let waits_on_count = checkpoint_u32_at(payload, op_class_offset + 1) as usize;
+        let produces_count =
+            checkpoint_u32_at(payload, op_class_offset + 1 + CHECKPOINT_U32_BYTES) as usize;
+        if sequence == target_sequence {
+            return op_class_offset;
+        }
+        offset = op_class_offset
+            + 1
+            + CHECKPOINT_U32_BYTES
+            + CHECKPOINT_U32_BYTES
+            + (waits_on_count + produces_count) * CHECKPOINT_U64_BYTES;
+    }
+
+    panic!("missing pending ready row for sequence {target_sequence}");
+}
+
+fn checkpoint_u32_at(payload: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes(
+        payload[offset..offset + CHECKPOINT_U32_BYTES]
+            .try_into()
+            .unwrap(),
+    )
+}
+
+fn checkpoint_u64_at(payload: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes(
+        payload[offset..offset + CHECKPOINT_U64_BYTES]
+            .try_into()
+            .unwrap(),
+    )
 }
 
 #[test]

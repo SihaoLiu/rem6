@@ -196,3 +196,59 @@ fn fp_vector_live_issue_locks_task2_window_and_staging_ownership() {
     assert!(compact_mixed_compute_tests.contains("O3RegisterClass::Integer,11"));
     assert!(!mixed_compute_tests.contains("rustfmt::skip"));
 }
+
+#[test]
+fn fp_vector_live_issue_locks_task3_o3ps_vector_codec() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let pipeline_source = fs::read_to_string(root.join("src/o3_pipeline.rs")).unwrap();
+    let pipeline_tests = fs::read_to_string(root.join("tests/o3_pipeline.rs")).unwrap();
+    let compact_source = compact_rust_code(&pipeline_source);
+    let compact_tests = compact_rust_code(&pipeline_tests);
+
+    assert!(compact_source.contains("constO3_PENDING_STATE_CHECKPOINT_VERSION:u8=2;"));
+    assert!(compact_source.contains("constO3_PENDING_STATE_LEGACY_CHECKPOINT_VERSION:u8=1;"));
+    assert!(compact_source
+        .contains("pubenumO3IssueOpClass{IntAlu,IntMult,Float,Memory,Branch,System,Vector,}"));
+
+    for mapping in [
+        "O3IssueOpClass::IntAlu=>0",
+        "O3IssueOpClass::IntMult=>1",
+        "O3IssueOpClass::Float=>2",
+        "O3IssueOpClass::Memory=>3",
+        "O3IssueOpClass::Branch=>4",
+        "O3IssueOpClass::System=>5",
+        "O3IssueOpClass::Vector=>6",
+    ] {
+        assert!(
+            compact_source.contains(mapping),
+            "codec mapping changed: {mapping}"
+        );
+    }
+
+    assert!(compact_source.contains(
+        "fndecode_checkpoint_op_class(version:u8,code:u8)->Result<O3IssueOpClass,O3PipelineError>"
+    ));
+    assert!(compact_source.contains(
+        "ifversion!=O3_PENDING_STATE_CHECKPOINT_VERSION&&version!=O3_PENDING_STATE_LEGACY_CHECKPOINT_VERSION"
+    ));
+    assert!(compact_source
+        .contains("6ifversion==O3_PENDING_STATE_CHECKPOINT_VERSION=>Ok(O3IssueOpClass::Vector)"));
+    assert!(compact_source.contains("_=>Err(O3PipelineError::InvalidCheckpointOpClassCode{code})"));
+
+    for test_anchor in [
+        "fno3_pending_state_checkpoint_payload_round_trips_issue_dependencies_and_writeback(",
+        "assert_eq!(encoded[O3_PENDING_CHECKPOINT_VERSION_OFFSET],2);",
+        "O3ScopedReadyInstruction::new(23,queue,O3IssueOpClass::Vector)",
+        "fno3_pending_state_checkpoint_payload_decodes_legacy_v1_class_codes(",
+        "payload[O3_PENDING_CHECKPOINT_VERSION_OFFSET]=1;",
+        "fno3_pending_state_checkpoint_payload_rejects_vector_code_in_legacy_v1(",
+        "O3PipelineError::InvalidCheckpointOpClassCode{code:6}",
+        "unsupported_version[O3_PENDING_CHECKPOINT_VERSION_OFFSET]=3;",
+        "fnpending_ready_op_class_offset(",
+    ] {
+        assert!(
+            compact_tests.contains(test_anchor),
+            "missing O3PS boundary test anchor {test_anchor}"
+        );
+    }
+}

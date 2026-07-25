@@ -9,7 +9,8 @@ pub use o3_pipeline_scoped_issue::{O3ScopedIssuePlan, O3ScopedIssueScheduler};
 const O3_WRITEBACK_CHECKPOINT_MAGIC: [u8; 4] = *b"O3WB";
 const O3_WRITEBACK_CHECKPOINT_VERSION: u8 = 1;
 const O3_PENDING_STATE_CHECKPOINT_MAGIC: [u8; 4] = *b"O3PS";
-const O3_PENDING_STATE_CHECKPOINT_VERSION: u8 = 1;
+const O3_PENDING_STATE_CHECKPOINT_VERSION: u8 = 2;
+const O3_PENDING_STATE_LEGACY_CHECKPOINT_VERSION: u8 = 1;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
 const O3_WRITEBACK_CHECKPOINT_HEADER_BYTES: usize =
@@ -62,6 +63,7 @@ pub enum O3IssueOpClass {
     Memory,
     Branch,
     System,
+    Vector,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1160,7 +1162,9 @@ impl O3PendingStateCheckpointPayload {
         }
 
         let version = payload[O3_PENDING_STATE_CHECKPOINT_MAGIC.len()];
-        if version != O3_PENDING_STATE_CHECKPOINT_VERSION {
+        if version != O3_PENDING_STATE_CHECKPOINT_VERSION
+            && version != O3_PENDING_STATE_LEGACY_CHECKPOINT_VERSION
+        {
             return Err(O3PipelineError::UnsupportedCheckpointVersion { version });
         }
 
@@ -1196,7 +1200,8 @@ impl O3PendingStateCheckpointPayload {
         for _ in 0..ready_count {
             let sequence = read_checkpoint_u64(payload, &mut offset)?;
             let queue = O3IssueQueueId::new(read_checkpoint_u32(payload, &mut offset)?);
-            let op_class = decode_checkpoint_op_class(read_checkpoint_u8(payload, &mut offset)?)?;
+            let op_class =
+                decode_checkpoint_op_class(version, read_checkpoint_u8(payload, &mut offset)?)?;
             let waits_on_count = read_checkpoint_u32(payload, &mut offset)? as usize;
             let produces_count = read_checkpoint_u32(payload, &mut offset)? as usize;
             let waits_on = read_checkpoint_scopes(payload, &mut offset, waits_on_count)?;
@@ -1441,10 +1446,11 @@ fn encode_checkpoint_op_class(op_class: O3IssueOpClass) -> u8 {
         O3IssueOpClass::Memory => 3,
         O3IssueOpClass::Branch => 4,
         O3IssueOpClass::System => 5,
+        O3IssueOpClass::Vector => 6,
     }
 }
 
-fn decode_checkpoint_op_class(code: u8) -> Result<O3IssueOpClass, O3PipelineError> {
+fn decode_checkpoint_op_class(version: u8, code: u8) -> Result<O3IssueOpClass, O3PipelineError> {
     match code {
         0 => Ok(O3IssueOpClass::IntAlu),
         1 => Ok(O3IssueOpClass::IntMult),
@@ -1452,6 +1458,7 @@ fn decode_checkpoint_op_class(code: u8) -> Result<O3IssueOpClass, O3PipelineErro
         3 => Ok(O3IssueOpClass::Memory),
         4 => Ok(O3IssueOpClass::Branch),
         5 => Ok(O3IssueOpClass::System),
+        6 if version == O3_PENDING_STATE_CHECKPOINT_VERSION => Ok(O3IssueOpClass::Vector),
         _ => Err(O3PipelineError::InvalidCheckpointOpClassCode { code }),
     }
 }

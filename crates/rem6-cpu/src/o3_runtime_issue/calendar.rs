@@ -165,7 +165,7 @@ impl O3LiveIssueReservations {
             O3IssueOpClass::IntMult => self.int_mult = self.int_mult.saturating_add(1),
             O3IssueOpClass::Branch => self.branch = self.branch.saturating_add(1),
             O3IssueOpClass::Memory => self.memory = self.memory.saturating_add(1),
-            O3IssueOpClass::Float | O3IssueOpClass::System => {}
+            O3IssueOpClass::Float | O3IssueOpClass::System | O3IssueOpClass::Vector => {}
         }
     }
 }
