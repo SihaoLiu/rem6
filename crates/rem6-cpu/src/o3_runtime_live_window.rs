@@ -625,9 +625,18 @@ impl O3RuntimeState {
         instruction: RiscvInstruction,
         ready_tick: u64,
     ) -> Option<u64> {
-        let rename_destination = o3_scalar_integer_destination(instruction)
-            .filter(|register| !register.is_zero())
-            .map(|register| (O3RegisterClass::Integer, u32::from(register.index())));
+        let rename_destination = o3_live_compute_operands(instruction)
+            .map(|operands| operands.destination())
+            .or_else(|| {
+                o3_scalar_integer_destination(instruction)
+                    .filter(|register| !register.is_zero())
+                    .map(O3ArchitecturalRegister::integer)
+            })
+            .filter(|destination| {
+                destination.register_class() != O3RegisterClass::Integer
+                    || destination.architectural() != 0
+            })
+            .map(|destination| (destination.register_class(), destination.architectural()));
         self.stage_live_instruction_with_rename_destination(
             pc,
             instruction,

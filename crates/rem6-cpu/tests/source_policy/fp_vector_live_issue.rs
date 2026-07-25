@@ -145,3 +145,29 @@ fn fp_vector_live_issue_uses_one_focused_operand_authority() {
         assert!(compact_tests.contains(masked_reduction));
     }
 }
+
+#[test]
+fn fp_vector_live_issue_locks_task2_window_and_staging_ownership() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let window_source = fs::read_to_string(root.join("src/riscv_o3_window_policy.rs")).unwrap();
+    let staging_source = fs::read_to_string(root.join("src/o3_runtime_live_window.rs")).unwrap();
+    let compact_window = compact_rust_code(&window_source);
+    let compact_staging = compact_rust_code(&staging_source);
+
+    assert!(window_source.contains("unresolved_destinations: Vec<O3ArchitecturalRegister>"));
+    assert!(window_source.contains("live_destinations: Vec<O3ArchitecturalRegister>"));
+    assert!(window_source.contains("fn classify_compute_younger("));
+    assert!(!window_source.contains("fn classify_scalar_younger("));
+    assert!(window_source.contains("o3_live_compute_operands(instruction)"));
+    assert!(window_source.contains("O3ArchitecturalRegister::integer"));
+    assert!(compact_window.contains("source.register_class()!=O3RegisterClass::Integer"));
+    assert!(compact_window.contains("self.live_destinations.contains(source)"));
+
+    assert!(staging_source.contains("o3_live_compute_operands(instruction)"));
+    assert!(compact_staging.contains(".map(|operands|operands.destination())"));
+    assert!(compact_staging.contains(".or_else(||{"));
+    assert!(staging_source.contains("o3_scalar_integer_destination(instruction)"));
+    assert!(staging_source.contains(".map(O3ArchitecturalRegister::integer)"));
+    assert!(compact_staging
+        .contains(".map(|destination|(destination.register_class(),destination.architectural()))"));
+}

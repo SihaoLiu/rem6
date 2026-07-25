@@ -1,9 +1,12 @@
 use rem6_isa_riscv::{Register, RiscvInstruction};
 
 use crate::{
+    o3_dependency::O3RegisterClass,
     o3_runtime::{
-        o3_live_control_operands, o3_predicted_scalar_descendant_operands,
-        o3_scalar_integer_destination, o3_speculative_scalar_alu_operands,
+        o3_live_compute_operands, o3_live_control_operands,
+        o3_predicted_scalar_descendant_operands, o3_scalar_integer_destination,
+        o3_speculative_scalar_alu_operands, O3ArchitecturalRegister, O3LiveComputeClass,
+        O3LiveComputeOperands,
     },
     o3_runtime_trace::O3RuntimeFuLatencyClass,
     riscv_fu_latency::riscv_o3_fu_latency_class,
@@ -28,8 +31,8 @@ struct ForwardableRasPush {
 }
 
 pub(crate) struct RiscvScalarIntegerLiveWindow {
-    unresolved_destinations: Vec<Register>,
-    live_destinations: Vec<Register>,
+    unresolved_destinations: Vec<O3ArchitecturalRegister>,
+    live_destinations: Vec<O3ArchitecturalRegister>,
     forwardable_ras_push: Option<ForwardableRasPush>,
     rows: usize,
     row_limit: usize,
@@ -71,6 +74,7 @@ impl RiscvScalarIntegerLiveWindow {
             Self::new(
                 o3_scalar_integer_destination(head)
                     .filter(|destination| !destination.is_zero())
+                    .map(O3ArchitecturalRegister::integer)
                     .into_iter()
                     .collect(),
                 1,
@@ -122,6 +126,7 @@ impl RiscvScalarIntegerLiveWindow {
             .into_iter()
             .filter(|destination| !destination.is_zero())
         {
+            let destination = O3ArchitecturalRegister::integer(destination);
             if !unresolved_destinations.contains(&destination) {
                 unresolved_destinations.push(destination);
             }
@@ -159,6 +164,7 @@ impl RiscvScalarIntegerLiveWindow {
             .into_iter()
             .filter(|destination| !destination.is_zero())
         {
+            let destination = O3ArchitecturalRegister::integer(destination);
             if !unresolved_destinations.contains(&destination) {
                 unresolved_destinations.push(destination);
             }
@@ -173,7 +179,7 @@ impl RiscvScalarIntegerLiveWindow {
     }
 
     fn new(
-        unresolved_destinations: Vec<Register>,
+        unresolved_destinations: Vec<O3ArchitecturalRegister>,
         rows: usize,
         row_limit: usize,
         control_row_limit: usize,
@@ -231,7 +237,7 @@ impl RiscvScalarIntegerLiveWindow {
         if self.admits_terminal_control {
             let Some(control) = o3_live_control_operands(instruction) else {
                 return RiscvSequencedScalarIntegerYoungerDecision {
-                    decision: self.classify_scalar_younger(instruction),
+                    decision: self.classify_compute_younger(instruction),
                     ras_push_sequence: None,
                 };
             };
@@ -248,10 +254,10 @@ impl RiscvScalarIntegerLiveWindow {
                 };
             }
             self.rows += 1;
-            let depends_on_unresolved = control
-                .sources()
-                .iter()
-                .any(|source| self.unresolved_destinations.contains(source));
+            let depends_on_unresolved = control.sources().iter().any(|source| {
+                self.unresolved_destinations
+                    .contains(&O3ArchitecturalRegister::integer(*source))
+            });
             let frontend_sensitive_indirect_target = matches!(
                 control.kind(),
                 BranchTargetKind::IndirectUnconditional
@@ -259,10 +265,10 @@ impl RiscvScalarIntegerLiveWindow {
                     | BranchTargetKind::Return
             );
             let indirect_target_is_live = frontend_sensitive_indirect_target
-                && control
-                    .sources()
-                    .iter()
-                    .any(|source| self.live_destinations.contains(source));
+                && control.sources().iter().any(|source| {
+                    self.live_destinations
+                        .contains(&O3ArchitecturalRegister::integer(*source))
+                });
             let forwardable_ras_push = (control.kind() == BranchTargetKind::Return
                 && control.sources().len() == 1)
                 .then(|| self.forwardable_ras_push)
@@ -282,7 +288,7 @@ impl RiscvScalarIntegerLiveWindow {
                 .destination()
                 .filter(|destination| !destination.is_zero());
             if let Some(destination) = destination {
-                self.record_shadowing_destination(destination);
+                self.record_shadowing_destination(O3ArchitecturalRegister::integer(destination));
             }
             match control.kind() {
                 BranchTargetKind::CallDirect | BranchTargetKind::CallIndirect => {
@@ -316,12 +322,12 @@ impl RiscvScalarIntegerLiveWindow {
             };
         }
         RiscvSequencedScalarIntegerYoungerDecision {
-            decision: self.classify_scalar_younger(instruction),
+            decision: self.classify_compute_younger(instruction),
             ras_push_sequence: None,
         }
     }
 
-    fn classify_scalar_younger(
+    fn classify_compute_younger(
         &mut self,
         instruction: RiscvInstruction,
     ) -> RiscvScalarIntegerYoungerDecision {
@@ -334,25 +340,45 @@ impl RiscvScalarIntegerLiveWindow {
                 return RiscvScalarIntegerYoungerDecision::Reject;
             };
             if destination.is_zero()
-                || sources
-                    .iter()
-                    .any(|source| self.unresolved_destinations.contains(source))
+                || sources.iter().any(|source| {
+                    self.unresolved_destinations
+                        .contains(&O3ArchitecturalRegister::integer(*source))
+                })
             {
                 return RiscvScalarIntegerYoungerDecision::Reject;
             }
             self.rows += 1;
-            self.record_shadowing_destination(destination);
+            self.record_shadowing_destination(O3ArchitecturalRegister::integer(destination));
             return RiscvScalarIntegerYoungerDecision::AdmitContinue;
         }
-        let Some((destination, sources)) = o3_speculative_scalar_alu_operands(instruction) else {
-            return RiscvScalarIntegerYoungerDecision::Reject;
+        let operands: O3LiveComputeOperands = match o3_live_compute_operands(instruction) {
+            Some(operands) => operands,
+            None => return RiscvScalarIntegerYoungerDecision::Reject,
         };
-        if destination.is_zero() {
+        let destination = operands.destination();
+        if destination.register_class() == O3RegisterClass::Integer
+            && destination.architectural() == 0
+        {
             return RiscvScalarIntegerYoungerDecision::Reject;
         }
-        let depends_on_unresolved_destination = sources
-            .iter()
-            .any(|source| self.unresolved_destinations.contains(source));
+        if operands.class() == O3LiveComputeClass::ScalarInteger
+            && o3_speculative_scalar_alu_operands(instruction).is_none()
+        {
+            return RiscvScalarIntegerYoungerDecision::Reject;
+        }
+        if operands.class() != O3LiveComputeClass::ScalarInteger {
+            let has_unforwardable_live_source = operands.sources().iter().any(|source| {
+                source.register_class() != O3RegisterClass::Integer
+                    && self.live_destinations.contains(source)
+            });
+            if has_unforwardable_live_source {
+                return RiscvScalarIntegerYoungerDecision::Reject;
+            }
+        }
+        let depends_on_unresolved_destination = operands.sources().iter().any(|source| {
+            source.register_class() == O3RegisterClass::Integer
+                && self.unresolved_destinations.contains(source)
+        });
         self.rows += 1;
         if depends_on_unresolved_destination {
             self.record_live_destination(destination);
@@ -362,13 +388,13 @@ impl RiscvScalarIntegerLiveWindow {
         RiscvScalarIntegerYoungerDecision::AdmitContinue
     }
 
-    fn record_shadowing_destination(&mut self, destination: Register) {
+    fn record_shadowing_destination(&mut self, destination: O3ArchitecturalRegister) {
         self.unresolved_destinations
             .retain(|unresolved| *unresolved != destination);
-        if self
-            .forwardable_ras_push
-            .is_some_and(|push| push.destination == destination)
-        {
+        if self.forwardable_ras_push.is_some_and(|push| {
+            destination.register_class() == O3RegisterClass::Integer
+                && u32::from(push.destination.index()) == destination.architectural()
+        }) {
             self.forwardable_ras_push = None;
         }
         self.record_live_destination(destination);
@@ -381,7 +407,7 @@ impl RiscvScalarIntegerLiveWindow {
         });
     }
 
-    fn record_live_destination(&mut self, destination: Register) {
+    fn record_live_destination(&mut self, destination: O3ArchitecturalRegister) {
         if !self.live_destinations.contains(&destination) {
             self.live_destinations.push(destination);
         }
@@ -390,7 +416,10 @@ impl RiscvScalarIntegerLiveWindow {
 
 #[cfg(test)]
 mod tests {
-    use rem6_isa_riscv::{Immediate, MemoryWidth};
+    use rem6_isa_riscv::{
+        FloatRegister, Immediate, MemoryWidth, RiscvFloatRoundingMode, RiscvVectorMaskMode,
+        RiscvVectorMaskReductionInstruction, RiscvVectorScalarMoveInstruction, VectorRegister,
+    };
 
     use super::*;
 
@@ -402,11 +431,72 @@ mod tests {
         }
     }
 
+    fn f(index: u8) -> FloatRegister {
+        FloatRegister::new(index).unwrap()
+    }
+
+    fn v(index: u8) -> VectorRegister {
+        VectorRegister::new(index).unwrap()
+    }
+
+    fn rm() -> RiscvFloatRoundingMode {
+        RiscvFloatRoundingMode::RoundNearestEven
+    }
+
     fn div_x3() -> RiscvInstruction {
         RiscvInstruction::Div {
             rd: Register::new(3).unwrap(),
             rs1: Register::new(1).unwrap(),
             rs2: Register::new(2).unwrap(),
+        }
+    }
+
+    fn float_add_s(rd: u8, rs1: u8, rs2: u8) -> RiscvInstruction {
+        RiscvInstruction::FloatAddS {
+            rd: f(rd),
+            rs1: f(rs1),
+            rs2: f(rs2),
+            rounding_mode: rm(),
+        }
+    }
+
+    fn float_mul_s(rd: u8, rs1: u8, rs2: u8) -> RiscvInstruction {
+        RiscvInstruction::FloatMulS {
+            rd: f(rd),
+            rs1: f(rs1),
+            rs2: f(rs2),
+            rounding_mode: rm(),
+        }
+    }
+
+    fn vector_move_to_scalar(rd: u8, vs2: u8) -> RiscvInstruction {
+        RiscvInstruction::VectorScalarMove(RiscvVectorScalarMoveInstruction::MoveToScalar {
+            rd: Register::new(rd).unwrap(),
+            vs2: v(vs2),
+        })
+    }
+
+    fn vector_pop_count(rd: u8, vs2: u8, mask: RiscvVectorMaskMode) -> RiscvInstruction {
+        RiscvInstruction::VectorMaskReduction(RiscvVectorMaskReductionInstruction::PopCount {
+            rd: Register::new(rd).unwrap(),
+            vs2: v(vs2),
+            mask,
+        })
+    }
+
+    fn vector_first_set(rd: u8, vs2: u8, mask: RiscvVectorMaskMode) -> RiscvInstruction {
+        RiscvInstruction::VectorMaskReduction(RiscvVectorMaskReductionInstruction::FirstSet {
+            rd: Register::new(rd).unwrap(),
+            vs2: v(vs2),
+            mask,
+        })
+    }
+
+    fn vector_mul_vv(vd: u8, vs1: u8, vs2: u8) -> RiscvInstruction {
+        RiscvInstruction::VectorMultiplyLowVv {
+            vd: v(vd),
+            vs1: v(vs1),
+            vs2: v(vs2),
         }
     }
 
@@ -506,6 +596,53 @@ mod tests {
             width: MemoryWidth::Word,
             signed: false,
         }
+    }
+
+    #[test]
+    fn scalar_rooted_window_admits_independent_fp_and_vector_result_rows() {
+        let mut window = RiscvScalarIntegerLiveWindow::from_fu_head(div_x3()).unwrap();
+        assert_eq!(
+            window.classify_younger(float_add_s(4, 1, 2)),
+            RiscvScalarIntegerYoungerDecision::AdmitContinue
+        );
+        assert_eq!(
+            window.classify_younger(vector_move_to_scalar(11, 3)),
+            RiscvScalarIntegerYoungerDecision::AdmitContinue
+        );
+        assert_eq!(
+            window.classify_younger(vector_pop_count(12, 4, RiscvVectorMaskMode::Unmasked)),
+            RiscvScalarIntegerYoungerDecision::AdmitContinue
+        );
+    }
+
+    #[test]
+    fn scalar_rooted_window_admits_unmasked_vfirst_result_rows() {
+        let mut window = RiscvScalarIntegerLiveWindow::from_fu_head(div_x3()).unwrap();
+        assert_eq!(
+            window.classify_younger(vector_first_set(11, 3, RiscvVectorMaskMode::Unmasked)),
+            RiscvScalarIntegerYoungerDecision::AdmitContinue
+        );
+    }
+
+    #[test]
+    fn scalar_rooted_window_rejects_live_fp_dependency_and_vector_boundaries() {
+        let mut window = RiscvScalarIntegerLiveWindow::from_fu_head(div_x3()).unwrap();
+        assert_eq!(
+            window.classify_younger(float_add_s(4, 1, 2)),
+            RiscvScalarIntegerYoungerDecision::AdmitContinue
+        );
+        assert_eq!(
+            window.classify_younger(float_mul_s(5, 4, 3)),
+            RiscvScalarIntegerYoungerDecision::Reject
+        );
+        assert_eq!(
+            window.classify_younger(vector_mul_vv(4, 1, 2)),
+            RiscvScalarIntegerYoungerDecision::Reject
+        );
+        assert_eq!(
+            window.classify_younger(vector_pop_count(11, 3, RiscvVectorMaskMode::Masked)),
+            RiscvScalarIntegerYoungerDecision::Reject
+        );
     }
 
     #[test]
