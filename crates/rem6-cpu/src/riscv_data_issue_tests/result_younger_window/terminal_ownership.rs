@@ -1,6 +1,85 @@
 use super::*;
 
 #[test]
+fn authorized_terminal_fp_load_stages_completed_result_consumer_before_response() {
+    for (label, load_funct3, multiply_funct7) in
+        [("flw", 0b010, 0b0001000), ("fld", 0b011, 0b0001001)]
+    {
+        let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
+        let core = RiscvCore::with_data(
+            cpu_core(fetch_route, 0x8000),
+            CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, line_layout()),
+        );
+        core.set_detailed_live_retire_gate_enabled(true);
+        core.set_o3_window_depths(4, 4);
+        core.write_register(reg(7), 36);
+        core.write_register(reg(8), 3);
+        core.write_register(reg(10), 0x9000);
+
+        let divide = r_type(1, 8, 7, 0b100, 6, 0x33);
+        let load = i_type(0, 10, load_funct3, 1, 0x07);
+        let consumer = fp_r_type(multiply_funct7, 2, 1, 0, 4);
+        core.core
+            .state
+            .lock()
+            .expect("cpu core lock")
+            .events
+            .extend([
+                completed_fetch_with_raw(1, 0x8000, divide),
+                completed_fetch_with_raw(2, 0x8004, load),
+                completed_fetch_with_raw(3, 0x8008, consumer),
+            ]);
+
+        assert_eq!(core.next_fetch_ahead_before_retire(), None, "{label}");
+        assert_eq!(
+            core.state
+                .lock()
+                .expect("riscv core lock")
+                .memory_result_window_authorizations
+                .get(&MemoryRequestId::new(AgentId::new(7), 2))
+                .map(|authorization| authorization.role()),
+            Some(O3MemoryResultWindowRole::Head),
+            "{label}: completed matching consumer closes the fixed-FU result window",
+        );
+        assert!(core
+            .execute_next_completed_fetch_serial(&mut scheduler)
+            .unwrap()
+            .is_none());
+        scheduler.run_next_epoch();
+        core.issue_next_data_access(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap()
+        .expect("authorized terminal FP load issues before the DIV retires");
+
+        let state = core.state.lock().expect("riscv core lock");
+        assert!(state.pending_terminal_memory_result.is_some(), "{label}");
+        assert_eq!(
+            state.o3_runtime.live_data_access_younger_window_policy(),
+            Some(O3DataAccessWindowPolicy::MemoryResultWindow),
+            "{label}: the exact recorded Head owns the result-window policy",
+        );
+        assert_eq!(
+            state
+                .o3_runtime
+                .snapshot()
+                .reorder_buffer()
+                .iter()
+                .map(|entry| entry.pc())
+                .collect::<Vec<_>>(),
+            [0x8000, 0x8004, 0x8008]
+                .into_iter()
+                .map(Address::new)
+                .collect::<Vec<_>>(),
+            "{label}: fixed < load < consumer is resident before response",
+        );
+    }
+}
+
+#[test]
 fn fixed_fu_head_can_provision_terminal_store_conditional_status() {
     let (mut scheduler, transport, fetch_route, data_route) = memory_routes();
     let core = terminal_store_conditional_core(fetch_route, data_route, true);

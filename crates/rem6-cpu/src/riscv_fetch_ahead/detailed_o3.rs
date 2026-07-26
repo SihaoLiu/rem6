@@ -255,6 +255,17 @@ pub(super) fn data_access_waits_for_younger_fetch(
     else {
         return false;
     };
+    if matches!(
+        data_access_result::fixed_fu_data_access_result_window_candidate(
+            state,
+            fetch_events,
+            &current,
+            translated,
+        ),
+        Some(DetailedFetchAheadCandidate::Blocked)
+    ) {
+        return true;
+    }
     if state.can_overlap_detailed_scalar_memory_instruction(current.decoded().instruction()) {
         return false;
     }
@@ -430,7 +441,7 @@ pub(super) fn additional_fetch_candidate(
     else {
         return DetailedFetchAheadCandidate::NotApplicable;
     };
-    scalar_integer_fu_window_candidate(state, fetch_events, &current, window)
+    scalar_integer_fu_window_candidate(state, fetch_events, &current, window, translated)
 }
 
 fn producer_forwarded_control_fetch_candidate(
@@ -741,7 +752,13 @@ fn translated_scalar_load_window_candidate(
     ) else {
         return DetailedFetchAheadCandidate::Blocked;
     };
-    scalar_integer_fu_window_candidate(state, fetch_events, current, window)
+    scalar_integer_fu_window_candidate(
+        state,
+        fetch_events,
+        current,
+        window,
+        TranslatedMemoryFetchAhead::CachedMemory,
+    )
 }
 
 pub(super) fn ready_translated_scalar_load_window_candidate(
@@ -782,6 +799,7 @@ pub(super) fn ready_translated_scalar_load_window_candidate(
         Address::new(state.hart.pc()),
         window,
         Vec::new(),
+        TranslatedMemoryFetchAhead::CachedMemory,
     )
 }
 
@@ -790,7 +808,16 @@ fn scalar_integer_fu_window_candidate(
     fetch_events: &[CpuFetchEvent],
     current: &RiscvCompletedFetchInstruction,
     window: RiscvScalarIntegerLiveWindow,
+    translated: TranslatedMemoryFetchAhead,
 ) -> DetailedFetchAheadCandidate {
+    if let Some(candidate) = data_access_result::fixed_fu_data_access_result_window_candidate(
+        state,
+        fetch_events,
+        current,
+        translated,
+    ) {
+        return candidate;
+    }
     let previous_request = current.last_consumed_request();
     let next_pc = Address::new(
         current
@@ -805,6 +832,7 @@ fn scalar_integer_fu_window_candidate(
         next_pc,
         window,
         Vec::new(),
+        translated,
     )
 }
 
@@ -815,6 +843,7 @@ fn scalar_integer_window_candidate_from(
     mut next_pc: Address,
     mut window: RiscvScalarIntegerLiveWindow,
     mut sequenced_return_addresses: Vec<(u64, Address)>,
+    translated: TranslatedMemoryFetchAhead,
 ) -> DetailedFetchAheadCandidate {
     while !window.is_full() {
         let younger = match completed_window_instruction_or_candidate(
@@ -839,6 +868,22 @@ fn scalar_integer_window_candidate_from(
             prediction_request.sequence(),
         );
         let decision = classification.decision();
+        if matches!(
+            decision,
+            RiscvScalarIntegerYoungerDecision::AdmitContinue
+                | RiscvScalarIntegerYoungerDecision::AdmitStop
+        ) {
+            if let Some(candidate) =
+                data_access_result::fixed_fu_data_access_result_window_candidate(
+                    state,
+                    fetch_events,
+                    &younger,
+                    translated,
+                )
+            {
+                return candidate;
+            }
+        }
         match decision {
             RiscvScalarIntegerYoungerDecision::AdmitContinue => {}
             RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
@@ -986,6 +1031,7 @@ fn scalar_memory_window_candidate(
                     sequential_pc,
                     alu_window,
                     sequenced_return_addresses,
+                    TranslatedMemoryFetchAhead::Blocked,
                 );
             }
             RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
@@ -1028,6 +1074,7 @@ fn scalar_memory_window_candidate(
                     next_pc,
                     alu_window,
                     sequenced_return_addresses,
+                    TranslatedMemoryFetchAhead::Blocked,
                 );
             }
             RiscvScalarIntegerYoungerDecision::AdmitStop

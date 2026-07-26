@@ -115,6 +115,74 @@ fn memory_depth_one_with_deeper_live_window_stages_fp_consumer() {
 }
 
 #[test]
+fn prefixed_fp_load_consumer_stages_before_response() {
+    for (label, width, consumer) in [
+        ("flw", MemoryWidth::Word, float_mul_s()),
+        ("fld", MemoryWidth::Doubleword, float_mul_d()),
+    ] {
+        let mut runtime = O3RuntimeState::default();
+        assert!(runtime.set_window_depths(1, 3), "{label}");
+        let fixed = multiply_instruction(6, 7);
+        let fixed_sequence = runtime
+            .stage_live_retire_window(Address::new(0x8000), fixed, 0, [])
+            .expect("fixed-FU prefix stages");
+        assert_eq!(fixed_sequence, 0, "{label}");
+        record_fixed_fu_owner(
+            &mut runtime,
+            fixed_sequence,
+            decoded_instruction(fixed),
+            0x8000,
+            request(1),
+            0,
+        );
+
+        let load = float_load_event_with_width(0x8004, 2, width);
+        assert!(stage_result(&mut runtime, &load), "{label}");
+        let load_sequence = runtime.live_data_accesses[0].sequence;
+        assert_eq!(load_sequence, fixed_sequence + 1, "{label}");
+        assert_eq!(
+            runtime.stage_live_data_access_younger_window(
+                load.fetch().request_id(),
+                [
+                    (Address::new(0x8008), consumer),
+                    (Address::new(0x800c), independent_addi()),
+                ],
+            ),
+            1,
+            "{label}: fixed prefix + load + consumer exactly fill live depth three"
+        );
+
+        let live = &runtime.live_data_accesses[0];
+        assert_eq!(live.outcome, O3LiveDataAccessOutcome::Resident, "{label}");
+        assert_eq!(live.response_tick, None, "{label}");
+        assert_eq!(live.memory_result, None, "{label}");
+        assert_eq!(
+            runtime.writeback_reservation(load_sequence),
+            None,
+            "{label}"
+        );
+        assert_eq!(
+            runtime
+                .snapshot()
+                .reorder_buffer()
+                .iter()
+                .map(|entry| (entry.sequence(), entry.pc()))
+                .collect::<Vec<_>>(),
+            vec![
+                (fixed_sequence, Address::new(0x8000)),
+                (load_sequence, Address::new(0x8004)),
+                (load_sequence + 1, Address::new(0x8008)),
+            ],
+            "{label}: fixed < load < consumer and the trailing row is excluded"
+        );
+        assert!(
+            runtime.snapshot().reorder_buffer()[2].is_live_staged(),
+            "{label}"
+        );
+    }
+}
+
+#[test]
 fn memory_result_runtime_keeps_vector_load_consumer_outside_forwardable_lane() {
     let mut runtime = O3RuntimeState::default();
     runtime.set_scalar_memory_window_limit(4);

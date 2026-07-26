@@ -578,7 +578,25 @@ direct width-one FLW chain uses the live queue and stores `00002041`.
 **Files:**
 - Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/fp_load_forwarding_fixture.rs`
 - Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/fp_load_forwarding.rs`
+- Modify as RED requires: `crates/rem6-cpu/src/riscv_fetch_ahead/detailed_o3.rs`
+- Modify as RED requires: `crates/rem6-cpu/src/riscv_data_issue.rs`
 - Modify as RED requires: focused production files from Tasks 1-3 only
+
+`riscv_fetch_ahead/detailed_o3.rs` owns the fixed-FU scan rejection that turns
+the younger memory result into `Blocked`. Its Task 4 exception is limited to
+an immediately adjacent fixed-FU producer followed by a supported FLW/FLD
+result handoff; it must not authorize arbitrary chains or FP-compute-to-load
+handoffs.
+Prefixed `Head` publication also requires observing the matching admitted
+consumer of the load destination.
+
+`riscv_data_issue.rs` owns the blanket provisional-terminal exclusion after
+fetch has recorded the exact `Head`. Task 4 removes only that exclusion for
+the existing authorization-validated result-window path; exact recorded
+request identity, role, route, range and bound target, memory-result shape,
+and PMA/MMIO restrictions remain authoritative. FP authorization intentionally
+has no integer destination field, and data issue does not duplicate FLW/FLD
+consumer-shape classification.
 
 - [ ] **Step 1: Add direct FLD width-two RED evidence**
 
@@ -637,10 +655,11 @@ deterministic route delay per case.
 - [ ] **Step 3: Reconcile queue, ROB/LSQ, writeback, and stats surfaces**
 
 Use existing event helpers and require one lifecycle per consumer sequence:
-`queued`, one or more `retained_dependency`, `selected`, `issued`, and
-`removed`. Correlate the producer sequence and wake tick with the memory-result
-writeback event. Reconcile JSON queue/writeback totals with text/stat samples
-where the fixture emits both.
+`queued`, one or more `retained_dependency`, `selected` as destructive removal,
+then `issued` in the O3 event. There is no separate `removed` action. Correlate
+the producer sequence and wake tick with the memory-result writeback event,
+reconcile current occupancy, and reconcile JSON queue/writeback totals with
+text/stat samples where the fixture emits both.
 
 - [ ] **Step 4: Run the full positive matrix and commit**
 
@@ -650,7 +669,7 @@ TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib double_precision_live_comput
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib fp_load_ -- --nocapture
 TMPDIR=$PWD/target/tmp cargo fmt --all
 git diff --check
-git add crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/fp_load_forwarding_fixture.rs crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/fp_load_forwarding.rs crates/rem6-cpu/src/o3_live_compute_operands.rs crates/rem6-cpu/src/o3_runtime_memory_window.rs crates/rem6-cpu/src/o3_runtime_control_window.rs crates/rem6-cpu/src/riscv_o3_window_policy.rs crates/rem6-cpu/src/riscv_fetch_ahead/detailed_o3/data_access_result.rs
+git add crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/fp_load_forwarding_fixture.rs crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/fp_load_forwarding.rs crates/rem6-cpu/src/o3_live_compute_operands.rs crates/rem6-cpu/src/o3_runtime_memory_window.rs crates/rem6-cpu/src/o3_runtime_control_window.rs crates/rem6-cpu/src/riscv_o3_window_policy.rs crates/rem6-cpu/src/riscv_fetch_ahead/detailed_o3.rs crates/rem6-cpu/src/riscv_fetch_ahead/detailed_o3/data_access_result.rs crates/rem6-cpu/src/riscv_fetch_ahead/tests/data_access_result.rs crates/rem6-cpu/src/o3_runtime_memory_result_tests/fp_load_forwarding.rs crates/rem6-cpu/src/riscv_data_issue.rs crates/rem6-cpu/src/riscv_data_issue_tests/result_younger_window/terminal_ownership.rs
 git commit -m "test: prove fp load forwarding matrix"
 git push
 ```

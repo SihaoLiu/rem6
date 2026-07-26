@@ -719,7 +719,6 @@ impl RiscvCore {
             O3MemoryResultWindowRole::Head
         };
         let eligible_memory_result_window = o3_data_access
-            && !provisional_terminal_result
             && state
                 .memory_result_window_authorizations
                 .get(&issue.fetch_request)

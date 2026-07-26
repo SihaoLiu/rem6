@@ -5,7 +5,11 @@ use rem6_isa_riscv::{
 use rem6_memory::{Address, AddressRange, MemoryRequestId};
 
 use crate::{
-    o3_runtime::O3ArchitecturalRegister,
+    o3_runtime::{
+        o3_live_compute_operands, o3_scalar_integer_destination, O3ArchitecturalRegister,
+    },
+    o3_runtime_trace::O3RuntimeFuLatencyClass,
+    riscv_fu_latency::riscv_o3_fu_latency_class,
     riscv_live_retire_window::RiscvCompletedFetchInstruction,
     riscv_o3_window_policy::{RiscvScalarIntegerLiveWindow, RiscvScalarIntegerYoungerDecision},
     CpuFetchEvent, RiscvCoreState,
@@ -169,6 +173,58 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_authorization(
         role,
     ))
 }
+
+pub(super) fn fixed_fu_data_access_result_window_candidate(
+    state: &RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+    fixed: &RiscvCompletedFetchInstruction,
+    translated: TranslatedMemoryFetchAhead,
+) -> Option<DetailedFetchAheadCandidate> {
+    if !matches!(
+        riscv_o3_fu_latency_class(fixed.decoded().instruction()),
+        Some(O3RuntimeFuLatencyClass::ScalarIntegerMul | O3RuntimeFuLatencyClass::ScalarIntegerDiv)
+    ) {
+        return None;
+    }
+    let fixed_destination = o3_scalar_integer_destination(fixed.decoded().instruction())
+        .filter(|destination| !destination.is_zero())
+        .map(O3ArchitecturalRegister::integer)?;
+    let target = match completed_window_instruction_or_candidate(
+        state,
+        fetch_events,
+        fixed.last_consumed_request(),
+        completed_instruction_sequential_pc(fixed),
+    ) {
+        Ok(target) => target,
+        Err(candidate) => return Some(candidate),
+    };
+    if !matches!(
+        target.decoded().instruction(),
+        RiscvInstruction::FloatLoad {
+            width: MemoryWidth::Word | MemoryWidth::Doubleword,
+            ..
+        }
+    ) {
+        return None;
+    }
+    let authorization = data_access_result_authorization(
+        state,
+        target.first_consumed_request(),
+        target.decoded().instruction(),
+        target.decoded().bytes(),
+        translated,
+        O3MemoryResultWindowRole::Head,
+    )?;
+    Some(data_access_result_window_candidate_with_prefix(
+        state,
+        fetch_events,
+        &target,
+        authorization,
+        translated,
+        Some(fixed_destination),
+    ))
+}
+
 pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
     state: &RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
@@ -176,30 +232,56 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
     head_authorization: O3MemoryResultWindowAuthorization,
     translated: TranslatedMemoryFetchAhead,
 ) -> DetailedFetchAheadCandidate {
+    data_access_result_window_candidate_with_prefix(
+        state,
+        fetch_events,
+        current,
+        head_authorization,
+        translated,
+        None,
+    )
+}
+
+fn data_access_result_window_candidate_with_prefix(
+    state: &RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+    current: &RiscvCompletedFetchInstruction,
+    head_authorization: O3MemoryResultWindowAuthorization,
+    translated: TranslatedMemoryFetchAhead,
+    fixed_destination: Option<O3ArchitecturalRegister>,
+) -> DetailedFetchAheadCandidate {
     if head_authorization.role() != O3MemoryResultWindowRole::Head {
         return DetailedFetchAheadCandidate::Blocked;
     }
     let memory_row_limit = state.o3_runtime.scalar_memory_window_limit();
     let row_limit = state.o3_runtime.scalar_live_window_limit();
-    let mut authorizer = DependentResultAddressAuthorizer::from_head(
-        state,
-        current,
-        head_authorization,
-        memory_row_limit,
-    );
+    let prefixed = fixed_destination.is_some();
+    let mut authorizer = if prefixed {
+        None
+    } else {
+        DependentResultAddressAuthorizer::from_head(
+            state,
+            current,
+            head_authorization,
+            memory_row_limit,
+        )
+    };
     let mut authorizations = vec![(current.first_consumed_request(), head_authorization)];
     let Some(head_destination) =
         data_access_result_fetch_ahead_destination(state, current.decoded().instruction())
     else {
         return DetailedFetchAheadCandidate::Blocked;
     };
-    let mut result_destinations = vec![head_destination];
+    let mut result_destinations = fixed_destination.into_iter().collect::<Vec<_>>();
+    if !result_destinations.contains(&head_destination) {
+        result_destinations.push(head_destination);
+    }
     let mut window = RiscvScalarIntegerLiveWindow::from_memory_result_destinations(
         result_destinations.iter().copied(),
-        1,
+        1 + usize::from(prefixed),
         row_limit,
     )
-    .expect("one authorized result fits the configured live window");
+    .expect("the authorized result and optional fixed-FU prefix fit the live window");
     let (mut result_rows, mut dependent_rows, mut scalar_started) = (1, 0, false);
     let mut previous_request = current.last_consumed_request();
     let mut next_pc = completed_instruction_sequential_pc(current);
@@ -212,6 +294,9 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
         ) {
             Ok(younger) => younger,
             Err(DetailedFetchAheadCandidate::Ready(pc)) => {
+                if prefixed {
+                    return DetailedFetchAheadCandidate::Ready(pc);
+                }
                 return DetailedFetchAheadCandidate::DataAccessResultWindow {
                     next_pc: Some(pc),
                     authorizations,
@@ -261,7 +346,7 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
                     continue;
                 }
             }
-            if dependent_rows == 0 && result_rows == 1 {
+            if !prefixed && dependent_rows == 0 && result_rows == 1 {
                 if let Some(younger_authorization) =
                     data_access_result_younger_authorization(state, &younger, translated)
                 {
@@ -326,6 +411,12 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
                 next_pc = completed_instruction_sequential_pc(&younger);
             }
             RiscvScalarIntegerYoungerDecision::AdmitStop => {
+                if prefixed
+                    && !o3_live_compute_operands(younger.decoded().instruction())
+                        .is_some_and(|operands| operands.sources().contains(&head_destination))
+                {
+                    return DetailedFetchAheadCandidate::Blocked;
+                }
                 return DetailedFetchAheadCandidate::DataAccessResultWindow {
                     next_pc: None,
                     authorizations,
@@ -335,7 +426,7 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
             | RiscvScalarIntegerYoungerDecision::AdmitPredictedControl
             | RiscvScalarIntegerYoungerDecision::AdmitPredictedRasControl
             | RiscvScalarIntegerYoungerDecision::Reject => {
-                return if result_rows > 1 {
+                return if !prefixed && result_rows > 1 {
                     DetailedFetchAheadCandidate::DataAccessResultWindow {
                         next_pc: None,
                         authorizations,
@@ -346,9 +437,13 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
             }
         }
     }
-    DetailedFetchAheadCandidate::DataAccessResultWindow {
-        next_pc: None,
-        authorizations,
+    if prefixed {
+        DetailedFetchAheadCandidate::Blocked
+    } else {
+        DetailedFetchAheadCandidate::DataAccessResultWindow {
+            next_pc: None,
+            authorizations,
+        }
     }
 }
 fn completed_instruction_sequential_pc(instruction: &RiscvCompletedFetchInstruction) -> Address {

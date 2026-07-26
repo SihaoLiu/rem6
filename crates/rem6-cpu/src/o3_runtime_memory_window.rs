@@ -13,6 +13,7 @@ use super::o3_store_forwarding::{
 use super::*;
 
 use crate::{
+    o3_runtime_trace::O3RuntimeFuLatencyClass,
     riscv_o3_window_policy::RiscvScalarIntegerLiveWindow,
     riscv_scalar_memory_window::independent_scalar_load_destination,
 };
@@ -197,6 +198,61 @@ impl O3RuntimeState {
             return None;
         }
         let mut destinations = Vec::new();
+        let mut rows = self.live_data_accesses.len();
+        if self.live_data_accesses.len() == 1 {
+            let live = &self.live_data_accesses[0];
+            let target_index = self
+                .snapshot
+                .reorder_buffer
+                .iter()
+                .position(|entry| entry.sequence() == live.sequence)?;
+            if target_index > 0 {
+                if target_index != 1
+                    || !matches!(
+                        live.execution.instruction(),
+                        RiscvInstruction::FloatLoad {
+                            width: MemoryWidth::Word | MemoryWidth::Doubleword,
+                            ..
+                        }
+                    )
+                {
+                    return None;
+                }
+                let target = self.snapshot.reorder_buffer[target_index];
+                let fixed = self.snapshot.reorder_buffer[target_index - 1];
+                if !target.is_live_staged()
+                    || !fixed.is_live_staged()
+                    || fixed.sequence().checked_add(1) != Some(target.sequence())
+                    || fixed.pc().get().checked_add(4) != Some(target.pc().get())
+                {
+                    return None;
+                }
+                let fixed_instruction = self
+                    .live_staged_issue_packet(fixed.sequence())?
+                    .instruction();
+                if !matches!(
+                    o3_fu_latency_class(fixed_instruction),
+                    Some(
+                        O3RuntimeFuLatencyClass::ScalarIntegerMul
+                            | O3RuntimeFuLatencyClass::ScalarIntegerDiv
+                    )
+                ) {
+                    return None;
+                }
+                let fixed_destination = o3_scalar_integer_destination(fixed_instruction)
+                    .filter(|destination| !destination.is_zero())?;
+                if fixed.rename_destination()
+                    != Some((
+                        O3RegisterClass::Integer,
+                        u32::from(fixed_destination.index()),
+                    ))
+                {
+                    return None;
+                }
+                destinations.push(O3ArchitecturalRegister::integer(fixed_destination));
+                rows += 1;
+            }
+        }
         for live in &self.live_data_accesses {
             if live.outcome != O3LiveDataAccessOutcome::Resident
                 || live.younger_window_policy != O3DataAccessWindowPolicy::MemoryResultWindow
@@ -210,10 +266,7 @@ impl O3RuntimeState {
                 destinations.push(destination);
             }
         }
-        Some(O3MemoryResultWindowState {
-            rows: self.live_data_accesses.len(),
-            destinations,
-        })
+        Some(O3MemoryResultWindowState { rows, destinations })
     }
 
     pub(crate) fn can_stage_memory_result_window(
@@ -418,7 +471,8 @@ impl O3RuntimeState {
 #[cfg(test)]
 mod tests {
     use rem6_isa_riscv::{
-        Immediate, MemoryWidth, Register, RegisterWrite, RiscvExecutionRecord, RiscvInstruction,
+        FloatRegister, Immediate, MemoryWidth, Register, RegisterWrite, RiscvExecutionRecord,
+        RiscvInstruction,
     };
     use rem6_kernel::PartitionId;
     use rem6_memory::{AccessSize, AgentId, MemoryRequestId};
@@ -479,6 +533,73 @@ mod tests {
         assert_eq!(runtime.scalar_memory_window_limit(), 1);
         assert_eq!(runtime.scalar_live_window_limit(), 1);
         assert!(runtime.window_depths_explicit());
+    }
+
+    #[test]
+    fn prefixed_memory_result_window_counts_fixed_fu_against_live_depth() {
+        let mut runtime = O3RuntimeState::default();
+        assert!(runtime.set_window_depths(1, 2));
+        let fixed = RiscvInstruction::Mul {
+            rd: reg(6),
+            rs1: reg(7),
+            rs2: reg(8),
+        };
+        let fixed_sequence = runtime
+            .stage_live_retire_window(Address::new(0x8000), fixed, 0, [])
+            .expect("fixed-FU prefix stages");
+        assert_eq!(fixed_sequence, 0);
+        assert!(runtime.bind_live_staged_issue_packet(
+            Address::new(0x8000),
+            RiscvInstruction::decode_with_length(0x0283_8333).expect("mul decodes"),
+            &[memory_request(1)],
+            0,
+        ));
+        let fixed_execution = RiscvExecutionRecord::new(
+            fixed,
+            0x8000,
+            0x8004,
+            vec![RegisterWrite::new(reg(6), 12)],
+            None,
+        );
+        assert!(runtime
+            .record_live_issue_head_execution(
+                O3LiveIssueHeadReservation::for_instruction(fixed_sequence, 0, fixed),
+                &[memory_request(1)],
+                fixed_execution,
+            )
+            .unwrap());
+
+        let load_instruction = RiscvInstruction::FloatLoad {
+            rd: FloatRegister::new(1).unwrap(),
+            rs1: reg(10),
+            offset: Immediate::new(0),
+            width: MemoryWidth::Word,
+        };
+        let load = execution_event(
+            0x8004,
+            2,
+            load_instruction,
+            MemoryAccessKind::FloatLoad {
+                rd: FloatRegister::new(1).unwrap(),
+                address: 0x9000,
+                width: MemoryWidth::Word,
+            },
+        );
+        assert!(runtime.stage_live_data_access_issue(
+            &load,
+            memory_request(20),
+            31,
+            O3DataAccessWindowPolicy::MemoryResultWindow,
+        ));
+
+        let window = runtime
+            .data_access_integer_window(load.fetch().request_id())
+            .expect("prefixed memory-result window reconstructs");
+        assert_eq!(
+            window.remaining_rows(),
+            0,
+            "the fixed-FU prefix and target load exactly fill live depth two"
+        );
     }
 
     #[test]

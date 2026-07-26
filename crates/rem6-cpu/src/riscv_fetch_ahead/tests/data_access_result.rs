@@ -344,6 +344,336 @@ fn cached_translated_float_result_opens_a_bounded_scalar_suffix() {
 }
 
 #[test]
+fn fixed_fu_head_hands_off_to_flw_and_fld_result_consumers() {
+    let divide = r_type(0x01, 8, 7, 0b100, 6, 0x33);
+    for (label, load_funct3, multiply_funct7) in
+        [("flw", 0b010, 0b0001000), ("fld", 0b011, 0b0001001)]
+    {
+        let target = i_type(0, 2, load_funct3, 1, 0x07);
+        let consumer = r_type(multiply_funct7, 2, 1, 0, 4, 0x53);
+        let trailing_load = i_type(0, 3, load_funct3, 6, 0x07);
+        let core = core_with_completed_fetches([
+            (0, 0x8000, divide.to_le_bytes().to_vec()),
+            (1, 0x8004, target.to_le_bytes().to_vec()),
+            (2, 0x8008, consumer.to_le_bytes().to_vec()),
+            (3, 0x800c, trailing_load.to_le_bytes().to_vec()),
+        ]);
+        core.set_detailed_live_retire_gate_enabled(true);
+        core.set_o3_window_depths(4, 8);
+        core.write_register(Register::new(2).unwrap(), 0x9000);
+        core.write_register(Register::new(3).unwrap(), 0x9040);
+
+        assert_eq!(core.next_fetch_ahead_before_retire(), None, "{label}");
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(
+            state
+                .memory_result_window_authorizations
+                .get(&request(1))
+                .map(|authorization| authorization.role()),
+            Some(O3MemoryResultWindowRole::Head),
+            "{label} adjacent target authorization",
+        );
+        assert_eq!(
+            state.memory_result_window_authorizations.len(),
+            1,
+            "{label} must stop after its matching FP consumer",
+        );
+        assert!(!state
+            .memory_result_window_authorizations
+            .contains_key(&request(3)));
+    }
+}
+
+#[test]
+fn fixed_fu_handoff_waits_to_publish_head_until_consumer_completes() {
+    let divide = r_type(0x01, 8, 7, 0b100, 6, 0x33);
+    for (label, load_funct3, multiply_funct7) in
+        [("flw", 0b010, 0b0001000), ("fld", 0b011, 0b0001001)]
+    {
+        let target = i_type(0, 2, load_funct3, 1, 0x07);
+        let consumer = r_type(multiply_funct7, 2, 1, 0, 4, 0x53);
+        let consumer_fetch = CpuFetchRecord::new(
+            5,
+            PartitionId::new(0),
+            MemoryRouteId::new(0),
+            endpoint("cpu0.ifetch"),
+            request(2),
+            Address::new(0x8008),
+            AccessSize::new(4).unwrap(),
+        );
+        let core = core_with_completed_fetches([
+            (0, 0x8000, divide.to_le_bytes().to_vec()),
+            (1, 0x8004, target.to_le_bytes().to_vec()),
+        ]);
+        core.set_detailed_live_retire_gate_enabled(true);
+        core.set_o3_window_depths(4, 8);
+        core.write_register(Register::new(2).unwrap(), 0x9000);
+
+        assert_eq!(
+            core.next_fetch_ahead_before_retire()
+                .map(|decision| decision.pc()),
+            Some(Address::new(0x8008)),
+            "{label}: request the missing matching consumer",
+        );
+        assert!(
+            core.state
+                .lock()
+                .expect("riscv core lock")
+                .memory_result_window_authorizations
+                .is_empty(),
+            "{label}: an incomplete consumer must not publish Head authority",
+        );
+
+        core.core
+            .state
+            .lock()
+            .expect("cpu core lock")
+            .events
+            .push(CpuFetchEvent::issued(consumer_fetch.clone()));
+        assert_eq!(core.next_fetch_ahead_before_retire(), None, "{label}");
+        assert!(
+            core.state
+                .lock()
+                .expect("riscv core lock")
+                .memory_result_window_authorizations
+                .is_empty(),
+            "{label}: a pending consumer fetch must not publish Head authority",
+        );
+        assert!(
+            !core
+                .can_retire_completed_fetch_while_fetch_pending()
+                .unwrap(),
+            "{label}: the fixed-FU head waits for the pending result consumer",
+        );
+
+        core.core
+            .state
+            .lock()
+            .expect("cpu core lock")
+            .events
+            .push(CpuFetchEvent::completed(
+                consumer_fetch,
+                consumer.to_le_bytes().to_vec(),
+            ));
+
+        assert_eq!(core.next_fetch_ahead_before_retire(), None, "{label}");
+        assert_eq!(
+            core.state
+                .lock()
+                .expect("riscv core lock")
+                .memory_result_window_authorizations
+                .get(&request(1))
+                .map(|authorization| authorization.role()),
+            Some(O3MemoryResultWindowRole::Head),
+            "{label}: the matching AdmitStop consumer closes the authorized window",
+        );
+    }
+}
+
+#[test]
+fn fixed_fu_fp_load_depth_two_does_not_publish_unobserved_consumer_head() {
+    let divide = r_type(0x01, 8, 7, 0b100, 6, 0x33);
+    for (label, load_funct3, multiply_funct7) in
+        [("flw", 0b010, 0b0001000), ("fld", 0b011, 0b0001001)]
+    {
+        let target = i_type(0, 2, load_funct3, 1, 0x07);
+        let consumer = r_type(multiply_funct7, 2, 1, 0, 4, 0x53);
+        let core = core_with_completed_fetches([
+            (0, 0x8000, divide.to_le_bytes().to_vec()),
+            (1, 0x8004, target.to_le_bytes().to_vec()),
+            (2, 0x8008, consumer.to_le_bytes().to_vec()),
+        ]);
+        core.set_detailed_live_retire_gate_enabled(true);
+        core.set_o3_window_depths(2, 2);
+        core.write_register(Register::new(2).unwrap(), 0x9000);
+
+        assert_eq!(core.next_fetch_ahead_before_retire(), None, "{label}");
+        assert!(
+            core.state
+                .lock()
+                .expect("riscv core lock")
+                .memory_result_window_authorizations
+                .is_empty(),
+            "{label}: a matching consumer outside depth two must not prove Head authority",
+        );
+    }
+}
+
+#[test]
+fn fixed_fu_fp_load_rejected_younger_does_not_publish_unproven_head() {
+    let divide = r_type(0x01, 8, 7, 0b100, 6, 0x33);
+    for (label, load_funct3) in [("flw", 0b010), ("fld", 0b011)] {
+        let target = i_type(0, 2, load_funct3, 1, 0x07);
+        let rejected_load = i_type(0, 3, load_funct3, 6, 0x07);
+        let core = core_with_completed_fetches([
+            (0, 0x8000, divide.to_le_bytes().to_vec()),
+            (1, 0x8004, target.to_le_bytes().to_vec()),
+            (2, 0x8008, rejected_load.to_le_bytes().to_vec()),
+        ]);
+        core.set_detailed_live_retire_gate_enabled(true);
+        core.set_o3_window_depths(4, 8);
+        core.write_register(Register::new(2).unwrap(), 0x9000);
+        core.write_register(Register::new(3).unwrap(), 0x9040);
+
+        assert_eq!(core.next_fetch_ahead_before_retire(), None, "{label}");
+        assert!(
+            core.state
+                .lock()
+                .expect("riscv core lock")
+                .memory_result_window_authorizations
+                .is_empty(),
+            "{label}: a rejected nonconsumer must not prove Head authority",
+        );
+    }
+}
+
+#[test]
+fn fixed_fu_destination_dependency_does_not_prove_fp_load_consumer() {
+    let divide = r_type(0x01, 8, 7, 0b100, 6, 0x33);
+    let fixed_consumer = i_type(1, 6, 0, 9, 0x13);
+    for (label, load_funct3) in [("flw", 0b010), ("fld", 0b011)] {
+        let target = i_type(0, 2, load_funct3, 1, 0x07);
+        let core = core_with_completed_fetches([
+            (0, 0x8000, divide.to_le_bytes().to_vec()),
+            (1, 0x8004, target.to_le_bytes().to_vec()),
+            (2, 0x8008, fixed_consumer.to_le_bytes().to_vec()),
+        ]);
+        core.set_detailed_live_retire_gate_enabled(true);
+        core.set_o3_window_depths(4, 8);
+        core.write_register(Register::new(2).unwrap(), 0x9000);
+
+        assert_eq!(core.next_fetch_ahead_before_retire(), None, "{label}");
+        assert!(
+            core.state
+                .lock()
+                .expect("riscv core lock")
+                .memory_result_window_authorizations
+                .is_empty(),
+            "{label}: AdmitStop on fixed x6 is not the target f1 consumer",
+        );
+    }
+}
+
+#[test]
+fn older_fixed_fu_discovers_immediate_fixed_fp_load_pair() {
+    let older_divide = r_type(0x01, 8, 7, 0b100, 6, 0x33);
+    let final_divide = r_type(0x01, 10, 6, 0b100, 7, 0x33);
+    let intervening = i_type(1, 0, 0, 11, 0x13);
+    for (label, load_funct3, multiply_funct7) in
+        [("flw", 0b010, 0b0001000), ("fld", 0b011, 0b0001001)]
+    {
+        let target = i_type(0, 2, load_funct3, 1, 0x07);
+        let consumer = r_type(multiply_funct7, 2, 1, 0, 4, 0x53);
+        let trailing_load = i_type(0, 3, load_funct3, 6, 0x07);
+        let missing_target = core_with_completed_fetches([
+            (0, 0x8000, older_divide.to_le_bytes().to_vec()),
+            (1, 0x8004, final_divide.to_le_bytes().to_vec()),
+        ]);
+        missing_target.set_detailed_live_retire_gate_enabled(true);
+        missing_target.set_o3_window_depths(4, 8);
+
+        assert_eq!(
+            missing_target
+                .next_fetch_ahead_before_retire()
+                .map(|decision| decision.pc()),
+            Some(Address::new(0x8008)),
+            "{label}: discover the missing target behind the admitted final fixed row",
+        );
+        assert!(
+            missing_target
+                .state
+                .lock()
+                .expect("riscv core lock")
+                .memory_result_window_authorizations
+                .is_empty(),
+            "{label}: a missing target cannot publish Head authority",
+        );
+
+        let core = core_with_completed_fetches([
+            (0, 0x8000, older_divide.to_le_bytes().to_vec()),
+            (1, 0x8004, final_divide.to_le_bytes().to_vec()),
+            (2, 0x8008, target.to_le_bytes().to_vec()),
+            (3, 0x800c, consumer.to_le_bytes().to_vec()),
+            (4, 0x8010, trailing_load.to_le_bytes().to_vec()),
+        ]);
+        core.set_detailed_live_retire_gate_enabled(true);
+        core.set_o3_window_depths(4, 8);
+        core.write_register(Register::new(2).unwrap(), 0x9000);
+        core.write_register(Register::new(3).unwrap(), 0x9040);
+
+        assert_eq!(core.next_fetch_ahead_before_retire(), None, "{label}");
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(
+            state
+                .memory_result_window_authorizations
+                .get(&request(2))
+                .map(|authorization| authorization.role()),
+            Some(O3MemoryResultWindowRole::Head),
+            "{label}: discover the immediate fixed/load pair behind the older fixed row",
+        );
+        assert_eq!(
+            state.memory_result_window_authorizations.len(),
+            1,
+            "{label}: stop after the matching FP consumer",
+        );
+        drop(state);
+
+        let rejected = core_with_completed_fetches([
+            (0, 0x8000, older_divide.to_le_bytes().to_vec()),
+            (1, 0x8004, final_divide.to_le_bytes().to_vec()),
+            (2, 0x8008, intervening.to_le_bytes().to_vec()),
+            (3, 0x800c, target.to_le_bytes().to_vec()),
+            (4, 0x8010, consumer.to_le_bytes().to_vec()),
+        ]);
+        rejected.set_detailed_live_retire_gate_enabled(true);
+        rejected.set_o3_window_depths(4, 8);
+        rejected.write_register(Register::new(2).unwrap(), 0x9000);
+
+        assert_eq!(rejected.next_fetch_ahead_before_retire(), None, "{label}");
+        assert!(
+            rejected
+                .state
+                .lock()
+                .expect("riscv core lock")
+                .memory_result_window_authorizations
+                .is_empty(),
+            "{label}: an intervening row must not expose the nested fixed/load pair",
+        );
+    }
+}
+
+#[test]
+fn fixed_fu_result_handoff_rejects_an_intervening_row() {
+    let divide = r_type(0x01, 8, 7, 0b100, 6, 0x33);
+    let intervening = i_type(1, 0, 0, 9, 0x13);
+    for (label, load_funct3, multiply_funct7) in
+        [("flw", 0b010, 0b0001000), ("fld", 0b011, 0b0001001)]
+    {
+        let target = i_type(0, 2, load_funct3, 1, 0x07);
+        let consumer = r_type(multiply_funct7, 2, 1, 0, 4, 0x53);
+        let core = core_with_completed_fetches([
+            (0, 0x8000, divide.to_le_bytes().to_vec()),
+            (1, 0x8004, intervening.to_le_bytes().to_vec()),
+            (2, 0x8008, target.to_le_bytes().to_vec()),
+            (3, 0x800c, consumer.to_le_bytes().to_vec()),
+        ]);
+        core.set_detailed_live_retire_gate_enabled(true);
+        core.set_o3_window_depths(4, 8);
+        core.write_register(Register::new(2).unwrap(), 0x9000);
+
+        assert_eq!(core.next_fetch_ahead_before_retire(), None, "{label}");
+        assert!(
+            core.state
+                .lock()
+                .expect("riscv core lock")
+                .memory_result_window_authorizations
+                .is_empty(),
+            "{label} must not hand off across an intervening row",
+        );
+    }
+}
+
+#[test]
 fn fetch_ahead_fp_load_dependency_stops_at_the_same_row_as_runtime() {
     for (label, width, load_funct3, multiply_funct7) in [
         ("flw", MemoryWidth::Word, 0b010, 0b0001000),
