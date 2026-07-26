@@ -145,7 +145,7 @@ fn live_retire_replay_stops_before_return_without_recorded_ras_lineage() {
 }
 
 #[test]
-fn live_retire_replay_marks_rejected_fp_dependency_for_normal_execution() {
+fn live_retire_replay_admits_fp_dependency_without_force_normal_execution() {
     let current = request(7, 10);
     let first_pc = Address::new(0x8004);
     let events = vec![
@@ -175,13 +175,13 @@ fn live_retire_replay_marks_rejected_fp_dependency_for_normal_execution() {
             .iter()
             .map(RiscvCompletedFetchInstruction::pc)
             .collect::<Vec<_>>(),
-        [first_pc],
+        [first_pc, Address::new(0x8008)],
     );
-    assert_eq!(force_normal_execute, Some((request(7, 12), 1)));
+    assert_eq!(force_normal_execute, None);
 }
 
 #[test]
-fn fu_head_replay_marks_rejected_fp_dependency_for_normal_execution() {
+fn fu_head_replay_stages_fp_dependency_without_force_normal_execution() {
     let current = request(7, 10);
     let events = vec![
         completed_fetch_with_data(
@@ -219,10 +219,7 @@ fn fu_head_replay_marks_rejected_fp_dependency_for_normal_execution() {
     )
     .unwrap();
 
-    assert_eq!(
-        state.o3_force_normal_execute_fetches,
-        [request(7, 12)].into_iter().collect(),
-    );
+    assert!(state.o3_force_normal_execute_fetches.is_empty());
     assert_eq!(
         state
             .o3_runtime
@@ -231,6 +228,10 @@ fn fu_head_replay_marks_rejected_fp_dependency_for_normal_execution() {
             .iter()
             .map(|entry| entry.pc())
             .collect::<Vec<_>>(),
-        [Address::new(0x8000), Address::new(0x8004)],
+        [
+            Address::new(0x8000),
+            Address::new(0x8004),
+            Address::new(0x8008),
+        ],
     );
 }

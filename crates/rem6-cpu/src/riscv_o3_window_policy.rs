@@ -215,12 +215,14 @@ impl RiscvScalarIntegerLiveWindow {
             return None;
         }
         let operands = o3_live_compute_operands(instruction)?;
-        (operands.class() != O3LiveComputeClass::ScalarInteger
-            && operands.sources().iter().any(|source| {
-                source.register_class() != O3RegisterClass::Integer
+        operands
+            .sources()
+            .iter()
+            .any(|source| {
+                source.register_class() == O3RegisterClass::Vector
                     && self.live_destinations.contains(source)
-            }))
-        .then_some(operands)
+            })
+            .then_some(operands)
     }
 
     pub(crate) fn classify_younger(
@@ -635,23 +637,19 @@ mod tests {
     }
 
     #[test]
-    fn scalar_rooted_window_rejects_live_fp_dependency_and_vector_boundaries() {
+    fn scalar_rooted_window_admits_live_fp_dependency_and_rejects_vector_destination() {
         let mut window = RiscvScalarIntegerLiveWindow::from_fu_head(div_x3()).unwrap();
         assert_eq!(
             window.classify_younger(float_add_s(4, 1, 2)),
-            RiscvScalarIntegerYoungerDecision::AdmitContinue
+            RiscvScalarIntegerYoungerDecision::AdmitContinue,
         );
         assert_eq!(
             window.classify_younger(float_mul_s(5, 4, 3)),
-            RiscvScalarIntegerYoungerDecision::Reject
+            RiscvScalarIntegerYoungerDecision::AdmitContinue,
         );
         assert_eq!(
             window.classify_younger(vector_mul_vv(4, 1, 2)),
-            RiscvScalarIntegerYoungerDecision::Reject
-        );
-        assert_eq!(
-            window.classify_younger(vector_pop_count(11, 3, RiscvVectorMaskMode::Masked)),
-            RiscvScalarIntegerYoungerDecision::Reject
+            RiscvScalarIntegerYoungerDecision::Reject,
         );
     }
 
