@@ -1,6 +1,6 @@
-use rem6_isa_riscv::{
-    Register, RegisterWrite, RiscvDecodedInstruction, RiscvExecutionRecord, RiscvInstruction,
-};
+#[cfg(test)]
+use rem6_isa_riscv::RegisterWrite;
+use rem6_isa_riscv::{Register, RiscvDecodedInstruction, RiscvExecutionRecord, RiscvInstruction};
 use rem6_memory::{Address, MemoryRequestId};
 
 use super::super::o3_runtime_control_window::execution_writes_rename_destination;
@@ -247,6 +247,7 @@ impl O3LiveSpeculativeIssueCandidate {
         &self.forwarded_values
     }
 
+    #[cfg(test)]
     pub(crate) fn forwarded_register_writes(&self) -> Vec<RegisterWrite> {
         self.forwarded_values
             .iter()
