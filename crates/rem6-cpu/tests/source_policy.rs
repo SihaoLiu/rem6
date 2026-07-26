@@ -621,11 +621,15 @@ fn focused_split_test_child_contract(
         && include_macro_lines(child).is_empty()
         && rust_module_declaration_lines(child).is_empty()
         && path_attribute_lines(child).is_empty()
-        && non_test_attribute_lines(child).is_empty()
-        && rust_test_attribute_count(child) == tests.len()
+        && focused_test_definitions_are_unconditional(child, tests)
+}
+
+fn focused_test_definitions_are_unconditional(source: &str, tests: &[&str]) -> bool {
+    non_test_attribute_lines(source).is_empty()
+        && rust_test_attribute_count(source) == tests.len()
         && tests
             .iter()
-            .all(|test| top_level_rust_test_function_definition_count(child, test) == 1)
+            .all(|test| top_level_rust_test_function_definition_count(source, test) == 1)
 }
 
 #[test]
@@ -12596,6 +12600,23 @@ fn active_test_path_owned_module_declaration_count(
     path: &str,
     module: &str,
 ) -> usize {
+    active_path_owned_module_declaration_count(source, path, module, true)
+}
+
+fn active_top_level_path_owned_module_declaration_count(
+    source: &str,
+    path: &str,
+    module: &str,
+) -> usize {
+    active_path_owned_module_declaration_count(source, path, module, false)
+}
+
+fn active_path_owned_module_declaration_count(
+    source: &str,
+    path: &str,
+    module: &str,
+    allow_test_scopes: bool,
+) -> usize {
     let code = rust_code_without_comments_and_literals(source);
     let code_chars = code.chars().collect::<Vec<_>>();
     let source_chars = source.chars().collect::<Vec<_>>();
@@ -12608,7 +12629,8 @@ fn active_test_path_owned_module_declaration_count(
         .iter()
         .filter(|(inner, hash, open, close, _)| {
             let active_location = depths.get(*hash) == Some(&0)
-                || (depths.get(*hash) == Some(&1)
+                || (allow_test_scopes
+                    && depths.get(*hash) == Some(&1)
                     && active_test_scopes
                         .iter()
                         .any(|(body_open, body_close)| body_open < hash && hash < body_close));
@@ -12640,10 +12662,28 @@ fn active_unconditional_path_owned_module_declaration_count(
     module: &str,
 ) -> usize {
     if inner_attribute_lines(parent).is_empty() && inner_attribute_lines(child).is_empty() {
-        active_test_path_owned_module_declaration_count(parent, path, module)
+        active_top_level_path_owned_module_declaration_count(parent, path, module)
     } else {
         0
     }
+}
+
+fn active_cfg_test_path_owned_module_declaration_count(
+    parent: &str,
+    child: &str,
+    path: &str,
+    module: &str,
+) -> usize {
+    if !inner_attribute_lines(parent).is_empty() || !inner_attribute_lines(child).is_empty() {
+        return 0;
+    }
+    let attachment = format!("#[cfg(test)]\n#[path = \"{path}\"]\nmod {module};");
+    if parent.matches(&attachment).count() != 1 {
+        return 0;
+    }
+    let ungated = format!("#[path = \"{path}\"]\nmod {module};");
+    let parent = parent.replacen(&attachment, &ungated, 1);
+    active_unconditional_path_owned_module_declaration_count(&parent, child, path, module)
 }
 
 fn exact_path_attribute_count(source: &str, path: &str) -> usize {

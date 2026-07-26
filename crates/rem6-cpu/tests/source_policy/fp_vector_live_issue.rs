@@ -13,6 +13,23 @@ const MAX_O3_RUNTIME_ISSUE_TYPED_FORWARDING_TEST_LINES: usize = 360;
 const MAX_O3_RUNTIME_ISSUE_TYPED_FORWARDING_SERVICE_TEST_LINES: usize = 360;
 const MAX_O3_RUNTIME_ISSUE_TYPED_FORWARDING_TRANSACTION_TEST_LINES: usize = 240;
 const MAX_O3_RUNTIME_TYPED_FORWARDING_CONTROL_TEST_LINES: usize = 220;
+const QUEUE_TYPED_FORWARDING_TESTS: &[&str] = &[
+    "typed_live_forwarding_discovers_fp_source_producer",
+    "typed_live_forwarding_materializes_exact_fp_write_and_ready_tick",
+    "typed_live_forwarding_rejects_wrong_class_write",
+    "typed_live_forwarding_selects_nearest_fp_waw_producer",
+    "typed_live_forwarding_keeps_two_fp_fanin_producers",
+    "typed_live_forwarding_filters_integer_x0_without_filtering_fp_f0",
+];
+const SERVICE_TYPED_FORWARDING_TESTS: &[&str] = &[
+    "typed_live_forwarding_waits_for_fp_writeback_and_computes_nine",
+    "typed_live_forwarding_uses_dynamic_frm_without_mutating_canonical_status",
+    "typed_live_forwarding_vector_result_feeds_integer",
+];
+const TRANSACTION_TYPED_FORWARDING_TESTS: &[&str] =
+    &["typed_live_forwarding_transaction_failure_rolls_back_exact_state"];
+const CONTROL_TYPED_FORWARDING_TESTS: &[&str] =
+    &["typed_live_forwarding_recursive_invalidation_is_sequence_owned"];
 const MIGRATION_LEDGER: &str = "../../docs/architecture/gem5-to-rem6-migration.md";
 
 #[test]
@@ -510,6 +527,25 @@ fn fp_vector_live_issue_locks_task8_typed_forwarding_policy() {
     );
     assert!(line_count(&control_tests_path) <= MAX_O3_RUNTIME_TYPED_FORWARDING_CONTROL_TEST_LINES);
 
+    for (path, tests) in [
+        (&queue_tests_path, QUEUE_TYPED_FORWARDING_TESTS),
+        (&service_tests_path, SERVICE_TYPED_FORWARDING_TESTS),
+        (&transaction_tests_path, TRANSACTION_TYPED_FORWARDING_TESTS),
+        (&control_tests_path, CONTROL_TYPED_FORWARDING_TESTS),
+    ] {
+        let source = fs::read_to_string(path).unwrap();
+        assert!(focused_test_definitions_are_unconditional(&source, tests));
+        for attribute in [
+            "#[cfg(any())]\n",
+            "#[cfg_attr(all(), cfg(any()))]\n",
+            "#[ignore]\n",
+        ] {
+            let gated = source.replacen("#[test]", &format!("#[test]\n{attribute}"), 1);
+            assert_ne!(gated, source, "test attribute mutation must apply");
+            assert!(!focused_test_definitions_are_unconditional(&gated, tests));
+        }
+    }
+
     for (owner, relative, module) in [
         (
             "src/o3_runtime_issue/queue.rs",
@@ -578,6 +614,78 @@ fn fp_vector_live_issue_locks_task8_typed_forwarding_policy() {
                 0,
             );
         }
+        let nested = source.replacen(
+            &attachment,
+            &format!("#[cfg(test)]\nmod tests {{\n{attachment}\n}}"),
+            1,
+        );
+        assert_ne!(nested, source, "nested attachment mutation must apply");
+        assert_eq!(
+            active_unconditional_path_owned_module_declaration_count(
+                &nested, &child, relative, module,
+            ),
+            0,
+        );
+    }
+
+    let runtime_source = fs::read_to_string(root.join("src/o3_runtime.rs")).unwrap();
+    for (relative, module) in [
+        ("o3_runtime_issue_tests.rs", "o3_runtime_issue_tests"),
+        (
+            "o3_runtime_control_window_tests.rs",
+            "o3_runtime_control_window_tests",
+        ),
+    ] {
+        let child = fs::read_to_string(root.join("src").join(relative)).unwrap();
+        assert_eq!(
+            active_cfg_test_path_owned_module_declaration_count(
+                &runtime_source,
+                &child,
+                relative,
+                module,
+            ),
+            1,
+        );
+        for conditional in ["cfg(any())", "cfg_attr(all(), cfg(any()))"] {
+            let gated = runtime_source.replacen(
+                &format!("#[cfg(test)]\n#[path = \"{relative}\"]"),
+                &format!("#[{conditional}]\n#[path = \"{relative}\"]"),
+                1,
+            );
+            assert_ne!(gated, runtime_source, "cfg-test edge mutation must apply");
+            assert_eq!(
+                active_cfg_test_path_owned_module_declaration_count(
+                    &gated, &child, relative, module,
+                ),
+                0,
+            );
+        }
+        let inline =
+            runtime_source.replacen(&format!("mod {module};"), &format!("mod {module} {{}}"), 1);
+        assert_ne!(inline, runtime_source, "inline edge mutation must apply");
+        assert_eq!(
+            active_cfg_test_path_owned_module_declaration_count(&inline, &child, relative, module,),
+            0,
+        );
+    }
+
+    let issue_tests_source =
+        fs::read_to_string(root.join("src/o3_runtime_issue_tests.rs")).unwrap();
+    for (relative, module) in [
+        ("o3_runtime_issue/queue_tests.rs", "queue"),
+        ("o3_runtime_issue/service_tests.rs", "service"),
+        ("o3_runtime_issue/transaction_tests.rs", "transaction"),
+    ] {
+        let child = fs::read_to_string(root.join("src").join(relative)).unwrap();
+        assert_eq!(
+            active_unconditional_path_owned_module_declaration_count(
+                &issue_tests_source,
+                &child,
+                relative,
+                module,
+            ),
+            1,
+        );
     }
 
     let forwarding = fs::read_to_string(&forwarding_path).unwrap();

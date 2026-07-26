@@ -69,37 +69,32 @@ const MOVED_GENERAL_IQ_ANCHORS: [&str; 6] = [
 #[test]
 fn o3_persistent_iq_focused_owners_exist_and_stay_bounded() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let cli = crate_dir.join(PERSISTENT_IQ_CLI);
     let policy = crate_dir.join("tests/source_policy/o3_persistent_iq_ownership.rs");
-
-    assert!(cli.is_file(), "missing {}", cli.display());
-    assert!(crate_dir.join(MIXED_COMPUTE_FIXTURE).is_file());
-    assert!(crate_dir.join(MIXED_COMPUTE_TESTS).is_file());
-    assert!(crate_dir.join(MIXED_COMPUTE_BOUNDARIES).is_file());
-    assert!(crate_dir.join(TYPED_FORWARDING_FIXTURE).is_file());
-    assert!(crate_dir.join(TYPED_FORWARDING_TESTS).is_file());
-    assert!(crate_dir.join(TYPED_FORWARDING_BOUNDARIES).is_file());
-    assert!(line_count(&cli) <= MAX_PERSISTENT_IQ_CLI_LINES);
-    assert!(
-        line_count(&crate_dir.join(MIXED_COMPUTE_FIXTURE))
-            <= MAX_PERSISTENT_IQ_MIXED_COMPUTE_FIXTURE_LINES
-    );
-    assert!(
-        line_count(&crate_dir.join(MIXED_COMPUTE_TESTS))
-            <= MAX_PERSISTENT_IQ_MIXED_COMPUTE_TEST_LINES
-    );
-    assert!(
-        line_count(&crate_dir.join(MIXED_COMPUTE_BOUNDARIES))
-            <= MAX_PERSISTENT_IQ_MIXED_COMPUTE_BOUNDARY_LINES
-    );
-    assert!(
-        line_count(&crate_dir.join(TYPED_FORWARDING_FIXTURE)) <= MAX_TYPED_FORWARDING_FIXTURE_LINES
-    );
-    assert!(line_count(&crate_dir.join(TYPED_FORWARDING_TESTS)) <= MAX_TYPED_FORWARDING_TEST_LINES);
-    assert!(
-        line_count(&crate_dir.join(TYPED_FORWARDING_BOUNDARIES))
-            <= MAX_TYPED_FORWARDING_BOUNDARY_LINES
-    );
+    for (relative, maximum) in [
+        (PERSISTENT_IQ_CLI, MAX_PERSISTENT_IQ_CLI_LINES),
+        (
+            MIXED_COMPUTE_FIXTURE,
+            MAX_PERSISTENT_IQ_MIXED_COMPUTE_FIXTURE_LINES,
+        ),
+        (
+            MIXED_COMPUTE_TESTS,
+            MAX_PERSISTENT_IQ_MIXED_COMPUTE_TEST_LINES,
+        ),
+        (
+            MIXED_COMPUTE_BOUNDARIES,
+            MAX_PERSISTENT_IQ_MIXED_COMPUTE_BOUNDARY_LINES,
+        ),
+        (TYPED_FORWARDING_FIXTURE, MAX_TYPED_FORWARDING_FIXTURE_LINES),
+        (TYPED_FORWARDING_TESTS, MAX_TYPED_FORWARDING_TEST_LINES),
+        (
+            TYPED_FORWARDING_BOUNDARIES,
+            MAX_TYPED_FORWARDING_BOUNDARY_LINES,
+        ),
+    ] {
+        let path = crate_dir.join(relative);
+        assert!(path.is_file(), "missing {}", path.display());
+        assert!(line_count(&path) <= maximum);
+    }
     assert!(line_count(&policy) <= MAX_PERSISTENT_IQ_POLICY_LINES);
     for retired in RETIRED_GENERAL_IQ_OWNERS {
         assert!(
@@ -108,7 +103,27 @@ fn o3_persistent_iq_focused_owners_exist_and_stay_bounded() {
         );
     }
 
-    let source = fs::read_to_string(&cli).unwrap();
+    for (owner, module, path) in [
+        (
+            "tests/cli_run.rs",
+            "m5_host_actions",
+            "cli_run/m5_host_actions.rs",
+        ),
+        (
+            "tests/cli_run/m5_host_actions.rs",
+            "o3",
+            "m5_host_actions/o3.rs",
+        ),
+        (
+            "tests/cli_run/m5_host_actions/o3.rs",
+            "persistent_iq",
+            "o3/persistent_iq.rs",
+        ),
+    ] {
+        let source = fs::read_to_string(crate_dir.join(owner)).unwrap();
+        assert_eq!(module_path_attachment_count(&source, module, path), 1);
+    }
+    let source = fs::read_to_string(crate_dir.join(PERSISTENT_IQ_CLI)).unwrap();
     for (module, path) in [
         (
             "mixed_compute_fixture",
@@ -168,7 +183,7 @@ fn o3_persistent_iq_focused_owners_exist_and_stay_bounded() {
     for anchor in &TYPED_FORWARDING_ANCHORS[3..] {
         assert_eq!(function_definition_count(&typed_boundary_tests, anchor), 1);
     }
-    let definitions = parsed_function_definition_names(PERSISTENT_IQ_CLI, &source);
+    let definitions = parsed_executable_test_definition_names(PERSISTENT_IQ_CLI, &source);
     let global_definitions = rust_source_files(&crate_dir.join(O3_CLI_DIR))
         .into_iter()
         .flat_map(|path| {
@@ -177,20 +192,19 @@ fn o3_persistent_iq_focused_owners_exist_and_stay_bounded() {
             parsed_function_definition_names(&relative, &source)
         })
         .collect::<Vec<_>>();
+    let registered = |anchor| {
+        CORE_TEST_ANCHORS
+            .lines()
+            .filter(|line| *line == anchor)
+            .count()
+    };
     for anchor in PERSISTENT_IQ_ANCHORS {
         assert_eq!(
             function_definition_count(&definitions, anchor),
             1,
             "{PERSISTENT_IQ_CLI} must define exactly one `fn {anchor}`"
         );
-        assert_eq!(
-            CORE_TEST_ANCHORS
-                .lines()
-                .filter(|registered| *registered == anchor)
-                .count(),
-            1,
-            "core_test_anchors.txt must register `{anchor}` exactly once"
-        );
+        assert_eq!(registered(anchor), 1);
         assert_eq!(
             function_definition_count(&global_definitions, anchor),
             1,
@@ -198,14 +212,7 @@ fn o3_persistent_iq_focused_owners_exist_and_stay_bounded() {
         );
     }
     for anchor in MIXED_COMPUTE_ANCHORS {
-        assert_eq!(
-            CORE_TEST_ANCHORS
-                .lines()
-                .filter(|registered| *registered == anchor)
-                .count(),
-            1,
-            "core_test_anchors.txt must register `{anchor}` exactly once"
-        );
+        assert_eq!(registered(anchor), 1);
         assert_eq!(
             function_definition_count(&global_definitions, anchor),
             1,
@@ -213,14 +220,7 @@ fn o3_persistent_iq_focused_owners_exist_and_stay_bounded() {
         );
     }
     for anchor in TYPED_FORWARDING_ANCHORS {
-        assert_eq!(
-            CORE_TEST_ANCHORS
-                .lines()
-                .filter(|registered| *registered == anchor)
-                .count(),
-            1,
-            "core_test_anchors.txt must register `{anchor}` exactly once"
-        );
+        assert_eq!(registered(anchor), 1);
         assert_eq!(
             function_definition_count(&global_definitions, anchor),
             1,
@@ -238,14 +238,7 @@ fn o3_persistent_iq_focused_owners_exist_and_stay_bounded() {
             0,
             "{O3_CLI_DIR} must not retain moved general-IQ anchor `{anchor}`",
         );
-        assert_eq!(
-            CORE_TEST_ANCHORS
-                .lines()
-                .filter(|registered| *registered == anchor)
-                .count(),
-            0,
-            "core_test_anchors.txt must not retain moved general-IQ anchor `{anchor}`",
-        );
+        assert_eq!(registered(anchor), 0);
     }
 }
 
@@ -371,10 +364,15 @@ fn o3_persistent_iq_policy_descends_and_rejects_conditional_evidence() {
             let module = format!("{marker}[{conditional}]\n#[path = \"typed.rs\"]\nmod typed;");
             let test = format!("{marker}[{conditional}]\n#[test]\nfn typed_anchor() {{}}");
             assert_eq!(count(&module), 0);
-            assert!(parsed_enabled_test_definition_names("synthetic.rs", &test).is_empty());
+            assert!(parsed_executable_test_definition_names("synthetic.rs", &test).is_empty());
         }
     }
     assert_eq!(count("#[path = \"typed.rs\"] mod typed {}"), 0);
+    assert!(parsed_executable_test_definition_names(
+        "synthetic.rs",
+        "#[test]\n#[ignore]\nfn typed_anchor() {}",
+    )
+    .is_empty());
 }
 
 fn parsed_function_definition_names(relative: &str, source: &str) -> Vec<String> {
@@ -465,6 +463,10 @@ fn parsed_enabled_test_definition_names(relative: &str, source: &str) -> Vec<Str
                 .then(|| function.sig.ident.to_string())
         })
         .collect()
+}
+
+fn parsed_executable_test_definition_names(relative: &str, source: &str) -> Vec<String> {
+    parsed_enabled_test_definition_names(relative, source)
 }
 
 fn has_conditional_compilation_attribute(attributes: &[syn::Attribute]) -> bool {
