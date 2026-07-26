@@ -264,6 +264,8 @@ fn fp_vector_live_issue_locks_task2_window_and_staging_ownership() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let window_source = fs::read_to_string(root.join("src/riscv_o3_window_policy.rs")).unwrap();
     let staging_source = fs::read_to_string(root.join("src/o3_runtime_live_window.rs")).unwrap();
+    let memory_window_source =
+        fs::read_to_string(root.join("src/o3_runtime_memory_window.rs")).unwrap();
     let live_window_tests_path = root.join("src/o3_runtime_live_window_tests.rs");
     let mixed_compute_tests_path = root.join("src/o3_runtime_live_window_tests/mixed_compute.rs");
     let live_window_tests = fs::read_to_string(&live_window_tests_path).unwrap();
@@ -285,6 +287,9 @@ fn fp_vector_live_issue_locks_task2_window_and_staging_ownership() {
     assert!(window_source.contains("O3ArchitecturalRegister::integer"));
     assert!(compact_window.contains("source.register_class()==O3RegisterClass::Vector"));
     assert!(compact_window.contains("self.live_destinations.contains(source)"));
+
+    assert!(memory_window_source.contains("destinations: Vec<O3ArchitecturalRegister>"));
+    assert!(!memory_window_source.contains("integer_destinations"));
 
     assert!(staging_source.contains("o3_live_compute_operands(instruction)"));
     assert!(compact_staging.contains(".map(|operands|operands.destination())"));

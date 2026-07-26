@@ -20,6 +20,21 @@ pub(crate) struct O3ArchitecturalRegister {
 }
 
 impl O3ArchitecturalRegister {
+    pub(crate) fn from_class_index(
+        register_class: O3RegisterClass,
+        architectural: u32,
+    ) -> Option<Self> {
+        let index = u8::try_from(architectural).ok()?;
+        match register_class {
+            O3RegisterClass::Integer => Register::new(index).ok().map(Self::integer),
+            O3RegisterClass::FloatingPoint => {
+                FloatRegister::new(index).ok().map(Self::floating_point)
+            }
+            O3RegisterClass::Vector => VectorRegister::new(index).ok().map(Self::vector),
+            O3RegisterClass::ConditionCode | O3RegisterClass::Misc => None,
+        }
+    }
+
     pub(crate) const fn integer(register: Register) -> Self {
         Self {
             register_class: O3RegisterClass::Integer,

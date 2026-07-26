@@ -23,6 +23,8 @@ use crate::{
     CpuTranslationFrontend, RiscvCore, RiscvLoadReservation,
 };
 
+#[path = "o3_runtime_memory_result_tests/fp_load_forwarding.rs"]
+mod fp_load_forwarding;
 #[path = "o3_runtime_memory_result_tests/pair_window.rs"]
 mod pair_window;
 #[path = "o3_runtime_memory_result_tests/replan.rs"]

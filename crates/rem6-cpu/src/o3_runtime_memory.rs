@@ -101,6 +101,13 @@ pub(crate) fn o3_memory_result_destination(
     }
 }
 
+pub(super) fn o3_memory_result_architectural_destination(
+    access: &MemoryAccessKind,
+) -> Option<O3ArchitecturalRegister> {
+    let (register_class, architectural) = o3_memory_result_destination(access)?;
+    O3ArchitecturalRegister::from_class_index(register_class, architectural)
+}
+
 pub(crate) fn o3_memory_result_window_destination(
     access: &MemoryAccessKind,
 ) -> Option<Option<Register>> {

@@ -317,3 +317,6 @@ fn resolved_dependent_or_overlapping_second_result_does_not_open_a_pair() {
         );
     }
 }
+
+#[path = "data_access_result_pair/typed_destinations.rs"]
+mod typed_destinations;

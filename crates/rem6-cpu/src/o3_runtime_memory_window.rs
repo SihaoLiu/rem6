@@ -1,8 +1,9 @@
 use rem6_memory::AddressRange;
 
 use super::o3_runtime_memory::{
-    o3_memory_result_pure_read_destination, o3_memory_result_range,
-    o3_memory_result_window_destination, o3_memory_result_younger_buffered_effect_destination,
+    o3_memory_result_architectural_destination, o3_memory_result_pure_read_destination,
+    o3_memory_result_range, o3_memory_result_window_destination,
+    o3_memory_result_younger_buffered_effect_destination,
     o3_memory_result_younger_read_destination,
 };
 use super::o3_store_forwarding::{
@@ -33,7 +34,7 @@ pub(crate) struct O3ScalarMemoryWindowState {
 
 struct O3MemoryResultWindowState {
     rows: usize,
-    integer_destinations: Vec<Register>,
+    destinations: Vec<O3ArchitecturalRegister>,
 }
 
 impl O3ScalarMemoryWindowState {
@@ -178,8 +179,8 @@ impl O3RuntimeState {
             }
             O3DataAccessWindowPolicy::MemoryResultWindow => {
                 let window = self.memory_result_window_state()?;
-                RiscvScalarIntegerLiveWindow::from_memory_results(
-                    window.integer_destinations,
+                RiscvScalarIntegerLiveWindow::from_memory_result_destinations(
+                    window.destinations,
                     window.rows,
                     self.scalar_memory_window_limit,
                 )
@@ -195,22 +196,23 @@ impl O3RuntimeState {
         {
             return None;
         }
-        let mut integer_destinations = Vec::new();
+        let mut destinations = Vec::new();
         for live in &self.live_data_accesses {
             if live.outcome != O3LiveDataAccessOutcome::Resident
                 || live.younger_window_policy != O3DataAccessWindowPolicy::MemoryResultWindow
             {
                 return None;
             }
-            if let Some(destination) =
-                o3_memory_result_window_destination(live.execution.execution().memory_access()?)?
-            {
-                integer_destinations.push(destination);
+            let access = live.execution.execution().memory_access()?;
+            o3_memory_result_window_destination(access)?;
+            let destination = o3_memory_result_architectural_destination(access)?;
+            if !destinations.contains(&destination) {
+                destinations.push(destination);
             }
         }
         Some(O3MemoryResultWindowState {
             rows: self.live_data_accesses.len(),
-            integer_destinations,
+            destinations,
         })
     }
 

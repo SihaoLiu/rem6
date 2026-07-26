@@ -5,6 +5,7 @@ use rem6_isa_riscv::{
 use rem6_memory::{Address, AddressRange, MemoryRequestId};
 
 use crate::{
+    o3_runtime::O3ArchitecturalRegister,
     riscv_live_retire_window::RiscvCompletedFetchInstruction,
     riscv_o3_window_policy::{RiscvScalarIntegerLiveWindow, RiscvScalarIntegerYoungerDecision},
     CpuFetchEvent, RiscvCoreState,
@@ -32,9 +33,18 @@ pub(super) fn data_access_result_fetch_ahead_shape(
     state: &RiscvCoreState,
     instruction: RiscvInstruction,
 ) -> Option<Option<Register>> {
-    let integer_destination = match instruction {
-        RiscvInstruction::Load { rd, .. } if !rd.is_zero() => Some(rd),
-        RiscvInstruction::FloatLoad { .. } => None,
+    Some(data_access_result_fetch_ahead_destination(state, instruction)?.integer_register())
+}
+
+fn data_access_result_fetch_ahead_destination(
+    state: &RiscvCoreState,
+    instruction: RiscvInstruction,
+) -> Option<O3ArchitecturalRegister> {
+    match instruction {
+        RiscvInstruction::Load { rd, .. } if !rd.is_zero() => {
+            Some(O3ArchitecturalRegister::integer(rd))
+        }
+        RiscvInstruction::FloatLoad { rd, .. } => Some(O3ArchitecturalRegister::floating_point(rd)),
         RiscvInstruction::VectorMemory(RiscvVectorMemoryInstruction::LoadUnitStride {
             vd,
             width: MemoryWidth::Doubleword,
@@ -61,7 +71,7 @@ pub(super) fn data_access_result_fetch_ahead_shape(
                     return None;
                 }
             }
-            None
+            Some(O3ArchitecturalRegister::vector(vd))
         }
         RiscvInstruction::VectorMemory(RiscvVectorMemoryInstruction::LoadUnitStrideFaultOnly {
             ..
@@ -69,11 +79,10 @@ pub(super) fn data_access_result_fetch_ahead_shape(
         RiscvInstruction::LoadReserved { rd, .. } | RiscvInstruction::AtomicMemory { rd, .. }
             if !rd.is_zero() =>
         {
-            Some(rd)
+            Some(O3ArchitecturalRegister::integer(rd))
         }
         _ => return None,
-    };
-    Some(integer_destination)
+    }
 }
 pub(in crate::riscv_fetch_ahead) fn data_access_result_fetch_ahead_authorization(
     state: &RiscvCoreState,
@@ -173,10 +182,18 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
     let mut authorizer =
         DependentResultAddressAuthorizer::from_head(state, current, head_authorization, row_limit);
     let mut authorizations = vec![(current.first_consumed_request(), head_authorization)];
-    let mut window = RiscvScalarIntegerLiveWindow::from_memory_result(
-        head_authorization.integer_destination(),
+    let Some(head_destination) =
+        data_access_result_fetch_ahead_destination(state, current.decoded().instruction())
+    else {
+        return DetailedFetchAheadCandidate::Blocked;
+    };
+    let mut result_destinations = vec![head_destination];
+    let mut window = RiscvScalarIntegerLiveWindow::from_memory_result_destinations(
+        result_destinations.iter().copied(),
+        1,
         row_limit,
-    );
+    )
+    .expect("one authorized result fits the configured live window");
     let (mut result_rows, mut dependent_rows, mut scalar_started) = (1, 0, false);
     let mut previous_request = current.last_consumed_request();
     let mut next_pc = completed_instruction_sequential_pc(current);
@@ -221,8 +238,14 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
                     authorizations.push((younger.first_consumed_request(), authorization));
                     dependent_rows = authorizer.dependent_rows();
                     result_rows = 1 + dependent_rows;
-                    window = RiscvScalarIntegerLiveWindow::from_memory_results(
-                        authorizer.result_destinations().iter().copied(),
+                    result_destinations = authorizer
+                        .result_destinations()
+                        .iter()
+                        .copied()
+                        .map(O3ArchitecturalRegister::integer)
+                        .collect();
+                    window = RiscvScalarIntegerLiveWindow::from_memory_result_destinations(
+                        result_destinations.iter().copied(),
                         result_rows,
                         row_limit,
                     )
@@ -262,10 +285,17 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
                     }
                     authorizations.push((younger.first_consumed_request(), younger_authorization));
                     result_rows = 2;
-                    window = RiscvScalarIntegerLiveWindow::from_memory_results(
-                        authorizations
-                            .iter()
-                            .filter_map(|(_, authorization)| authorization.integer_destination()),
+                    let Some(younger_destination) = data_access_result_fetch_ahead_destination(
+                        state,
+                        younger.decoded().instruction(),
+                    ) else {
+                        return DetailedFetchAheadCandidate::Blocked;
+                    };
+                    if !result_destinations.contains(&younger_destination) {
+                        result_destinations.push(younger_destination);
+                    }
+                    window = RiscvScalarIntegerLiveWindow::from_memory_result_destinations(
+                        result_destinations.iter().copied(),
                         result_rows,
                         row_limit,
                     )

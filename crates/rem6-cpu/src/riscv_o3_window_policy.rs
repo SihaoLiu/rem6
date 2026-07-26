@@ -142,16 +142,22 @@ impl RiscvScalarIntegerLiveWindow {
         })
     }
 
-    pub(crate) fn from_memory_result(
-        integer_destination: Option<Register>,
-        row_limit: usize,
-    ) -> Self {
-        Self::from_memory_results(integer_destination, 1, row_limit)
-            .expect("one memory result fits a nonzero row limit")
-    }
-
     pub(crate) fn from_memory_results(
         integer_destinations: impl IntoIterator<Item = Register>,
+        occupied_rows: usize,
+        row_limit: usize,
+    ) -> Option<Self> {
+        Self::from_memory_result_destinations(
+            integer_destinations
+                .into_iter()
+                .map(O3ArchitecturalRegister::integer),
+            occupied_rows,
+            row_limit,
+        )
+    }
+
+    pub(crate) fn from_memory_result_destinations(
+        destinations: impl IntoIterator<Item = O3ArchitecturalRegister>,
         occupied_rows: usize,
         row_limit: usize,
     ) -> Option<Self> {
@@ -160,11 +166,10 @@ impl RiscvScalarIntegerLiveWindow {
             return None;
         }
         let mut unresolved_destinations = Vec::new();
-        for destination in integer_destinations
-            .into_iter()
-            .filter(|destination| !destination.is_zero())
-        {
-            let destination = O3ArchitecturalRegister::integer(destination);
+        for destination in destinations.into_iter().filter(|destination| {
+            destination.register_class() != O3RegisterClass::Integer
+                || destination.architectural() != 0
+        }) {
             if !unresolved_destinations.contains(&destination) {
                 unresolved_destinations.push(destination);
             }
@@ -387,10 +392,10 @@ impl RiscvScalarIntegerLiveWindow {
         if self.unforwardable_live_operands(instruction).is_some() {
             return RiscvScalarIntegerYoungerDecision::Reject;
         }
-        let depends_on_unresolved_destination = operands.sources().iter().any(|source| {
-            source.register_class() == O3RegisterClass::Integer
-                && self.unresolved_destinations.contains(source)
-        });
+        let depends_on_unresolved_destination = operands
+            .sources()
+            .iter()
+            .any(|source| self.unresolved_destinations.contains(source));
         self.rows += 1;
         if depends_on_unresolved_destination {
             self.record_live_destination(destination);
@@ -684,7 +689,8 @@ mod tests {
         )
         .unwrap();
         let result =
-            RiscvScalarIntegerLiveWindow::from_memory_result(Some(Register::new(4).unwrap()), 8);
+            RiscvScalarIntegerLiveWindow::from_memory_results([Register::new(4).unwrap()], 1, 8)
+                .unwrap();
         let fu = RiscvScalarIntegerLiveWindow::from_fu_head(mul(4, 1, 2)).unwrap();
         assert_eq!(translated.remaining_rows(), 3);
         assert_eq!(result.remaining_rows(), 3);
@@ -1593,3 +1599,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "riscv_o3_window_policy_tests/fp_load_destinations.rs"]
+mod fp_load_destinations;

@@ -1,4 +1,5 @@
 use super::*;
+use rem6_isa_riscv::{FloatRegister, RiscvFloatRoundingMode};
 use rem6_memory::AddressRange;
 
 fn push_pending_younger_fetch(core: &RiscvCore) {
@@ -340,6 +341,85 @@ fn cached_translated_float_result_opens_a_bounded_scalar_suffix() {
             .map(|decision| decision.pc()),
         Some(Address::new(0x8008))
     );
+}
+
+#[test]
+fn fetch_ahead_fp_load_dependency_stops_at_the_same_row_as_runtime() {
+    for (label, width, load_funct3, multiply_funct7) in [
+        ("flw", MemoryWidth::Word, 0b010, 0b0001000),
+        ("fld", MemoryWidth::Doubleword, 0b011, 0b0001001),
+    ] {
+        let float_load = i_type(0, 2, load_funct3, 3, 0x07);
+        let matching = r_type(multiply_funct7, 3, 4, 0, 5, 0x53);
+        let nonmatching = r_type(multiply_funct7, 6, 4, 0, 5, 0x53);
+        let independent = i_type(7, 0, 0, 6, 0x13);
+        assert_eq!(
+            RiscvInstruction::decode(float_load).unwrap(),
+            RiscvInstruction::FloatLoad {
+                rd: FloatRegister::new(3).unwrap(),
+                rs1: Register::new(2).unwrap(),
+                offset: Immediate::new(0),
+                width,
+            },
+            "{label} load fixture"
+        );
+        for (raw, source) in [(matching, 3), (nonmatching, 6)] {
+            let expected = match width {
+                MemoryWidth::Word => RiscvInstruction::FloatMulS {
+                    rd: FloatRegister::new(5).unwrap(),
+                    rs1: FloatRegister::new(source).unwrap(),
+                    rs2: FloatRegister::new(4).unwrap(),
+                    rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
+                },
+                MemoryWidth::Doubleword => RiscvInstruction::FloatMulD {
+                    rd: FloatRegister::new(5).unwrap(),
+                    rs1: FloatRegister::new(source).unwrap(),
+                    rs2: FloatRegister::new(4).unwrap(),
+                    rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
+                },
+                _ => unreachable!(),
+            };
+            assert_eq!(RiscvInstruction::decode(raw).unwrap(), expected, "{label}");
+        }
+
+        let dependency_core = |consumer: u32| {
+            let core = core_with_completed_fetches([
+                (0, 0x8000, float_load.to_le_bytes().to_vec()),
+                (1, 0x8004, consumer.to_le_bytes().to_vec()),
+                (2, 0x8008, independent.to_le_bytes().to_vec()),
+            ]);
+            core.set_detailed_live_retire_gate_enabled(true);
+            core.set_o3_scalar_memory_depth(4);
+            core.write_register(Register::new(2).unwrap(), 0x9000);
+            core
+        };
+
+        let matching_core = dependency_core(matching);
+
+        assert_eq!(
+            matching_core
+                .next_fetch_ahead_before_retire()
+                .map(|decision| decision.pc()),
+            None,
+            "{label} must stop after admitting the matching FP consumer"
+        );
+        let state = matching_core.state.lock().expect("riscv core lock");
+        assert!(state
+            .memory_result_window_authorizations
+            .contains_key(&request(0)));
+        assert!(!state
+            .memory_result_window_authorizations
+            .contains_key(&request(2)));
+        drop(state);
+
+        assert_eq!(
+            dependency_core(nonmatching)
+                .next_fetch_ahead_before_retire()
+                .map(|decision| decision.pc()),
+            Some(Address::new(0x800c)),
+            "{label} nonmatching FP source must continue through the same stream"
+        );
+    }
 }
 
 #[test]
