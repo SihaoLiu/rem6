@@ -354,7 +354,7 @@ fn o3_persistent_iq_ledger_claims_match_executable_evidence() {
 }
 
 #[test]
-fn o3_persistent_iq_function_inventory_descends_into_inline_modules() {
+fn o3_persistent_iq_policy_descends_and_rejects_conditional_evidence() {
     let source = r#"
         fn anchor() {}
         mod nested {
@@ -370,6 +370,17 @@ fn o3_persistent_iq_function_inventory_descends_into_inline_modules() {
 
     assert_eq!(function_definition_count(&definitions, "anchor"), 2);
     assert_eq!(function_definition_count(&definitions, "descendant"), 1);
+    for conditional in ["cfg(any())", "cfg_attr(all(), cfg(any()))"] {
+        let module = format!("#[{conditional}]\n#[path = \"typed.rs\"]\nmod typed;");
+        let test = format!("#[test]\n#[{conditional}]\nfn typed_anchor() {{}}");
+        assert_eq!(
+            (
+                module_path_attachment_count(&module, "typed", "typed.rs"),
+                parsed_enabled_test_definition_names("synthetic.rs", &test),
+            ),
+            (0, Vec::<String>::new()),
+        );
+    }
 }
 
 fn parsed_function_definition_names(relative: &str, source: &str) -> Vec<String> {
@@ -412,6 +423,7 @@ fn module_path_attachment_count(source: &str, module_name: &str, expected_path: 
                 return false;
             };
             module.ident == module_name
+                && !has_conditional_compilation_attribute(&module.attrs)
                 && module.attrs.iter().any(|attribute| {
                     let syn::Meta::NameValue(value) = &attribute.meta else {
                         return false;
@@ -446,9 +458,16 @@ fn parsed_enabled_test_definition_names(relative: &str, source: &str) -> Vec<Str
                 .attrs
                 .iter()
                 .any(|attribute| attribute.path().is_ident("ignore"));
-            (is_test && !is_ignored).then(|| function.sig.ident.to_string())
+            (is_test && !is_ignored && !has_conditional_compilation_attribute(&function.attrs))
+                .then(|| function.sig.ident.to_string())
         })
         .collect()
+}
+
+fn has_conditional_compilation_attribute(attributes: &[syn::Attribute]) -> bool {
+    attributes
+        .iter()
+        .any(|attribute| attribute.path().is_ident("cfg") || attribute.path().is_ident("cfg_attr"))
 }
 
 fn component_section<'a>(ledger: &'a str, heading: &str) -> &'a str {

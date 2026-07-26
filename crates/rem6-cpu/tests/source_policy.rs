@@ -18,14 +18,21 @@ mod vector_architectural_checkpoint;
 fn fp_vector_live_issue_policy_has_one_focused_child_attachment() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let source = fs::read_to_string(root.join("tests/source_policy.rs")).unwrap();
-    assert_eq!(
-        path_owned_module_declaration_count(
-            &source,
+    let attachment =
+        "#[path = \"source_policy/fp_vector_live_issue.rs\"]\nmod fp_vector_live_issue;";
+    let attachment_count = |candidate: &str| {
+        active_test_path_owned_module_declaration_count(
+            candidate,
             "source_policy/fp_vector_live_issue.rs",
             "fp_vector_live_issue",
-        ),
-        1
-    );
+        )
+    };
+    assert_eq!(attachment_count(&source), 1);
+    for conditional in ["#[cfg(any())]\n", "#[cfg_attr(all(), cfg(any()))]\n"] {
+        let gated = source.replacen(attachment, &format!("{conditional}{attachment}"), 1);
+        assert_ne!(gated, source, "conditional attachment mutation must apply");
+        assert_eq!(attachment_count(&gated), 0);
+    }
 }
 
 const MAX_FACADE_LINES: usize = 1300;
