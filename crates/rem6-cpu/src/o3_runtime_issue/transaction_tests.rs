@@ -8,6 +8,8 @@ use super::*;
 
 #[path = "transaction_tests/replan.rs"]
 mod replan;
+#[path = "transaction_tests/typed_forwarding.rs"]
+mod typed_forwarding;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct TouchedIssueState {

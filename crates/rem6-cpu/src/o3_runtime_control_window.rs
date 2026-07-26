@@ -453,6 +453,15 @@ impl O3RuntimeState {
             .set_rename_map_entries(self.snapshot_with_live_rename_map().rename_map.len());
     }
 
+    #[cfg(test)]
+    pub(crate) fn invalidate_live_speculative_execution_chain_for_test(
+        &mut self,
+        sequence: u64,
+        now: u64,
+    ) {
+        self.invalidate_live_speculative_execution_chain_at(sequence, now);
+    }
+
     fn invalidate_live_speculative_execution_chain_at(&mut self, sequence: u64, now: u64) {
         let mut invalidated = BTreeSet::from([sequence]);
         let mut pending = vec![sequence];

@@ -24,6 +24,8 @@ mod producer_forwarded_return;
 mod producer_forwarded_scalar_return;
 #[path = "o3_runtime_control_window_tests/producer_forwarded_target.rs"]
 mod producer_forwarded_target;
+#[path = "o3_runtime_control_window_tests/typed_forwarding.rs"]
+mod typed_forwarding;
 
 #[test]
 fn predicted_control_branch_candidate_has_no_destination_and_keeps_issue_tick() {
