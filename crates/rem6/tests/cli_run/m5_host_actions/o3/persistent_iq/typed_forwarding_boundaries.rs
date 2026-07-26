@@ -149,6 +149,18 @@ fn rem6_run_o3_typed_live_forwarding_drained_restore() {
         ],
     );
     super::typed_forwarding::assert_typed_architecture(&restored);
+    assert_eq!(
+        restored
+            .pointer("/host_actions/checkpoint_count")
+            .and_then(Value::as_u64),
+        Some(1),
+    );
+    assert_eq!(
+        restored
+            .pointer("/host_actions/checkpoint_restored_count")
+            .and_then(Value::as_u64),
+        Some(1),
+    );
     let checkpoint = restored.pointer("/host_actions/checkpoints/0").unwrap();
     let runtime = checkpoint_component_chunks(checkpoint_component(checkpoint, "cpu0"))
         .iter()
