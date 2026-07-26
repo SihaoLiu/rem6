@@ -822,7 +822,7 @@ handling explicitly integer-only. Keep
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu typed_live_forwarding --lib -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu live_issue_queue_preserves_integer_producer_forwarding --lib -- --nocapture
-TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu pending_data_address --lib -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu pending_address --lib -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu completed_live_data --lib -- --nocapture
 TMPDIR=$PWD/target/tmp cargo fmt --all
 git diff --check
@@ -2086,7 +2086,7 @@ exactly 1,200 lines.
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --test source_policy fp_vector_live_issue -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy o3_persistent_iq -- --nocapture
-TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy core_test_anchor_manifest -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy gem5_migration_doc_tracks_core_test_anchors -- --nocapture
 wc -l docs/architecture/gem5-to-rem6-migration.md
 TMPDIR=$PWD/target/tmp cargo fmt --all
 git diff --check
