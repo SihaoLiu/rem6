@@ -537,12 +537,37 @@ fn fp_vector_live_issue_locks_task8_typed_forwarding_policy() {
             "typed_forwarding",
         ),
     ] {
-        let source = fs::read_to_string(root.join(owner)).unwrap();
+        let owner_path = root.join(owner);
+        let source = fs::read_to_string(&owner_path).unwrap();
+        let child = fs::read_to_string(owner_path.parent().unwrap().join(relative)).unwrap();
         assert_eq!(
-            path_owned_module_declaration_count(&source, relative, module),
+            active_unconditional_path_owned_module_declaration_count(
+                &source, &child, relative, module,
+            ),
             1,
             "{owner} must attach {relative} exactly once",
         );
+        let attachment = format!("#[path = \"{relative}\"]\nmod {module};");
+        for conditional in ["#[cfg(any())]\n", "#[cfg_attr(all(), cfg(any()))]\n"] {
+            let gated = source.replacen(&attachment, &format!("{conditional}{attachment}"), 1);
+            assert_ne!(gated, source, "conditional attachment mutation must apply");
+            assert_eq!(
+                active_unconditional_path_owned_module_declaration_count(
+                    &gated, &child, relative, module,
+                ),
+                0,
+            );
+            let gated_child = format!("{}{child}", conditional.replacen("#[", "#![", 1));
+            assert_eq!(
+                active_unconditional_path_owned_module_declaration_count(
+                    &source,
+                    &gated_child,
+                    relative,
+                    module,
+                ),
+                0,
+            );
+        }
     }
 
     let forwarding = fs::read_to_string(&forwarding_path).unwrap();

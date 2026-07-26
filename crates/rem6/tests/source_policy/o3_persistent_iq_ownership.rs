@@ -1,7 +1,7 @@
 use super::*;
 
 const MAX_PERSISTENT_IQ_CLI_LINES: usize = 900;
-const MAX_PERSISTENT_IQ_POLICY_LINES: usize = 600;
+const MAX_PERSISTENT_IQ_POLICY_LINES: usize = 500;
 const MAX_PERSISTENT_IQ_MIXED_COMPUTE_FIXTURE_LINES: usize = 320;
 const MAX_PERSISTENT_IQ_MIXED_COMPUTE_TEST_LINES: usize = 320;
 const MAX_PERSISTENT_IQ_MIXED_COMPUTE_BOUNDARY_LINES: usize = 320;
@@ -358,28 +358,23 @@ fn o3_persistent_iq_policy_descends_and_rejects_conditional_evidence() {
     let source = r#"
         fn anchor() {}
         mod nested {
-            #[test]
-            fn anchor() {}
-            mod deeper {
-                fn descendant() {}
-            }
+            #[test] fn anchor() {}
+            mod deeper { fn descendant() {} }
         }
     "#;
-
     let definitions = parsed_function_definition_names("synthetic.rs", source);
-
     assert_eq!(function_definition_count(&definitions, "anchor"), 2);
     assert_eq!(function_definition_count(&definitions, "descendant"), 1);
     for conditional in ["cfg(any())", "cfg_attr(all(), cfg(any()))"] {
-        let module = format!("#[{conditional}]\n#[path = \"typed.rs\"]\nmod typed;");
-        let test = format!("#[test]\n#[{conditional}]\nfn typed_anchor() {{}}");
-        assert_eq!(
-            (
+        for marker in ["#", "#!"] {
+            let module = format!("{marker}[{conditional}]\n#[path = \"typed.rs\"]\nmod typed;");
+            let test = format!("{marker}[{conditional}]\n#[test]\nfn typed_anchor() {{}}");
+            assert_eq!(
                 module_path_attachment_count(&module, "typed", "typed.rs"),
-                parsed_enabled_test_definition_names("synthetic.rs", &test),
-            ),
-            (0, Vec::<String>::new()),
-        );
+                0
+            );
+            assert!(parsed_enabled_test_definition_names("synthetic.rs", &test).is_empty());
+        }
     }
 }
 
@@ -414,8 +409,12 @@ fn function_definition_count(definitions: &[String], anchor: &str) -> usize {
 }
 
 fn module_path_attachment_count(source: &str, module_name: &str, expected_path: &str) -> usize {
-    syn::parse_file(source)
-        .unwrap_or_else(|error| panic!("failed to parse Rust source for module policy: {error}"))
+    let syntax = syn::parse_file(source)
+        .unwrap_or_else(|error| panic!("failed to parse Rust source for module policy: {error}"));
+    if has_conditional_compilation_attribute(&syntax.attrs) {
+        return 0;
+    }
+    syntax
         .items
         .iter()
         .filter(|item| {
@@ -442,8 +441,12 @@ fn module_path_attachment_count(source: &str, module_name: &str, expected_path: 
 }
 
 fn parsed_enabled_test_definition_names(relative: &str, source: &str) -> Vec<String> {
-    syn::parse_file(source)
-        .unwrap_or_else(|error| panic!("failed to parse {relative}: {error}"))
+    let syntax = syn::parse_file(source)
+        .unwrap_or_else(|error| panic!("failed to parse {relative}: {error}"));
+    if has_conditional_compilation_attribute(&syntax.attrs) {
+        return Vec::new();
+    }
+    syntax
         .items
         .into_iter()
         .filter_map(|item| {
