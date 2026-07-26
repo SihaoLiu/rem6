@@ -6,7 +6,7 @@ use rem6_isa_riscv::{
     RiscvEnvironmentConfigCsr, RiscvMachineTrapCsr, RiscvPrivilegeMode, RiscvStatusWord,
     RiscvSv39AccessContext, RiscvSv39PageFault, RiscvSv39PageTableLevel, RiscvSv39Pte,
     RiscvSv39VirtualAddress, RiscvSv39WalkAdvance as IsaSv39WalkAdvance, RiscvSv39WalkState,
-    RiscvSystemEvent, RiscvVectorFixedPointState,
+    RiscvSystemEvent, RiscvVectorArchitecturalState, RiscvVectorFixedPointState,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, SchedulerContext, Tick,
@@ -676,6 +676,11 @@ impl RiscvCore {
             .vector_fixed_point()
     }
 
+    pub fn vector_architectural_state(&self) -> RiscvVectorArchitecturalState {
+        let state = self.state.lock().expect("riscv core lock");
+        state.hart.vector_architectural_state()
+    }
+
     pub fn supervisor_trap_vector(&self) -> u64 {
         self.state
             .lock()
@@ -897,6 +902,12 @@ impl RiscvCore {
     pub fn set_vector_fixed_point(&self, state: RiscvVectorFixedPointState) {
         let mut core_state = self.state.lock().expect("riscv core lock");
         core_state.hart.set_vector_fixed_point(state);
+        riscv_checker::sync_checker_hart(&mut core_state);
+    }
+
+    pub fn restore_vector_architectural_state(&self, state: &RiscvVectorArchitecturalState) {
+        let mut core_state = self.state.lock().expect("riscv core lock");
+        core_state.hart.restore_vector_architectural_state(state);
         riscv_checker::sync_checker_hart(&mut core_state);
     }
 

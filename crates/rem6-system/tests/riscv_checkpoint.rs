@@ -38,6 +38,8 @@ use rem6_transport::{
 
 #[path = "riscv_checkpoint/o3_compatibility.rs"]
 mod o3_compatibility;
+#[path = "riscv_checkpoint/vector_state.rs"]
+mod vector_state;
 
 fn endpoint(name: &str) -> TransportEndpointId {
     TransportEndpointId::new(name).unwrap()

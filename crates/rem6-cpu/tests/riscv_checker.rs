@@ -4,7 +4,11 @@ use rem6_boot::BootImage;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCore, RiscvCoreDriveAction,
 };
-use rem6_isa_riscv::{Register, RiscvHartState, RiscvPrivilegeMode};
+use rem6_isa_riscv::{
+    Register, RiscvHartState, RiscvPrivilegeMode, RiscvVectorArchitecturalState, RiscvVectorConfig,
+    RiscvVectorFixedPointState, RiscvVectorFixedRoundingMode, VectorRegister,
+    RISCV_VECTOR_REGISTER_BYTES, RISCV_VECTOR_REGISTER_COUNT,
+};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
@@ -23,6 +27,14 @@ fn layout() -> CacheLineLayout {
 
 fn reg(index: u8) -> Register {
     Register::new(index).unwrap()
+}
+
+fn vreg(index: u8) -> VectorRegister {
+    VectorRegister::new(index).unwrap()
+}
+
+fn patterned_vector_register(seed: u8) -> [u8; RISCV_VECTOR_REGISTER_BYTES] {
+    std::array::from_fn(|index| seed.wrapping_add((index as u8).wrapping_mul(0x13)))
 }
 
 fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -392,4 +404,27 @@ fn riscv_checker_cpu_follows_supervisor_environment_call_completion() {
     assert!(snapshot.mismatches().is_empty());
     assert_eq!(snapshot.hart().pc(), 0x8008);
     assert_eq!(snapshot.hart().read(reg(2)), 5);
+}
+
+#[test]
+fn riscv_checker_cpu_follows_vector_architectural_state_restore() {
+    let (_, _, fetch_route) = routes();
+    let core = core(fetch_route, 0x8000);
+    let mut fixed_point = RiscvVectorFixedPointState::new(RiscvVectorFixedRoundingMode::RoundToOdd);
+    fixed_point.write_vxsat_bit(true);
+    let mut registers = [[0_u8; RISCV_VECTOR_REGISTER_BYTES]; RISCV_VECTOR_REGISTER_COUNT];
+    registers[vreg(0).index() as usize] = patterned_vector_register(0x10);
+    registers[vreg(17).index() as usize] = patterned_vector_register(0x70);
+    registers[vreg(31).index() as usize] = patterned_vector_register(0xd0);
+    let expected =
+        RiscvVectorArchitecturalState::new(RiscvVectorConfig::new(3, 0xd0), fixed_point, registers);
+
+    core.enable_checker_cpu();
+    core.restore_vector_architectural_state(&expected);
+
+    assert_eq!(core.vector_architectural_state(), expected);
+    let checker = core
+        .checker_cpu_snapshot()
+        .expect("checker should remain enabled after vector restore");
+    assert_eq!(checker.hart().vector_architectural_state(), expected);
 }

@@ -17,7 +17,7 @@ use rem6_cpu::{
 };
 use rem6_isa_riscv::{
     FloatRegister, Register, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot,
-    RiscvPmpSnapshotEntry, RiscvPmpTable,
+    RiscvPmpSnapshotEntry, RiscvPmpTable, RiscvVectorArchitecturalState,
 };
 use rem6_kernel::{PendingEventSnapshot, SchedulerInstanceId};
 use rem6_memory::Address;
@@ -25,8 +25,13 @@ use rem6_memory::Address;
 use crate::ExecutionModeTarget;
 
 mod o3_payload;
+mod vector_state;
 
 use o3_payload::{decode_o3_runtime_authority, O3_PENDING_STATE_CHUNK, O3_RUNTIME_STATE_CHUNK};
+use vector_state::{
+    decode_vector_architectural_state, encode_vector_architectural_state, RISCV_STATE_VERSION,
+    RISCV_STATE_VERSION_CHUNK, VECTOR_STATE_CHUNK,
+};
 
 pub const RISCV_O3_RUNTIME_STATE_CHUNK: &str = O3_RUNTIME_STATE_CHUNK;
 
@@ -56,6 +61,7 @@ pub struct RiscvCoreCheckpointRecord {
     pc: Address,
     registers: Vec<(Register, u64)>,
     float_registers: Vec<(FloatRegister, u64)>,
+    vector_architectural_state: RiscvVectorArchitecturalState,
     pmp_snapshot: RiscvPmpSnapshot,
     hart_run_state: RiscvHartRunState,
     in_order_pipeline_snapshot: InOrderPipelineSnapshot,
@@ -73,6 +79,7 @@ struct RiscvCoreCheckpointRecordParts {
     pc: Address,
     registers: Vec<(Register, u64)>,
     float_registers: Vec<(FloatRegister, u64)>,
+    vector_architectural_state: RiscvVectorArchitecturalState,
     pmp_snapshot: RiscvPmpSnapshot,
     hart_run_state: RiscvHartRunState,
     in_order_pipeline_snapshot: InOrderPipelineSnapshot,
@@ -120,6 +127,7 @@ impl RiscvCoreCheckpointRecord {
             pc,
             registers,
             float_registers: zero_float_register_values(),
+            vector_architectural_state: RiscvVectorArchitecturalState::default(),
             pmp_snapshot,
             hart_run_state: RiscvHartRunState::Started,
             in_order_pipeline_snapshot: RiscvCore::default_in_order_pipeline_snapshot(),
@@ -144,6 +152,7 @@ impl RiscvCoreCheckpointRecord {
             pc: parts.pc,
             registers: parts.registers,
             float_registers: parts.float_registers,
+            vector_architectural_state: parts.vector_architectural_state,
             pmp_snapshot: parts.pmp_snapshot,
             hart_run_state: parts.hart_run_state,
             in_order_pipeline_snapshot: parts.in_order_pipeline_snapshot,
@@ -171,6 +180,10 @@ impl RiscvCoreCheckpointRecord {
 
     pub fn float_registers(&self) -> &[(FloatRegister, u64)] {
         &self.float_registers
+    }
+
+    pub const fn vector_architectural_state(&self) -> &RiscvVectorArchitecturalState {
+        &self.vector_architectural_state
     }
 
     pub fn pmp_snapshot(&self) -> &RiscvPmpSnapshot {
@@ -293,6 +306,16 @@ impl RiscvCoreCheckpointPort {
         )?;
         registry.write_chunk(
             &self.component,
+            RISCV_STATE_VERSION_CHUNK,
+            vec![RISCV_STATE_VERSION],
+        )?;
+        registry.write_chunk(
+            &self.component,
+            VECTOR_STATE_CHUNK,
+            encode_vector_architectural_state(record.vector_architectural_state()),
+        )?;
+        registry.write_chunk(
+            &self.component,
             HART_RUN_STATE_CHUNK,
             encode_hart_run_state(record.hart_run_state()),
         )?;
@@ -402,6 +425,11 @@ impl RiscvCoreCheckpointPort {
             Some(payload) => decode_float_registers(&self.component, payload)?,
             None => zero_float_register_values(),
         };
+        let vector_architectural_state = decode_vector_architectural_state(
+            &self.component,
+            registry.chunk(&self.component, RISCV_STATE_VERSION_CHUNK),
+            registry.chunk(&self.component, VECTOR_STATE_CHUNK),
+        )?;
         let pmp_snapshot = decode_pmp_snapshot(
             &self.component,
             registry.chunk(&self.component, PMP_CHUNK).ok_or_else(|| {
@@ -519,6 +547,7 @@ impl RiscvCoreCheckpointPort {
                 pc,
                 registers,
                 float_registers,
+                vector_architectural_state,
                 pmp_snapshot,
                 hart_run_state,
                 in_order_pipeline_snapshot,
@@ -631,6 +660,8 @@ impl RiscvCoreCheckpointPort {
                 component: self.component.clone(),
                 error,
             })?;
+        self.core
+            .restore_vector_architectural_state(record.vector_architectural_state());
         Ok(())
     }
 
@@ -640,6 +671,7 @@ impl RiscvCoreCheckpointPort {
             pc: self.core.pc(),
             registers: all_register_values(&self.core),
             float_registers: all_float_register_values(&self.core),
+            vector_architectural_state: self.core.vector_architectural_state(),
             pmp_snapshot: self.core.pmp_snapshot(),
             hart_run_state: self.core.hart_run_state(),
             in_order_pipeline_snapshot: self.core.in_order_pipeline_snapshot(),
@@ -894,6 +926,21 @@ pub enum RiscvCoreCheckpointError {
         expected: usize,
         actual: usize,
     },
+    UnsupportedRiscvStateVersion {
+        component: CheckpointComponentId,
+        version: u8,
+    },
+    UnexpectedVectorStateWithoutVersion {
+        component: CheckpointComponentId,
+    },
+    UnsupportedVectorStateVersion {
+        component: CheckpointComponentId,
+        version: u8,
+    },
+    InvalidVectorStateVcsr {
+        component: CheckpointComponentId,
+        value: u8,
+    },
     InvalidPmpEntryCount {
         component: CheckpointComponentId,
         expected: usize,
@@ -968,6 +1015,26 @@ impl fmt::Display for RiscvCoreCheckpointError {
                 formatter,
                 "RISC-V core checkpoint component {} chunk {name} has {actual} bytes; \
                  expected {expected}",
+                component.as_str()
+            ),
+            Self::UnsupportedRiscvStateVersion { component, version } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has unsupported RISC-V state version {version}",
+                component.as_str()
+            ),
+            Self::UnexpectedVectorStateWithoutVersion { component } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has vector state without a RISC-V state version",
+                component.as_str()
+            ),
+            Self::UnsupportedVectorStateVersion { component, version } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has unsupported vector state version {version}",
+                component.as_str()
+            ),
+            Self::InvalidVectorStateVcsr { component, value } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has invalid vector vcsr value {value}",
                 component.as_str()
             ),
             Self::InvalidPmpEntryCount {

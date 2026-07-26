@@ -11,6 +11,8 @@ mod live_issue_raw_removal;
 mod live_issue_scheduler_contract;
 #[path = "source_policy/task6_issue_migration.rs"]
 mod task6_issue_migration;
+#[path = "source_policy/vector_architectural_checkpoint.rs"]
+mod vector_architectural_checkpoint;
 
 const MAX_FACADE_LINES: usize = 1300;
 const MAX_O3_RUNTIME_DEEP_CLEANUP_TEST_LINES: usize = 350;

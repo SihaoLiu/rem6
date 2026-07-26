@@ -393,6 +393,280 @@ fn riscv_checkpoint_emits_one_o3_authority_and_isolates_legacy_decode() {
 }
 
 #[test]
+fn riscv_checkpoint_owns_one_versioned_vector_state_authority() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let checkpoint_path = crate_dir.join("src/riscv_checkpoint.rs");
+    let vector_state_path = crate_dir.join("src/riscv_checkpoint/vector_state.rs");
+    assert!(
+        vector_state_path.exists(),
+        "RISC-V vector checkpoint compatibility belongs in src/riscv_checkpoint/vector_state.rs"
+    );
+
+    let checkpoint_source = fs::read_to_string(&checkpoint_path).unwrap();
+    let vector_state_source = fs::read_to_string(&vector_state_path).unwrap();
+    let checkpoint = rust_code_without_comments_and_literals(&checkpoint_source);
+    let vector_state = rust_code_without_comments_and_literals(&vector_state_source);
+    let checkpoint_literals = active_rust_string_literals(&checkpoint_source);
+    let vector_state_literals = active_rust_string_literals(&vector_state_source);
+    let record = source_section(
+        &checkpoint,
+        "pub struct RiscvCoreCheckpointRecord {",
+        "struct RiscvCoreCheckpointRecordParts {",
+    );
+    let record_parts = source_section(
+        &checkpoint,
+        "struct RiscvCoreCheckpointRecordParts {",
+        "#[derive(Clone, Copy, Debug, Eq, PartialEq)]",
+    );
+    let write_record = source_section(&checkpoint, "fn write_record(", "fn validate_capture(");
+    let decode_from = source_section(&checkpoint, "fn decode_from(", "fn restore_record(");
+    let restore_record = source_section(&checkpoint, "fn restore_record(", "fn capture_record(");
+    let compact_write = without_whitespace(write_record);
+    let (encode_signature, encode_body) = rust_function_signature_and_body(
+        &vector_state,
+        "pub(super) fn encode_vector_architectural_state",
+    );
+    let (decode_signature, decode_body) = rust_function_signature_and_body(
+        &vector_state,
+        "pub(super) fn decode_vector_architectural_state",
+    );
+
+    assert!(
+        checkpoint.contains("mod vector_state;"),
+        "the root checkpoint module must declare its vector-state codec child"
+    );
+    for (owner, definition) in [
+        ("RiscvCoreCheckpointRecord", record),
+        ("RiscvCoreCheckpointRecordParts", record_parts),
+    ] {
+        assert_eq!(
+            definition.matches("RiscvVectorArchitecturalState").count(),
+            1,
+            "{owner} must carry exactly one complete vector architectural-state field"
+        );
+    }
+
+    for chunk in ["RISCV_STATE_VERSION_CHUNK", "VECTOR_STATE_CHUNK"] {
+        assert_eq!(
+            write_record.matches(chunk).count(),
+            1,
+            "write_record must reference {chunk} exactly once"
+        );
+        assert!(
+            compact_write.contains(&format!("registry.write_chunk(&self.component,{chunk},")),
+            "write_record must write {chunk} directly"
+        );
+    }
+    for literal in ["riscv-state-version", "vector-state"] {
+        assert!(
+            !checkpoint_literals.contains(&literal),
+            "the root checkpoint module must not own vector chunk literal {literal:?}"
+        );
+        assert_eq!(
+            vector_state_literals
+                .iter()
+                .filter(|candidate| **candidate == literal)
+                .count(),
+            1,
+            "the vector-state child must own active chunk literal {literal:?} exactly once"
+        );
+    }
+
+    let riscv_version = vector_state.lines().any(|line| {
+        line.contains("const ")
+            && line.contains("RISCV")
+            && line.contains("VERSION")
+            && line.contains("u8")
+            && line.contains("= 1;")
+    });
+    let payload_version = vector_state.lines().any(|line| {
+        line.contains("const ")
+            && line.contains("VECTOR")
+            && line.contains("VERSION")
+            && line.contains("u8")
+            && line.contains("= 1;")
+    });
+    let exact_payload_bytes = vector_state.lines().any(|line| {
+        line.contains("const ")
+            && line.contains("VECTOR")
+            && line.contains("BYTES")
+            && line.contains("usize")
+            && line.contains("= 526;")
+    });
+    assert!(
+        riscv_version,
+        "the child must own current RISC-V state version 1"
+    );
+    assert!(
+        payload_version,
+        "the child must own vector payload version 1"
+    );
+    assert!(
+        exact_payload_bytes,
+        "the child must name the exact 526-byte vector payload contract"
+    );
+
+    assert_eq!(
+        without_whitespace(encode_signature),
+        "pub(super)fnencode_vector_architectural_state(state:&RiscvVectorArchitecturalState)->Vec<u8>",
+        "the child must expose the exact complete-state encoder signature"
+    );
+    let compact_encode_body = without_whitespace(encode_body);
+    for anchor in ["state.config()", "state.fixed_point()", "state.registers()"] {
+        assert!(
+            compact_encode_body.contains(anchor),
+            "complete-state encoder body is missing `{anchor}`"
+        );
+    }
+    assert_eq!(
+        write_record
+            .matches("encode_vector_architectural_state(")
+            .count(),
+        1,
+        "write_record must call the child encoder exactly once"
+    );
+    let encode_arguments = without_whitespace(rust_call_arguments(
+        write_record,
+        "encode_vector_architectural_state",
+    ));
+    assert_eq!(
+        encode_arguments.trim_end_matches(','),
+        "record.vector_architectural_state()",
+        "write_record must encode the record's complete vector state"
+    );
+
+    assert_eq!(
+        normalized_rust_function_signature(decode_signature),
+        "pub(super)fndecode_vector_architectural_state(component:&CheckpointComponentId,state_version:Option<&[u8]>,vector_state:Option<&[u8]>)->Result<RiscvVectorArchitecturalState,RiscvCoreCheckpointError>",
+        "the child must expose the exact paired vector decoder signature"
+    );
+    let compact_decode_body = without_whitespace(decode_body);
+    assert!(
+        compact_decode_body.contains("match(state_version,vector_state)"),
+        "vector decode must pair the named generation and vector payload options in one match"
+    );
+    assert!(
+        compact_decode_body.contains("Ok(RiscvVectorArchitecturalState::default())"),
+        "paired decode must map legacy chunk absence to architectural defaults"
+    );
+    for error in [
+        "InvalidChunkSize",
+        "UnsupportedRiscvStateVersion",
+        "UnexpectedVectorStateWithoutVersion",
+        "MissingChunk",
+        "UnsupportedVectorStateVersion",
+        "InvalidVectorStateVcsr",
+    ] {
+        let branch = format!("RiscvCoreCheckpointError::{error}{{");
+        assert!(
+            compact_decode_body.contains(&branch),
+            "paired vector decode body is missing `{error}` error branch"
+        );
+    }
+    assert_eq!(
+        decode_from
+            .matches("decode_vector_architectural_state(")
+            .count(),
+        1,
+        "decode_from must call the child decoder exactly once"
+    );
+    let decode_arguments = without_whitespace(rust_call_arguments(
+        decode_from,
+        "decode_vector_architectural_state",
+    ));
+    assert_eq!(
+        decode_arguments.trim_end_matches(','),
+        "&self.component,registry.chunk(&self.component,RISCV_STATE_VERSION_CHUNK),registry.chunk(&self.component,VECTOR_STATE_CHUNK)",
+        "decode_from must pass the component and both chunk lookups directly to the child decoder"
+    );
+
+    let split_chunks = ["vl", "vtype", "vxrm", "vxsat"]
+        .into_iter()
+        .map(String::from)
+        .chain((0..32).map(|index| format!("v{index}")));
+    for split_chunk in split_chunks {
+        assert!(
+            !checkpoint_literals.contains(&split_chunk.as_str())
+                && !vector_state_literals.contains(&split_chunk.as_str()),
+            "vector checkpointing must not introduce active split chunk literal {split_chunk:?}"
+        );
+    }
+
+    assert_eq!(
+        restore_record
+            .matches("restore_vector_architectural_state")
+            .count(),
+        1,
+        "restore_record must apply the complete vector state exactly once"
+    );
+    let vector_restore = restore_record
+        .find("restore_vector_architectural_state")
+        .expect("missing complete vector restore");
+    let o3_restore = restore_record
+        .find("restore_o3_runtime_checkpoint_payload")
+        .expect("missing O3 runtime restore");
+    let last_fallible_restore = restore_record
+        .rfind("?;")
+        .expect("restore_record must retain fallible restore calls");
+    assert!(
+        vector_restore > o3_restore && vector_restore > last_fallible_restore,
+        "vector state must be applied after O3 runtime and every fallible restore call"
+    );
+    assert!(
+        line_count(&checkpoint_path) <= 1800,
+        "src/riscv_checkpoint.rs must remain at or below 1,800 lines"
+    );
+}
+
+#[test]
+fn rust_source_structure_helpers_ignore_comments_and_literals() {
+    let source = r####"
+// fn real_target(fake: usize) { real_call(comment); } fn after_target(
+/* "comment-only" r#"block-only"# { real_call(block); } */
+const NORMAL: &str = "fn real_target(fake: usize) { real_call(string); }";
+const RAW: &str = r##"fn real_target(fake: usize) { real_call(raw); }"##;
+
+fn real_target(value: usize) -> usize {
+    // real_call(comment); }
+    let _normal = "real_call(string)); } fn after_target(";
+    let _raw = r#"real_call(raw)); } fn after_target("#;
+    let _character = '}';
+    real_call(value, (value + 1))
+}
+
+fn after_target() {}
+"####;
+    let code = rust_code_without_comments_and_literals(source);
+    let section = source_section(&code, "fn real_target(", "fn after_target(");
+    let (signature, body) = rust_function_signature_and_body(&code, "fn real_target");
+    let arguments = rust_call_arguments(body, "real_call");
+
+    assert_eq!(
+        without_whitespace(signature),
+        "fnreal_target(value:usize)->usize"
+    );
+    for formatted_signature in [
+        "fn real_target(value: usize) -> usize",
+        "fn real_target(\n    value: usize,\n) -> usize",
+    ] {
+        assert_eq!(
+            normalized_rust_function_signature(formatted_signature),
+            "fnreal_target(value:usize)->usize"
+        );
+    }
+    assert_eq!(without_whitespace(arguments), "value,(value+1)");
+    assert_eq!(section.matches("real_call(").count(), 1);
+    assert!(without_whitespace(body).ends_with("real_call(value,(value+1))"));
+
+    let literals = active_rust_string_literals(source);
+    assert!(literals.contains(&"fn real_target(fake: usize) { real_call(string); }"));
+    assert!(literals.contains(&"fn real_target(fake: usize) { real_call(raw); }"));
+    assert!(!literals.contains(&"comment-only"));
+    assert!(!literals.contains(&"block-only"));
+    assert!(!literals.contains(&"}"));
+}
+
+#[test]
 fn riscv_syscall_and_sbi_tests_share_one_integration_target() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let tests_dir = crate_dir.join("tests");
@@ -587,6 +861,181 @@ fn source_test_count(source: &str) -> usize {
         .count()
 }
 
+struct RustSourceProjection<'a> {
+    code: String,
+    string_literals: Vec<&'a str>,
+}
+
+fn rust_code_without_comments_and_literals(source: &str) -> String {
+    rust_source_projection(source).code
+}
+
+fn active_rust_string_literals(source: &str) -> Vec<&str> {
+    rust_source_projection(source).string_literals
+}
+
+fn rust_source_projection(source: &str) -> RustSourceProjection<'_> {
+    let bytes = source.as_bytes();
+    let mut code = bytes.to_vec();
+    let mut string_literals = Vec::new();
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index..].starts_with(b"//") {
+            let start = index;
+            while index < bytes.len() && bytes[index] != b'\n' {
+                index += 1;
+            }
+            mask_rust_source_range(&mut code, start, index);
+            continue;
+        }
+        if bytes[index..].starts_with(b"/*") {
+            let start = index;
+            let mut depth = 1_usize;
+            index += 2;
+            while index < bytes.len() && depth > 0 {
+                if bytes[index..].starts_with(b"/*") {
+                    depth += 1;
+                    index += 2;
+                } else if bytes[index..].starts_with(b"*/") {
+                    depth -= 1;
+                    index += 2;
+                } else {
+                    index += 1;
+                }
+            }
+            mask_rust_source_range(&mut code, start, index);
+            continue;
+        }
+        if let Some((content_start, content_end, end)) = rust_raw_string_bounds(bytes, index) {
+            string_literals.push(&source[content_start..content_end]);
+            mask_rust_source_range(&mut code, index, end);
+            index = end;
+            continue;
+        }
+        if bytes[index] == b'\'' {
+            if let Some(end) = rust_char_literal_end(source, index) {
+                mask_rust_source_range(&mut code, index, end);
+                index = end;
+                continue;
+            }
+        }
+        if bytes[index] == b'"' {
+            let content_start = index + 1;
+            let mut end = content_start;
+            let mut escaped = false;
+            while end < bytes.len() {
+                let current = bytes[end];
+                if escaped {
+                    escaped = false;
+                } else if current == b'\\' {
+                    escaped = true;
+                } else if current == b'"' {
+                    break;
+                }
+                end += 1;
+            }
+            string_literals.push(&source[content_start..end]);
+            if end < bytes.len() {
+                end += 1;
+            }
+            mask_rust_source_range(&mut code, index, end);
+            index = end;
+            continue;
+        }
+        index += 1;
+    }
+
+    RustSourceProjection {
+        code: String::from_utf8(code).expect("masked Rust source remains UTF-8"),
+        string_literals,
+    }
+}
+
+fn rust_raw_string_bounds(bytes: &[u8], start: usize) -> Option<(usize, usize, usize)> {
+    if bytes.get(start) != Some(&b'r') {
+        return None;
+    }
+    let mut quote = start + 1;
+    while bytes.get(quote) == Some(&b'#') {
+        quote += 1;
+    }
+    if bytes.get(quote) != Some(&b'"') {
+        return None;
+    }
+
+    let hashes = quote - start - 1;
+    let content_start = quote + 1;
+    let mut closing_quote = content_start;
+    while closing_quote < bytes.len() {
+        if bytes[closing_quote] == b'"'
+            && bytes
+                .get(closing_quote + 1..closing_quote + 1 + hashes)
+                .is_some_and(|suffix| suffix.iter().all(|byte| *byte == b'#'))
+        {
+            return Some((content_start, closing_quote, closing_quote + 1 + hashes));
+        }
+        closing_quote += 1;
+    }
+    Some((content_start, bytes.len(), bytes.len()))
+}
+
+fn rust_char_literal_end(source: &str, start: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    if bytes.get(start) != Some(&b'\'') {
+        return None;
+    }
+    let mut index = start + 1;
+    if bytes.get(index) == Some(&b'\\') {
+        index += 1;
+        match *bytes.get(index)? {
+            b'x' => {
+                if !bytes.get(index + 1)?.is_ascii_hexdigit()
+                    || !bytes.get(index + 2)?.is_ascii_hexdigit()
+                {
+                    return None;
+                }
+                index += 3;
+            }
+            b'u' => {
+                index += 1;
+                if bytes.get(index) != Some(&b'{') {
+                    return None;
+                }
+                index += 1;
+                let digits_start = index;
+                while bytes
+                    .get(index)
+                    .is_some_and(|byte| byte.is_ascii_hexdigit() || *byte == b'_')
+                {
+                    index += 1;
+                }
+                if index == digits_start || bytes.get(index) != Some(&b'}') {
+                    return None;
+                }
+                index += 1;
+            }
+            b'\n' | b'\r' => return None,
+            _ => index += 1,
+        }
+    } else {
+        let character = source.get(index..)?.chars().next()?;
+        if matches!(character, '\n' | '\r' | '\'') {
+            return None;
+        }
+        index += character.len_utf8();
+    }
+    (bytes.get(index) == Some(&b'\'')).then_some(index + 1)
+}
+
+fn mask_rust_source_range(code: &mut [u8], start: usize, end: usize) {
+    for byte in &mut code[start..end] {
+        if *byte != b'\n' {
+            *byte = b' ';
+        }
+    }
+}
+
 fn source_section<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
     source
         .split_once(start)
@@ -595,6 +1044,52 @@ fn source_section<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
         .split_once(end)
         .unwrap_or_else(|| panic!("missing source section end: {end}"))
         .0
+}
+
+fn rust_function_signature_and_body<'a>(source: &'a str, declaration: &str) -> (&'a str, &'a str) {
+    let start = source
+        .find(declaration)
+        .unwrap_or_else(|| panic!("missing function declaration `{declaration}`"));
+    let open_offset = source[start..]
+        .find('{')
+        .unwrap_or_else(|| panic!("function declaration `{declaration}` is missing its body"));
+    let open = start + open_offset;
+    (
+        source[start..open].trim(),
+        balanced_delimited_content(source, open, '{', '}', declaration),
+    )
+}
+
+fn rust_call_arguments<'a>(source: &'a str, function: &str) -> &'a str {
+    let call = format!("{function}(");
+    let start = source
+        .find(&call)
+        .unwrap_or_else(|| panic!("missing call `{function}`"));
+    let open = start + call.len() - 1;
+    balanced_delimited_content(source, open, '(', ')', function)
+}
+
+fn balanced_delimited_content<'a>(
+    source: &'a str,
+    open: usize,
+    opening: char,
+    closing: char,
+    owner: &str,
+) -> &'a str {
+    assert_eq!(source[open..].chars().next(), Some(opening));
+    let body_start = open + opening.len_utf8();
+    let mut depth = 1_usize;
+    for (offset, character) in source[body_start..].char_indices() {
+        if character == opening {
+            depth += 1;
+        } else if character == closing {
+            depth -= 1;
+            if depth == 0 {
+                return &source[body_start..body_start + offset];
+            }
+        }
+    }
+    panic!("`{owner}` is missing balanced delimiter `{closing}`");
 }
 
 fn struct_body<'a>(source: &'a str, name: &str) -> &'a str {
@@ -628,6 +1123,10 @@ fn without_whitespace(source: &str) -> String {
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect()
+}
+
+fn normalized_rust_function_signature(signature: &str) -> String {
+    without_whitespace(signature).replace(",)->", ")->")
 }
 
 fn rust_source_files(root: &Path) -> Vec<PathBuf> {
