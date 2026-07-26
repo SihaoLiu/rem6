@@ -12,6 +12,8 @@ use crate::{CpuFetchEvent, CpuFetchRecord, RiscvCpuExecutionEvent};
 
 #[path = "o3_runtime_control_window_tests/coroutine.rs"]
 mod coroutine;
+#[path = "o3_runtime_control_window_tests/fp_load_forwarding.rs"]
+mod fp_load_forwarding;
 #[path = "o3_runtime_control_window_tests/lifecycle.rs"]
 mod lifecycle;
 #[path = "o3_runtime_control_window_tests/lineage.rs"]

@@ -3,6 +3,8 @@ use rem6_isa_riscv::RiscvExecutionRecord;
 use super::super::o3_runtime_issue::queue::{O3LiveIssueQueue, O3LiveIssueQueueCapture};
 use super::*;
 
+#[path = "queue_tests/fp_load_forwarding.rs"]
+mod fp_load_forwarding;
 #[path = "queue_tests/materialization.rs"]
 mod materialization;
 #[path = "queue_tests/mixed_compute.rs"]

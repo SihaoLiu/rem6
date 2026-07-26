@@ -1,4 +1,6 @@
-use rem6_isa_riscv::{Register, RegisterWrite, RiscvExecutionRecord};
+use rem6_isa_riscv::{
+    FloatRegisterWrite, MemoryResponseWritebackTarget, RegisterWrite, RiscvExecutionRecord,
+};
 
 use super::o3_runtime_issue::O3LiveIssueForwardedValue;
 use super::o3_runtime_writeback::O3WritebackReservation;
@@ -255,26 +257,26 @@ impl O3RuntimeState {
                                 )
                             })
                     })
-                    .or_else(|| {
-                        self.completed_live_data_access_source(sequence, register)
-                            .map(|(write, tick)| (O3LiveIssueForwardedValue::Integer(write), tick))
-                    })
+                    .or_else(|| self.completed_live_data_access_source(sequence, source))
             }
             O3RegisterClass::FloatingPoint => {
                 let register = source.float_register()?;
-                let issued = speculative?;
-                issued
-                    .execution
-                    .float_register_writes()
-                    .iter()
-                    .find(|write| write.register() == register)
-                    .cloned()
-                    .map(|write| {
-                        (
-                            O3LiveIssueForwardedValue::FloatingPoint(write),
-                            issued.admitted_writeback_tick,
-                        )
+                speculative
+                    .and_then(|issued| {
+                        issued
+                            .execution
+                            .float_register_writes()
+                            .iter()
+                            .find(|write| write.register() == register)
+                            .cloned()
+                            .map(|write| {
+                                (
+                                    O3LiveIssueForwardedValue::FloatingPoint(write),
+                                    issued.admitted_writeback_tick,
+                                )
+                            })
                     })
+                    .or_else(|| self.completed_live_data_access_source(sequence, source))
             }
             O3RegisterClass::Vector | O3RegisterClass::ConditionCode | O3RegisterClass::Misc => {
                 None
@@ -299,12 +301,15 @@ impl O3RuntimeState {
     fn completed_live_data_access_source(
         &self,
         sequence: u64,
-        source: Register,
-    ) -> Option<(RegisterWrite, u64)> {
-        let ready_tick = self.completed_live_data_access_ready_tick(sequence)?;
-        let live = self.live_data_accesses.iter().find(|live| {
+        source: O3ArchitecturalRegister,
+    ) -> Option<(O3LiveIssueForwardedValue, u64)> {
+        let mut matches = self.live_data_accesses.iter().filter(|live| {
             live.sequence == sequence && live.outcome == O3LiveDataAccessOutcome::Completed
-        })?;
+        });
+        let live = matches.next()?;
+        if matches.next().is_some() {
+            return None;
+        }
         let data = live.load_data.as_deref()?;
         let writeback = live
             .execution
@@ -312,10 +317,26 @@ impl O3RuntimeState {
             .memory_access()?
             .read_response_writeback(data)
             .ok()??;
-        if writeback.integer_register() != Some(source) {
-            return None;
-        }
-        Some((RegisterWrite::new(source, writeback.value()), ready_tick))
+        let ready_tick = self
+            .memory_result_writeback_reservation(sequence)?
+            .admitted_tick();
+        let value = match (source.register_class(), writeback.target()) {
+            (O3RegisterClass::Integer, MemoryResponseWritebackTarget::Integer(register))
+                if source.integer_register() == Some(register) =>
+            {
+                O3LiveIssueForwardedValue::Integer(RegisterWrite::new(register, writeback.value()))
+            }
+            (O3RegisterClass::FloatingPoint, MemoryResponseWritebackTarget::Float(register))
+                if source.float_register() == Some(register) =>
+            {
+                O3LiveIssueForwardedValue::FloatingPoint(FloatRegisterWrite::new(
+                    register,
+                    writeback.value(),
+                ))
+            }
+            _ => return None,
+        };
+        Some((value, ready_tick))
     }
 
     pub(super) fn take_live_speculative_issue_timing_at(

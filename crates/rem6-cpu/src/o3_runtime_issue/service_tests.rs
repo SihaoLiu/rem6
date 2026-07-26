@@ -2,6 +2,8 @@ use super::*;
 use crate::o3_runtime::o3_runtime_issue::calendar::O3LiveIssueCalendar;
 use crate::o3_runtime::o3_runtime_pending_address_tests::multiple::ready_two_pending_issue;
 
+#[path = "service_tests/fp_load_forwarding.rs"]
+mod fp_load_forwarding;
 #[cfg(test)]
 #[path = "service_tests/legacy_driver.rs"]
 mod legacy_driver;
