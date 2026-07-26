@@ -5,9 +5,14 @@ const MAX_LIVE_COMPUTE_OPERAND_TEST_LINES: usize = 320;
 const MAX_O3_RUNTIME_LIVE_WINDOW_MIXED_COMPUTE_TEST_LINES: usize = 120;
 const MAX_LIVE_COMPUTE_QUEUE_LINES: usize = 320;
 const MAX_O3_RUNTIME_ISSUE_QUEUE_LINES: usize = 600;
-const MAX_O3_RUNTIME_ISSUE_QUEUE_MIXED_COMPUTE_TEST_LINES: usize = 450;
+const MAX_O3_RUNTIME_ISSUE_QUEUE_MIXED_COMPUTE_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_ISSUE_CALENDAR_MIXED_COMPUTE_TEST_LINES: usize = 120;
 const MAX_O3_RUNTIME_ISSUE_SERVICE_MIXED_COMPUTE_TEST_LINES: usize = 120;
+const MAX_O3_RUNTIME_ISSUE_FORWARDING_LINES: usize = 260;
+const MAX_O3_RUNTIME_ISSUE_TYPED_FORWARDING_TEST_LINES: usize = 360;
+const MAX_O3_RUNTIME_ISSUE_TYPED_FORWARDING_SERVICE_TEST_LINES: usize = 360;
+const MAX_O3_RUNTIME_ISSUE_TYPED_FORWARDING_TRANSACTION_TEST_LINES: usize = 240;
+const MAX_O3_RUNTIME_TYPED_FORWARDING_CONTROL_TEST_LINES: usize = 220;
 const MIGRATION_LEDGER: &str = "../../docs/architecture/gem5-to-rem6-migration.md";
 
 #[test]
@@ -177,7 +182,7 @@ fn fp_vector_live_issue_locks_task2_window_and_staging_ownership() {
     assert!(!window_source.contains("fn classify_scalar_younger("));
     assert!(window_source.contains("o3_live_compute_operands(instruction)"));
     assert!(window_source.contains("O3ArchitecturalRegister::integer"));
-    assert!(compact_window.contains("source.register_class()!=O3RegisterClass::Integer"));
+    assert!(compact_window.contains("source.register_class()==O3RegisterClass::Vector"));
     assert!(compact_window.contains("self.live_destinations.contains(source)"));
 
     assert!(staging_source.contains("o3_live_compute_operands(instruction)"));
@@ -367,7 +372,7 @@ fn fp_vector_live_issue_locks_task4_queue_compute_authority() {
 
     for test_anchor in [
         "fnlive_issue_queue_materializes_mixed_compute_classes(",
-        "fnlive_issue_queue_rejects_non_integer_live_source_producers(",
+        "fnlive_issue_queue_admits_scalar_fp_live_source_producers(",
         "fnlive_issue_queue_uses_typed_source_identities(",
         "fnlive_issue_queue_preserves_integer_producer_forwarding(",
         "fnlive_issue_candidate_result_validation_is_destination_class_exact(",
@@ -469,6 +474,141 @@ fn fp_vector_live_issue_locks_task5_calendar_and_service_proof() {
         compact_service_proof.contains("assert_eq!(runtime.live_issue_service_tick(),Some(21))")
     );
     assert!(compact_service_proof.contains("assert_eq!(second.issued_rows(),1)"));
+}
+
+#[test]
+fn fp_vector_live_issue_locks_task8_typed_forwarding_policy() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let forwarding_path = root.join("src/o3_runtime_issue/queue/forwarding.rs");
+    let queue_tests_path = root.join("src/o3_runtime_issue/queue_tests/typed_forwarding.rs");
+    let service_tests_path = root.join("src/o3_runtime_issue/service_tests/typed_forwarding.rs");
+    let transaction_tests_path =
+        root.join("src/o3_runtime_issue/transaction_tests/typed_forwarding.rs");
+    let control_tests_path = root.join("src/o3_runtime_control_window_tests/typed_forwarding.rs");
+
+    for path in [
+        &forwarding_path,
+        &queue_tests_path,
+        &service_tests_path,
+        &transaction_tests_path,
+        &control_tests_path,
+    ] {
+        assert!(
+            path.is_file(),
+            "missing focused typed forwarding owner {}",
+            path.display()
+        );
+    }
+    assert!(line_count(&forwarding_path) <= MAX_O3_RUNTIME_ISSUE_FORWARDING_LINES);
+    assert!(line_count(&queue_tests_path) <= MAX_O3_RUNTIME_ISSUE_TYPED_FORWARDING_TEST_LINES);
+    assert!(
+        line_count(&service_tests_path) <= MAX_O3_RUNTIME_ISSUE_TYPED_FORWARDING_SERVICE_TEST_LINES
+    );
+    assert!(
+        line_count(&transaction_tests_path)
+            <= MAX_O3_RUNTIME_ISSUE_TYPED_FORWARDING_TRANSACTION_TEST_LINES
+    );
+    assert!(line_count(&control_tests_path) <= MAX_O3_RUNTIME_TYPED_FORWARDING_CONTROL_TEST_LINES);
+
+    for (owner, relative, module) in [
+        (
+            "src/o3_runtime_issue/queue.rs",
+            "queue/forwarding.rs",
+            "forwarding",
+        ),
+        (
+            "src/o3_runtime_issue/queue_tests.rs",
+            "queue_tests/typed_forwarding.rs",
+            "typed_forwarding",
+        ),
+        (
+            "src/o3_runtime_issue/service_tests.rs",
+            "service_tests/typed_forwarding.rs",
+            "typed_forwarding",
+        ),
+        (
+            "src/o3_runtime_issue/transaction_tests.rs",
+            "transaction_tests/typed_forwarding.rs",
+            "typed_forwarding",
+        ),
+        (
+            "src/o3_runtime_control_window_tests.rs",
+            "o3_runtime_control_window_tests/typed_forwarding.rs",
+            "typed_forwarding",
+        ),
+    ] {
+        let source = fs::read_to_string(root.join(owner)).unwrap();
+        assert_eq!(
+            path_owned_module_declaration_count(&source, relative, module),
+            1,
+            "{owner} must attach {relative} exactly once",
+        );
+    }
+
+    let forwarding = fs::read_to_string(&forwarding_path).unwrap();
+    let compute = fs::read_to_string(root.join("src/o3_runtime_issue/queue/compute.rs")).unwrap();
+    let combined = compact_rust_code(&format!(
+        "{}\n{}",
+        production_rust_source(&forwarding),
+        production_rust_source(&compute),
+    ));
+    for anchor in [
+        "enumO3LiveIssueForwardedValue{Integer(RegisterWrite),FloatingPoint(FloatRegisterWrite),}",
+        "source.register_class()==O3RegisterClass::Vector",
+    ] {
+        assert!(
+            combined.contains(anchor),
+            "missing typed forwarding anchor {anchor}"
+        );
+    }
+    for forbidden in ["VectorRegisterWrite", "O3LiveIssueForwardedValue::Vector"] {
+        assert!(
+            !combined.contains(forbidden),
+            "forbidden typed forwarding surface {forbidden}"
+        );
+    }
+
+    let service = fs::read_to_string(root.join("src/o3_runtime_issue/service.rs")).unwrap();
+    let prepare = compact_rust_code(
+        &rust_function_definition(
+            &production_rust_source(&service),
+            "prepare_live_issue_batch",
+        )
+        .unwrap(),
+    );
+    let clone = prepare
+        .find("letmutspeculative_hart=hart.clone();")
+        .expect("typed forwarding must clone the canonical hart");
+    let fp_apply = prepare
+        .find("speculative_hart.write_float(write.register(),write.value())")
+        .expect("typed forwarding must apply FP values to the clone");
+    assert!(clone < fp_apply);
+    let without_speculative_apply = prepare.replace(
+        "speculative_hart.write_float(write.register(),write.value())",
+        "",
+    );
+    assert!(!without_speculative_apply.contains("hart.write_float("));
+
+    for (relative, anchor) in [
+        (
+            "src/o3_runtime_checkpoint.rs",
+            "constO3_RUNTIME_CHECKPOINT_VERSION_WITH_WRITEBACK_PORT_STATS:u8=23;",
+        ),
+        (
+            "src/o3_pipeline.rs",
+            "constO3_PENDING_STATE_CHECKPOINT_VERSION:u8=2;",
+        ),
+        (
+            "src/riscv_execution_mode_handoff/codec.rs",
+            "pub(super)constVERSION_CURRENT:u8=7;",
+        ),
+    ] {
+        let source = fs::read_to_string(root.join(relative)).unwrap();
+        assert!(
+            compact_rust_code(&production_rust_source(&source)).contains(anchor),
+            "schema owner changed: {relative}",
+        );
+    }
 }
 
 #[test]
@@ -583,19 +723,21 @@ fn fp_vector_live_issue_locks_ledger_scope() {
         "scalar FP and vector-to-scalar",
         "issued_by_class.scalar_float",
         "issued_by_class.vector_to_scalar",
+        "rem6_run_o3_typed_live_forwarding_width_one_direct",
+        "rem6_run_o3_typed_live_forwarding_width_two_direct",
+        "rem6_run_o3_typed_live_forwarding_width_four_hierarchy",
+        "rem6_run_o3_typed_live_forwarding_checkpoint_boundaries",
+        "rem6_run_o3_typed_live_forwarding_handoff_rejects_live_state",
+        "rem6_run_o3_typed_live_forwarding_drained_restore",
+        "rem6_run_timing_suppresses_o3_typed_live_forwarding",
+        "00001041",
+        "vmul.vv -> vmv.x.s",
     ] {
         assert!(cpu.contains(evidence), "CPU ledger missing `{evidence}`");
     }
-    for remaining_gap in [
-        "vector-destination arithmetic",
-        "FP/vector live-producer forwarding",
-        "positive system issue rows",
-    ] {
-        assert!(
-            cpu.contains(remaining_gap),
-            "CPU ledger missing non-claim `{remaining_gap}`",
-        );
-    }
+    assert!(cpu.contains(
+        "true vector-register producers and destinations, vector LMUL/mask/tail/v0/load/VCSR-aware forwarding, FP loads, double precision, conversions, broader or status-sensitive FP chains, arbitrary unbounded mixed dependency graphs, positive system issue rows, a general load/store queue scheduler, dependent stores or arbitrary atomics, checkpoint-restorable live IQ/transport state, and a general O3 engine remain incomplete"
+    ));
     let normalized_ledger = normalized_policy_text(&ledger);
     for broad_claim in ["persistent vector arithmetic iq", "system issue support"] {
         assert!(

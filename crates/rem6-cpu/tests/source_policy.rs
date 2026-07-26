@@ -14,6 +14,20 @@ mod task6_issue_migration;
 #[path = "source_policy/vector_architectural_checkpoint.rs"]
 mod vector_architectural_checkpoint;
 
+#[test]
+fn fp_vector_live_issue_policy_has_one_focused_child_attachment() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = fs::read_to_string(root.join("tests/source_policy.rs")).unwrap();
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &source,
+            "source_policy/fp_vector_live_issue.rs",
+            "fp_vector_live_issue",
+        ),
+        1
+    );
+}
+
 const MAX_FACADE_LINES: usize = 1300;
 const MAX_O3_RUNTIME_DEEP_CLEANUP_TEST_LINES: usize = 350;
 const MAX_O3_RUNTIME_ISSUE_DEPENDENCY_LINES: usize = 500;
