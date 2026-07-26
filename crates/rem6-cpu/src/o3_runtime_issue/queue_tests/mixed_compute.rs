@@ -3,6 +3,7 @@ use rem6_isa_riscv::{
     RiscvTrap, RiscvTrapKind, RiscvVectorScalarMoveInstruction, VectorRegister,
 };
 
+use super::super::super::o3_runtime_issue::O3LiveIssueForwardedValue;
 use super::*;
 use crate::O3IssueOpClass;
 
@@ -185,6 +186,13 @@ fn live_issue_queue_preserves_integer_producer_forwarding() {
         .unwrap();
 
     assert_eq!(consumer_candidate.producer_sequences(), &[producer]);
+    assert_eq!(
+        consumer_candidate.forwarded_values(),
+        &[O3LiveIssueForwardedValue::Integer(RegisterWrite::new(
+            reg(4),
+            7,
+        ))],
+    );
     assert_eq!(
         consumer_candidate.forwarded_register_writes(),
         &[RegisterWrite::new(reg(4), 7)]

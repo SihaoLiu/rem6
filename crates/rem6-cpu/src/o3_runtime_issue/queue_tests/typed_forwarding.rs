@@ -1,7 +1,10 @@
 use rem6_isa_riscv::{FloatRegister, FloatRegisterWrite, RiscvFloatRoundingMode, RiscvInstruction};
 
+use super::super::super::o3_runtime_issue::O3LiveIssueForwardedValue;
 use super::*;
 use crate::o3_dependency::O3RegisterClass;
+
+const BOXED_THREE: u64 = 0xffff_ffff_4040_0000;
 
 struct TypedForwardingFixture {
     runtime: O3RuntimeState,
@@ -106,26 +109,83 @@ fn typed_live_forwarding_discovers_fp_source_producer() {
 }
 
 #[test]
-fn typed_live_forwarding_defers_available_fp_value_materialization() {
+fn typed_live_forwarding_materializes_exact_fp_write_and_ready_tick() {
     let mut fixture = TypedForwardingFixture::new();
     let producer_instruction = float_add_s(4, 1, 2);
     let consumer_instruction = float_mul_s(5, 4, 3);
-    fixture.stage(BRANCH_PC, producer_instruction, 11);
+    let producer = fixture.stage(BRANCH_PC, producer_instruction, 11);
     fixture.stage(SECOND_PC, consumer_instruction, 12);
 
-    let producer = fixture
+    let producer_candidate = fixture
         .runtime
         .live_speculative_issue_candidate(Address::new(BRANCH_PC), producer_instruction)
         .unwrap();
     assert!(fixture
         .runtime
         .record_live_speculative_execution(
-            producer,
+            producer_candidate,
             &[request(11)],
             20,
-            fp_record(producer_instruction, BRANCH_PC, f(4), 0xffff_ffff_4040_0000,),
+            fp_record(producer_instruction, BRANCH_PC, f(4), BOXED_THREE),
         )
         .unwrap());
+    let producer_ready = fixture
+        .runtime
+        .live_speculative_executions
+        .iter()
+        .find(|row| row.sequence == producer)
+        .unwrap()
+        .admitted_writeback_tick;
+    let consumer = fixture
+        .runtime
+        .live_speculative_issue_candidate(Address::new(SECOND_PC), consumer_instruction)
+        .unwrap();
+
+    assert_eq!(
+        consumer.forwarded_values(),
+        &[O3LiveIssueForwardedValue::FloatingPoint(
+            FloatRegisterWrite::new(f(4), BOXED_THREE),
+        )],
+    );
+    assert_eq!(consumer.producer_sequences(), &[producer]);
+    assert_eq!(consumer.issue_tick(0), producer_ready);
+}
+
+#[test]
+fn typed_live_forwarding_rejects_wrong_class_write() {
+    let mut fixture = TypedForwardingFixture::new();
+    let producer_instruction = float_add_s(4, 1, 2);
+    let consumer_instruction = float_mul_s(5, 4, 3);
+    let producer = fixture.stage(BRANCH_PC, producer_instruction, 11);
+    fixture.stage(SECOND_PC, consumer_instruction, 12);
+
+    let producer_candidate = fixture
+        .runtime
+        .live_speculative_issue_candidate(Address::new(BRANCH_PC), producer_instruction)
+        .unwrap();
+    assert!(fixture
+        .runtime
+        .record_live_speculative_execution(
+            producer_candidate,
+            &[request(11)],
+            20,
+            fp_record(producer_instruction, BRANCH_PC, f(4), BOXED_THREE),
+        )
+        .unwrap());
+    fixture
+        .runtime
+        .live_speculative_executions
+        .iter_mut()
+        .find(|row| row.sequence == producer)
+        .unwrap()
+        .execution = RiscvExecutionRecord::new_with_instruction_bytes(
+        producer_instruction,
+        4,
+        BRANCH_PC,
+        BRANCH_PC + 4,
+        vec![RegisterWrite::new(reg(4), 7)],
+        None,
+    );
 
     assert!(fixture
         .runtime

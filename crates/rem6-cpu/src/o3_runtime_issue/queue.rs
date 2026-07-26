@@ -13,6 +13,7 @@ use crate::o3_pipeline::O3IssueOpClass;
 mod compute;
 #[path = "queue/forwarding.rs"]
 mod forwarding;
+pub(in crate::o3_runtime) use forwarding::O3LiveIssueForwardedValue;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::o3_runtime) struct O3LiveIssuePacket {
@@ -58,7 +59,7 @@ pub(crate) struct O3LiveIssueSourceProducer {
 pub(crate) struct O3LiveSpeculativeIssueCandidate {
     scheduling: O3LiveIssueSchedulingCandidate,
     producer_sequences: Vec<u64>,
-    forwarded_register_writes: Vec<RegisterWrite>,
+    forwarded_values: Vec<O3LiveIssueForwardedValue>,
     forwarded_ready_tick: u64,
 }
 
@@ -242,8 +243,18 @@ impl O3LiveSpeculativeIssueCandidate {
         }
     }
 
-    pub(crate) fn forwarded_register_writes(&self) -> &[RegisterWrite] {
-        &self.forwarded_register_writes
+    pub(in crate::o3_runtime) fn forwarded_values(&self) -> &[O3LiveIssueForwardedValue] {
+        &self.forwarded_values
+    }
+
+    pub(crate) fn forwarded_register_writes(&self) -> Vec<RegisterWrite> {
+        self.forwarded_values
+            .iter()
+            .filter_map(|value| match value {
+                O3LiveIssueForwardedValue::Integer(write) => Some(write.clone()),
+                O3LiveIssueForwardedValue::FloatingPoint(_) => None,
+            })
+            .collect()
     }
 
     pub(crate) const fn sequence(&self) -> u64 {
@@ -472,47 +483,7 @@ impl O3RuntimeState {
         &self,
         scheduling: &O3LiveIssueSchedulingCandidate,
     ) -> Option<O3LiveSpeculativeIssueCandidate> {
-        let mut producer_sequences = Vec::new();
-        let mut forwarded_register_writes = Vec::new();
-        let mut forwarded_ready_tick = 0;
-        for producer in scheduling.data_producers.iter().copied() {
-            let source = producer.source().integer_register()?;
-            let (write, ready_tick) =
-                match self.live_issue_source_value(producer.sequence(), source) {
-                    Some((write, ready_tick)) => (Some(write), ready_tick),
-                    None if scheduling.is_pending_data_address() => (
-                        None,
-                        self.pending_data_address_committed_producer_ready_tick(
-                            producer.sequence(),
-                            source,
-                        )?,
-                    ),
-                    None => return None,
-                };
-            if !producer_sequences.contains(&producer.sequence()) {
-                producer_sequences.push(producer.sequence());
-            }
-            if let Some(write) = write {
-                if !forwarded_register_writes
-                    .iter()
-                    .any(|forwarded: &RegisterWrite| forwarded.register() == source)
-                {
-                    forwarded_register_writes.push(write);
-                }
-            }
-            forwarded_ready_tick = forwarded_ready_tick.max(ready_tick);
-        }
-        if let Some(control_sequence) = scheduling.control_dependency {
-            if !producer_sequences.contains(&control_sequence) {
-                producer_sequences.push(control_sequence);
-            }
-        }
-        Some(O3LiveSpeculativeIssueCandidate {
-            scheduling: scheduling.clone(),
-            producer_sequences,
-            forwarded_register_writes,
-            forwarded_ready_tick,
-        })
+        forwarding::materialize_candidate(self, scheduling)
     }
 
     fn live_issue_source_producers(

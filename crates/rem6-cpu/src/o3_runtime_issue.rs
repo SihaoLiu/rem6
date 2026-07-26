@@ -26,6 +26,7 @@ mod state;
 #[path = "o3_runtime_issue/transaction.rs"]
 mod transaction;
 pub(crate) use dependency::O3LiveIssueDependencyTable;
+pub(in crate::o3_runtime) use queue::O3LiveIssueForwardedValue;
 use queue::{live_issue_op_class, O3LiveSpeculativeIssueCandidate};
 pub(in crate::o3_runtime) use state::{O3LiveIssueState, O3LiveIssueStateRollback};
 pub use state::{

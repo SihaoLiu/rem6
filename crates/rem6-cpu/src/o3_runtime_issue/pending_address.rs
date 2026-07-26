@@ -210,8 +210,19 @@ impl O3RuntimeState {
             return;
         };
         let producer_ready = self
-            .live_issue_source_value(producer_sequence, producer_register)
-            .map(|(_, ready_tick)| ready_tick)
+            .live_issue_source_value(
+                producer_sequence,
+                O3ArchitecturalRegister::integer(producer_register),
+            )
+            .and_then(|(value, ready_tick)| match value {
+                O3LiveIssueForwardedValue::Integer(write)
+                    if write.register() == producer_register =>
+                {
+                    Some(ready_tick)
+                }
+                O3LiveIssueForwardedValue::Integer(_)
+                | O3LiveIssueForwardedValue::FloatingPoint(_) => None,
+            })
             .or_else(|| self.pending_data_address_producer_ready_tick(producer_sequence))
             .is_some_and(|ready_tick| ready_tick <= actual_tick);
         let Some(next_tick) = actual_tick.checked_add(1).filter(|_| producer_ready) else {
