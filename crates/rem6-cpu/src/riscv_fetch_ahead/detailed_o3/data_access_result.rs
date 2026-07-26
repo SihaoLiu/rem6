@@ -110,7 +110,8 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_authorization(
 ) -> Option<O3MemoryResultWindowAuthorization> {
     if !state.live_retire_gate.detailed_policy_enabled()
         || instruction_bytes != 4
-        || state.o3_runtime.scalar_memory_window_limit() <= 1
+        || state.o3_runtime.scalar_live_window_limit() <= 1
+        || (role.is_younger() && state.o3_runtime.scalar_memory_window_limit() <= 1)
         || translated == TranslatedMemoryFetchAhead::Blocked
         || (translated == TranslatedMemoryFetchAhead::Mmio && state.data_translation.is_some())
     {
@@ -178,9 +179,14 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
     if head_authorization.role() != O3MemoryResultWindowRole::Head {
         return DetailedFetchAheadCandidate::Blocked;
     }
-    let row_limit = state.o3_runtime.scalar_memory_window_limit();
-    let mut authorizer =
-        DependentResultAddressAuthorizer::from_head(state, current, head_authorization, row_limit);
+    let memory_row_limit = state.o3_runtime.scalar_memory_window_limit();
+    let row_limit = state.o3_runtime.scalar_live_window_limit();
+    let mut authorizer = DependentResultAddressAuthorizer::from_head(
+        state,
+        current,
+        head_authorization,
+        memory_row_limit,
+    );
     let mut authorizations = vec![(current.first_consumed_request(), head_authorization)];
     let Some(head_destination) =
         data_access_result_fetch_ahead_destination(state, current.decoded().instruction())
@@ -232,7 +238,7 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
                                 current,
                                 &younger,
                                 head_authorization,
-                                row_limit,
+                                memory_row_limit,
                             ) == Some(authorization)
                     );
                     authorizations.push((younger.first_consumed_request(), authorization));
@@ -247,7 +253,7 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
                     window = RiscvScalarIntegerLiveWindow::from_memory_result_destinations(
                         result_destinations.iter().copied(),
                         result_rows,
-                        row_limit,
+                        memory_row_limit,
                     )
                     .expect("authorized result rows fit the configured live window");
                     previous_request = younger.last_consumed_request();

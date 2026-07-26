@@ -38,7 +38,6 @@ fn predicted_control_branch_candidate_has_no_destination_and_keeps_issue_tick() 
         .expect("independent branch should issue while the load is outstanding");
     assert_eq!(candidate.destination(), None);
     assert_eq!(candidate.issue_tick(11), 11);
-
     let execution = RiscvExecutionRecord::new(branch, 0x8004, 0x8008, Vec::new(), None);
     bind_o3(&mut runtime, 0x8004, decoded(branch), &[request(11)]);
     runtime

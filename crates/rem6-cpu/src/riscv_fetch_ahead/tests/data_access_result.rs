@@ -442,6 +442,108 @@ fn depth_one_result_head_does_not_authorize_or_wait_for_a_suffix() {
 }
 
 #[test]
+fn memory_depth_one_with_deeper_live_window_authorizes_fp_compute_suffix() {
+    let float_load = i_type(0, 2, 0b010, 1, 0x07);
+    let core = core_with_completed_fetch(float_load.to_le_bytes().to_vec());
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_window_depths(1, 5);
+    core.write_register(Register::new(2).unwrap(), 0x9000);
+
+    assert_eq!(
+        core.next_fetch_ahead_before_retire()
+            .map(|decision| decision.pc()),
+        Some(Address::new(0x8004))
+    );
+    let state = core.state.lock().expect("riscv core lock");
+    assert_eq!(state.memory_result_window_authorizations.len(), 1);
+    assert_eq!(
+        state
+            .memory_result_window_authorizations
+            .get(&request(0))
+            .map(|authorization| authorization.role()),
+        Some(O3MemoryResultWindowRole::Head)
+    );
+
+    let multiply = r_type(0b0001000, 2, 1, 0, 4, 0x53);
+    let independent = i_type(7, 0, 0, 6, 0x13);
+    let suffix = core_with_completed_fetches([
+        (0, 0x8000, float_load.to_le_bytes().to_vec()),
+        (1, 0x8004, multiply.to_le_bytes().to_vec()),
+        (2, 0x8008, independent.to_le_bytes().to_vec()),
+    ]);
+    suffix.set_detailed_live_retire_gate_enabled(true);
+    suffix.set_o3_window_depths(1, 5);
+    suffix.write_register(Register::new(2).unwrap(), 0x9000);
+
+    assert_eq!(suffix.next_fetch_ahead_before_retire(), None);
+    let state = suffix.state.lock().expect("riscv core lock");
+    assert_eq!(state.memory_result_window_authorizations.len(), 1);
+    assert!(state
+        .memory_result_window_authorizations
+        .contains_key(&request(0)));
+}
+
+#[test]
+fn memory_depth_one_with_deeper_live_window_rejects_younger_result() {
+    let core = core_with_completed_fetches([
+        (
+            0,
+            0x8000,
+            i_type(0, 2, 0b010, 1, 0x07).to_le_bytes().to_vec(),
+        ),
+        (
+            1,
+            0x8004,
+            i_type(0, 4, 0b011, 3, 0x07).to_le_bytes().to_vec(),
+        ),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_window_depths(1, 5);
+    core.write_register(Register::new(2).unwrap(), 0x9000);
+    core.write_register(Register::new(4).unwrap(), 0x9010);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+    assert!(core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .memory_result_window_authorizations
+        .is_empty());
+}
+
+#[test]
+fn dependent_address_suffix_remains_capped_by_memory_depth() {
+    let core = core_with_completed_fetches([
+        (
+            0,
+            0x8000,
+            i_type(0, 2, 0b011, 5, 0x03).to_le_bytes().to_vec(),
+        ),
+        (
+            1,
+            0x8004,
+            i_type(0, 5, 0b011, 6, 0x03).to_le_bytes().to_vec(),
+        ),
+        (2, 0x8008, i_type(1, 0, 0, 7, 0x13).to_le_bytes().to_vec()),
+    ]);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_window_depths(2, 4);
+    core.write_register(Register::new(2).unwrap(), 0x9000);
+
+    assert_eq!(core.next_fetch_ahead_before_retire(), None);
+    let state = core.state.lock().expect("riscv core lock");
+    assert_eq!(state.memory_result_window_authorizations.len(), 2);
+    assert_eq!(
+        state
+            .memory_result_window_authorizations
+            .get(&request(1))
+            .copied()
+            .map(O3MemoryResultWindowAuthorization::role),
+        Some(O3MemoryResultWindowRole::YoungerDependentRead)
+    );
+}
+
+#[test]
 fn generic_straight_line_result_decision_records_issue_authority() {
     let float_load = i_type(0, 2, 0b011, 1, 0x07);
     let core = direct_result_core(float_load, 0x9000);

@@ -1,4 +1,4 @@
-use rem6_cpu::{O3LiveIssueTelemetry, O3LiveIssueTraceRecord};
+use rem6_cpu::{O3LiveIssueTelemetry, O3LiveIssueTraceRecord, O3RegisterClass};
 
 use crate::formatting::json_escape;
 
@@ -18,11 +18,19 @@ struct O3IssueQueueTelemetryValue {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct O3IssueQueueDataProducerValue {
+    sequence: u64,
+    register_class: O3RegisterClass,
+    architectural: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct O3IssueQueueEventValue {
     sequence: u64,
     pc: u64,
     action: &'static str,
     issue_class: &'static str,
+    data_producers: Vec<O3IssueQueueDataProducerValue>,
     service_tick: u64,
     next_wake_tick: Option<u64>,
     raw_writeback_tick: Option<u64>,
@@ -55,6 +63,14 @@ impl From<&O3LiveIssueTraceRecord> for O3IssueQueueEventValue {
             pc: event.pc().get(),
             action: event.action().name(),
             issue_class: event.issue_class().name(),
+            data_producers: event
+                .data_producers()
+                .map(|producer| O3IssueQueueDataProducerValue {
+                    sequence: producer.sequence(),
+                    register_class: producer.register_class(),
+                    architectural: producer.architectural(),
+                })
+                .collect(),
             service_tick: event.service_tick(),
             next_wake_tick: event.next_wake_tick(),
             raw_writeback_tick: event.raw_writeback_tick(),
@@ -82,12 +98,26 @@ fn issue_queue_values_to_json(
     let events = events
         .iter()
         .map(|event| {
+            let data_producers = event
+                .data_producers
+                .iter()
+                .map(|producer| {
+                    format!(
+                        "{{\"sequence\":{},\"register_class\":\"{}\",\"architectural\":{}}}",
+                        producer.sequence,
+                        register_class_name(producer.register_class),
+                        producer.architectural,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
             format!(
-                "{{\"sequence\":{},\"pc\":\"{:#x}\",\"action\":\"{}\",\"issue_class\":\"{}\",\"service_tick\":{},\"next_wake_tick\":{},\"raw_writeback_tick\":{},\"admitted_writeback_tick\":{},\"cleanup_boundary\":{}}}",
+                "{{\"sequence\":{},\"pc\":\"{:#x}\",\"action\":\"{}\",\"issue_class\":\"{}\",\"data_producers\":[{}],\"service_tick\":{},\"next_wake_tick\":{},\"raw_writeback_tick\":{},\"admitted_writeback_tick\":{},\"cleanup_boundary\":{}}}",
                 event.sequence,
                 event.pc,
                 json_escape(event.action),
                 json_escape(event.issue_class),
+                data_producers,
                 event.service_tick,
                 optional_u64_json(event.next_wake_tick),
                 optional_u64_json(event.raw_writeback_tick),
@@ -102,6 +132,16 @@ fn issue_queue_values_to_json(
         telemetry_json(telemetry),
         events
     )
+}
+
+fn register_class_name(register_class: O3RegisterClass) -> &'static str {
+    match register_class {
+        O3RegisterClass::Integer => "integer",
+        O3RegisterClass::FloatingPoint => "floating_point",
+        O3RegisterClass::Vector => "vector",
+        O3RegisterClass::ConditionCode => "condition_code",
+        O3RegisterClass::Misc => "misc",
+    }
 }
 
 fn optional_u64_json(value: Option<u64>) -> String {
@@ -136,11 +176,12 @@ mod tests {
     use super::*;
     use serde_json::{json, Value};
 
-    const EVENT_KEYS: [&str; 9] = [
+    const EVENT_KEYS: [&str; 10] = [
         "sequence",
         "pc",
         "action",
         "issue_class",
+        "data_producers",
         "service_tick",
         "next_wake_tick",
         "raw_writeback_tick",
@@ -209,6 +250,13 @@ mod tests {
                 pc: 0x8000_0000 + u64::try_from(index * 4).unwrap(),
                 action: *action,
                 issue_class: "scalar_integer",
+                data_producers: (*action == "retained_dependency")
+                    .then_some(vec![O3IssueQueueDataProducerValue {
+                        sequence: 1,
+                        register_class: O3RegisterClass::FloatingPoint,
+                        architectural: 4,
+                    }])
+                    .unwrap_or_default(),
                 service_tick: 10 + u64::try_from(index).unwrap(),
                 next_wake_tick: Some(20 + u64::try_from(index).unwrap()),
                 raw_writeback_tick: (*action == "selected").then_some(30),
@@ -236,6 +284,21 @@ mod tests {
                 event.pointer("/action").and_then(Value::as_str),
                 Some(expected_action)
             );
+            if expected_action == "retained_dependency" {
+                assert_eq!(
+                    event.pointer("/data_producers/0"),
+                    Some(&json!({
+                        "sequence": 1,
+                        "register_class": "floating_point",
+                        "architectural": 4,
+                    }))
+                );
+            } else {
+                assert!(event
+                    .pointer("/data_producers")
+                    .and_then(Value::as_array)
+                    .is_some_and(Vec::is_empty));
+            }
         }
     }
 }

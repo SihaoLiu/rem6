@@ -182,7 +182,7 @@ impl O3RuntimeState {
                 RiscvScalarIntegerLiveWindow::from_memory_result_destinations(
                     window.destinations,
                     window.rows,
-                    self.scalar_memory_window_limit,
+                    self.scalar_live_window_limit,
                 )
             }
         }

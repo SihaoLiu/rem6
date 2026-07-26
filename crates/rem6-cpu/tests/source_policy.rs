@@ -3761,7 +3761,11 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
     for anchor in [
         "DependentResultAddressAuthorizer::from_head(",
         "authorizer.try_authorize_next(&younger)",
-        "authorizer.result_destinations().iter().copied()",
+        "let mut result_destinations = vec![head_destination];",
+        "result_destinations = authorizer",
+        ".map(O3ArchitecturalRegister::integer)",
+        "if !result_destinations.contains(&younger_destination)",
+        "result_destinations.push(younger_destination);",
         "dependent_rows == 0 && result_rows == 1",
         "dependent_rows = authorizer.dependent_rows();",
         "result_rows = 1 + dependent_rows;",

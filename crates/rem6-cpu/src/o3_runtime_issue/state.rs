@@ -26,7 +26,9 @@ pub(in crate::o3_runtime) use rollback::O3LiveIssueStateRollback;
 
 #[path = "state/trace.rs"]
 mod trace;
+pub use trace::O3LiveIssueTraceDataProducer;
 pub(in crate::o3_runtime) use trace::O3LiveIssueTraceRow;
+use trace::O3_LIVE_ISSUE_TRACE_DATA_PRODUCER_SLOTS;
 
 #[cfg(test)]
 #[path = "state/test_support_tests.rs"]
@@ -115,6 +117,7 @@ pub struct O3LiveIssueTraceRecord {
     pc: Address,
     action: O3LiveIssueTraceAction,
     issue_class: O3LiveIssueTraceClass,
+    data_producers: [Option<O3LiveIssueTraceDataProducer>; O3_LIVE_ISSUE_TRACE_DATA_PRODUCER_SLOTS],
     service_tick: u64,
     next_wake_tick: Option<u64>,
     raw_writeback_tick: Option<u64>,
@@ -128,6 +131,10 @@ impl O3LiveIssueTraceRecord {
     copy_getters!(service_tick -> u64, next_wake_tick -> Option<u64>);
     copy_getters!(raw_writeback_tick -> Option<u64>);
     copy_getters!(admitted_writeback_tick -> Option<u64>, cleanup_boundary -> Option<u64>);
+
+    pub fn data_producers(&self) -> impl Iterator<Item = O3LiveIssueTraceDataProducer> + '_ {
+        self.data_producers.iter().copied().flatten()
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -187,6 +194,7 @@ impl O3LiveIssueState {
             pc,
             action: O3LiveIssueTraceAction::Queued,
             issue_class,
+            data_producers: [None; O3_LIVE_ISSUE_TRACE_DATA_PRODUCER_SLOTS],
             service_tick: tick,
             next_wake_tick: self.requested_service_tick,
             raw_writeback_tick: None,
@@ -220,6 +228,7 @@ impl O3LiveIssueState {
             pc,
             action,
             issue_class,
+            data_producers: [None; O3_LIVE_ISSUE_TRACE_DATA_PRODUCER_SLOTS],
             service_tick: tick,
             next_wake_tick: self.requested_service_tick,
             raw_writeback_tick: None,
@@ -271,6 +280,7 @@ impl O3LiveIssueState {
                     pc,
                     action,
                     issue_class,
+                    data_producers: [None; O3_LIVE_ISSUE_TRACE_DATA_PRODUCER_SLOTS],
                     service_tick: tick,
                     next_wake_tick,
                     raw_writeback_tick: None,
@@ -306,6 +316,7 @@ impl O3LiveIssueState {
             pc,
             action,
             issue_class,
+            data_producers: [None; O3_LIVE_ISSUE_TRACE_DATA_PRODUCER_SLOTS],
             service_tick: tick,
             next_wake_tick: self.requested_service_tick,
             raw_writeback_tick: None,

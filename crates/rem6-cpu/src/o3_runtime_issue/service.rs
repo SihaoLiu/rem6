@@ -68,6 +68,11 @@ impl O3RuntimeState {
         self.live_issue.requested_service_tick()
     }
 
+    pub(crate) fn request_live_issue_after_writeback_change(&mut self, tick: u64) {
+        self.live_issue
+            .request_live_issue_after_writeback_change(tick);
+    }
+
     pub(crate) fn live_issue_is_quiescent(&self) -> bool {
         self.live_issue.is_quiescent()
     }
@@ -494,11 +499,13 @@ fn live_issue_trace_rows(
                 live_issue_trace_class(entry.packet().instruction())
                     .ok_or(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence })?
             };
-            Ok(O3LiveIssueTraceRow::new(
+            O3LiveIssueTraceRow::new(
                 sequence,
                 entry.scheduling().pc(),
                 issue_class,
-            ))
+                entry.scheduling().data_producers(),
+            )
+            .ok_or(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence })
         })
         .collect()
 }

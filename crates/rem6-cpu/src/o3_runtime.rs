@@ -110,7 +110,8 @@ use o3_runtime_issue::O3LiveIssueState;
 #[cfg(test)]
 pub(crate) use o3_runtime_issue::{O3LiveIssueDependencyTable, O3PreparedLiveIssue};
 pub use o3_runtime_issue::{
-    O3LiveIssueTelemetry, O3LiveIssueTraceAction, O3LiveIssueTraceClass, O3LiveIssueTraceRecord,
+    O3LiveIssueTelemetry, O3LiveIssueTraceAction, O3LiveIssueTraceClass,
+    O3LiveIssueTraceDataProducer, O3LiveIssueTraceRecord,
 };
 use o3_runtime_live_window::{
     staged_rename_entry, O3LiveRetiredInstruction, O3LiveStagedFetchIdentity,

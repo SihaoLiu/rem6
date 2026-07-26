@@ -30,7 +30,8 @@ pub(in crate::o3_runtime) use queue::O3LiveIssueForwardedValue;
 use queue::{live_issue_op_class, O3LiveSpeculativeIssueCandidate};
 pub(in crate::o3_runtime) use state::{O3LiveIssueState, O3LiveIssueStateRollback};
 pub use state::{
-    O3LiveIssueTelemetry, O3LiveIssueTraceAction, O3LiveIssueTraceClass, O3LiveIssueTraceRecord,
+    O3LiveIssueTelemetry, O3LiveIssueTraceAction, O3LiveIssueTraceClass,
+    O3LiveIssueTraceDataProducer, O3LiveIssueTraceRecord,
 };
 use transaction::O3LiveIssueTransaction;
 pub(in crate::o3_runtime) use transaction::O3LiveIssueTransactionError;

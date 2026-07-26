@@ -134,6 +134,16 @@ pub(super) fn record_o3_data_access_outcome(
             completion,
         )?
     };
+    if completed_live_data_access
+        && matches!(
+            execution.execution().memory_access(),
+            Some(MemoryAccessKind::FloatLoad { .. })
+        )
+    {
+        state
+            .o3_runtime
+            .request_live_issue_after_writeback_change(response_tick);
+    }
     state.refresh_o3_writeback_wake(response_tick);
     if completed_live_data_access {
         state.buffered_o3_effects.remove(&access.request);

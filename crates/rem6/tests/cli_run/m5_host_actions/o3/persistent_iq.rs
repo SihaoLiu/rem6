@@ -9,6 +9,10 @@ use super::predicted_control::{
 };
 use super::*;
 
+#[path = "persistent_iq/fp_load_forwarding.rs"]
+mod fp_load_forwarding;
+#[path = "persistent_iq/fp_load_forwarding_fixture.rs"]
+mod fp_load_forwarding_fixture;
 #[path = "persistent_iq/mixed_compute.rs"]
 mod mixed_compute;
 #[path = "persistent_iq/mixed_compute_boundaries.rs"]

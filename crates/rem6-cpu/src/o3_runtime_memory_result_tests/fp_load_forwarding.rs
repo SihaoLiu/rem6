@@ -89,6 +89,32 @@ fn memory_result_runtime_stages_flw_and_fld_consumers_at_typed_dependency_bounda
 }
 
 #[test]
+fn memory_depth_one_with_deeper_live_window_stages_fp_consumer() {
+    let mut runtime = O3RuntimeState::default();
+    assert!(runtime.set_window_depths(1, 5));
+    let head = float_load_event_with_width(0x8000, 1, MemoryWidth::Word);
+    assert!(stage_result(&mut runtime, &head));
+
+    assert_eq!(
+        runtime.stage_live_data_access_younger_window(
+            head.fetch().request_id(),
+            [
+                (Address::new(0x8004), float_mul_s()),
+                (Address::new(0x8008), independent_addi()),
+            ],
+        ),
+        1
+    );
+    assert!(
+        !runtime.can_stage_memory_result_window(&float_load_event_with_width(
+            0x800c,
+            2,
+            MemoryWidth::Word,
+        ))
+    );
+}
+
+#[test]
 fn memory_result_runtime_keeps_vector_load_consumer_outside_forwardable_lane() {
     let mut runtime = O3RuntimeState::default();
     runtime.set_scalar_memory_window_limit(4);
