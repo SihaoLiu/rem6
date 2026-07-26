@@ -365,17 +365,16 @@ fn o3_persistent_iq_policy_descends_and_rejects_conditional_evidence() {
     let definitions = parsed_function_definition_names("synthetic.rs", source);
     assert_eq!(function_definition_count(&definitions, "anchor"), 2);
     assert_eq!(function_definition_count(&definitions, "descendant"), 1);
+    let count = |source: &str| module_path_attachment_count(source, "typed", "typed.rs");
     for conditional in ["cfg(any())", "cfg_attr(all(), cfg(any()))"] {
         for marker in ["#", "#!"] {
             let module = format!("{marker}[{conditional}]\n#[path = \"typed.rs\"]\nmod typed;");
             let test = format!("{marker}[{conditional}]\n#[test]\nfn typed_anchor() {{}}");
-            assert_eq!(
-                module_path_attachment_count(&module, "typed", "typed.rs"),
-                0
-            );
+            assert_eq!(count(&module), 0);
             assert!(parsed_enabled_test_definition_names("synthetic.rs", &test).is_empty());
         }
     }
+    assert_eq!(count("#[path = \"typed.rs\"] mod typed {}"), 0);
 }
 
 fn parsed_function_definition_names(relative: &str, source: &str) -> Vec<String> {
@@ -422,6 +421,7 @@ fn module_path_attachment_count(source: &str, module_name: &str, expected_path: 
                 return false;
             };
             module.ident == module_name
+                && module.content.is_none()
                 && !has_conditional_compilation_attribute(&module.attrs)
                 && module.attrs.iter().any(|attribute| {
                     let syn::Meta::NameValue(value) = &attribute.meta else {

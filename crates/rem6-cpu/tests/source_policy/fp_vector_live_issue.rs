@@ -557,7 +557,17 @@ fn fp_vector_live_issue_locks_task8_typed_forwarding_policy() {
                 ),
                 0,
             );
-            let gated_child = format!("{}{child}", conditional.replacen("#[", "#![", 1));
+            let inner = conditional.replacen("#[", "#![", 1);
+            assert_eq!(
+                active_unconditional_path_owned_module_declaration_count(
+                    &format!("{inner}{source}"),
+                    &child,
+                    relative,
+                    module,
+                ),
+                0,
+            );
+            let gated_child = format!("{inner}{child}");
             assert_eq!(
                 active_unconditional_path_owned_module_declaration_count(
                     &source,

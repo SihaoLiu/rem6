@@ -35,7 +35,9 @@ fn fp_vector_live_issue_policy_has_one_focused_child_attachment() {
         let gated = source.replacen(attachment, &format!("{conditional}{attachment}"), 1);
         assert_ne!(gated, source, "conditional attachment mutation must apply");
         assert!(!child_is_active(&gated, &child));
-        let gated_child = format!("{}{child}", conditional.replacen("#[", "#![", 1));
+        let inner = conditional.replacen("#[", "#![", 1);
+        assert!(!child_is_active(&format!("{inner}{source}"), &child));
+        let gated_child = format!("{inner}{child}");
         assert!(!child_is_active(&source, &gated_child));
     }
 }
@@ -12637,7 +12639,7 @@ fn active_unconditional_path_owned_module_declaration_count(
     path: &str,
     module: &str,
 ) -> usize {
-    if inner_attribute_lines(child).is_empty() {
+    if inner_attribute_lines(parent).is_empty() && inner_attribute_lines(child).is_empty() {
         active_test_path_owned_module_declaration_count(parent, path, module)
     } else {
         0
