@@ -5,6 +5,7 @@ use super::*;
 
 const DEPENDENT_FP_PC: &str = "0x80000048";
 const VECTOR_DESTINATION_PC: &str = "0x80000044";
+const VECTOR_SOURCE_CONSUMER_PC: &str = "0x8000004c";
 const DUMP_STATS_PC: &str = "0x8000006c";
 const EXIT_PC: &str = "0x80000070";
 
@@ -53,6 +54,10 @@ fn rem6_run_o3_persistent_iq_vector_destination_boundary() {
         vector.pointer("/fu_latency_class").and_then(Value::as_str),
         Some("vector_integer_mul"),
     );
+    assert!(super::queue_events(&json).iter().all(|event| {
+        event.pointer("/pc").and_then(Value::as_str) != Some(VECTOR_SOURCE_CONSUMER_PC)
+            || event.pointer("/action").and_then(Value::as_str) != Some("retained_dependency")
+    }));
 }
 
 #[test]
@@ -274,6 +279,8 @@ fn run_vector_destination_mixed_compute_json() -> Value {
     words.extend([
         vector_arith_type(0b100101, 0b010, 2, 1, 4),
         vector_unit_stride_store_type(true, 0b110, 12, 4),
+        vmv_x_s_type(4, 11),
+        s_type(4, 11, 12, 0b010),
         i_type(0, 0, 0, 10, 0x13),
         i_type(0, 0, 0, 11, 0x13),
         m5op(M5_DUMP_STATS),

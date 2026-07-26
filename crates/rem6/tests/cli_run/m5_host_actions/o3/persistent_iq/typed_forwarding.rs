@@ -121,3 +121,23 @@ fn rem6_run_o3_typed_live_forwarding_width_two_direct() {
         .and_then(Value::as_u64)
         .is_some_and(|rows| rows >= 2),);
 }
+
+#[test]
+fn rem6_run_o3_typed_live_forwarding_width_four_hierarchy() {
+    let json = run_typed_forwarding_json(4, "cache-fabric-dram", "detailed", &[]);
+    assert_typed_architecture(&json);
+    assert_typed_dependencies(&json);
+    for pointer in [
+        "/memory_resources/cache/data/activity",
+        "/memory_resources/transport/data/activity",
+        "/memory_resources/fabric/activity",
+        "/memory_resources/dram/activity",
+    ] {
+        assert!(
+            json.pointer(pointer)
+                .and_then(Value::as_u64)
+                .is_some_and(|activity| activity > 0),
+            "missing hierarchy activity {pointer}: {json}",
+        );
+    }
+}

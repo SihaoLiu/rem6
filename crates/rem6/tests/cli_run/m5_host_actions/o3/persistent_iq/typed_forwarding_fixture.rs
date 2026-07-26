@@ -14,6 +14,8 @@ pub(super) const TYPED_RESULTS: &str = "000010410a000000";
 pub(super) fn typed_forwarding_binary(name: &str) -> PathBuf {
     let mut words = mixed_compute_prefix();
     append_mixed_compute_head(&mut words);
+    // Keep an older vector-to-scalar row in the width-four scheduling cohort.
+    *words.last_mut().unwrap() = vmv_x_s_type(3, 6);
     words.extend([
         fp_add_s(4, 1, 2),            // f4 = 3.0f
         fp_mul_s(5, 4, 3),            // f5 = 9.0f, live f4

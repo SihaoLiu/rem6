@@ -17,6 +17,8 @@ mod mixed_compute_boundaries;
 mod mixed_compute_fixture;
 #[path = "persistent_iq/typed_forwarding.rs"]
 mod typed_forwarding;
+#[path = "persistent_iq/typed_forwarding_boundaries.rs"]
+mod typed_forwarding_boundaries;
 #[path = "persistent_iq/typed_forwarding_fixture.rs"]
 mod typed_forwarding_fixture;
 
