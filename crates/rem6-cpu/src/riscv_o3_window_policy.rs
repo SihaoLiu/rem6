@@ -651,6 +651,10 @@ mod tests {
             window.classify_younger(vector_mul_vv(4, 1, 2)),
             RiscvScalarIntegerYoungerDecision::Reject,
         );
+        assert_eq!(
+            window.classify_younger(vector_pop_count(11, 3, RiscvVectorMaskMode::Masked)),
+            RiscvScalarIntegerYoungerDecision::Reject,
+        );
     }
 
     #[test]
