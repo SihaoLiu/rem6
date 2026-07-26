@@ -231,7 +231,7 @@ impl O3RuntimeState {
         let producer = candidate.data_producers();
         let valid_producer = producer.len() == 1
             && producer[0].sequence() == pending.producer_sequence
-            && producer[0].source() == pending.producer_register
+            && producer[0].source() == O3ArchitecturalRegister::integer(pending.producer_register)
             && candidate.producer_sequences() == [pending.producer_sequence];
         let valid_lsq = pending.expected_lsq_bytes == PENDING_DATA_ADDRESS_LSQ_BYTES
             && self.snapshot.load_store_queue.iter().any(|entry| {

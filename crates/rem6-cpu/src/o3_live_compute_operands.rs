@@ -64,12 +64,6 @@ impl O3ArchitecturalRegister {
     }
 }
 
-impl PartialEq<Register> for O3ArchitecturalRegister {
-    fn eq(&self, other: &Register) -> bool {
-        self.integer_register() == Some(*other)
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct O3LiveComputeOperands {
     class: O3LiveComputeClass,
