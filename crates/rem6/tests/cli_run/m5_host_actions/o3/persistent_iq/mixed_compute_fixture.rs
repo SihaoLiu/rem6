@@ -289,7 +289,7 @@ pub(super) fn vmv_s_x_type(rs1: u8, vd: u8) -> u32 {
     vector_arith_type(0b010000, 0b110, 0, rs1, vd)
 }
 
-fn vmv_x_s_type(vs2: u8, rd: u8) -> u32 {
+pub(super) fn vmv_x_s_type(vs2: u8, rd: u8) -> u32 {
     vector_arith_type(0b010000, 0b010, vs2, 0, rd)
 }
 

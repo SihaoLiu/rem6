@@ -15,6 +15,10 @@ mod mixed_compute;
 mod mixed_compute_boundaries;
 #[path = "persistent_iq/mixed_compute_fixture.rs"]
 mod mixed_compute_fixture;
+#[path = "persistent_iq/typed_forwarding.rs"]
+mod typed_forwarding;
+#[path = "persistent_iq/typed_forwarding_fixture.rs"]
+mod typed_forwarding_fixture;
 
 const PERSISTENT_IQ_QUEUE_STATS: [(&str, &str); 11] = [
     ("enqueued_rows", "enqueued_rows"),

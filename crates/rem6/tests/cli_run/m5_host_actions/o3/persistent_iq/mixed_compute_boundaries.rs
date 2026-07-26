@@ -9,33 +9,31 @@ const DUMP_STATS_PC: &str = "0x8000006c";
 const EXIT_PC: &str = "0x80000070";
 
 #[test]
-fn rem6_run_o3_persistent_iq_dependent_fp_boundary() {
+fn rem6_run_o3_persistent_iq_dependent_fp_forwards_direct() {
     let json = run_dependent_fp_mixed_compute_json();
+    let producer = queue_event_at_pc(&json, FP_ADD_PC, "selected");
+    let consumer = queue_event_at_pc(&json, DEPENDENT_FP_PC, "selected");
+    assert_eq!(
+        producer.pointer("/issue_class").and_then(Value::as_str),
+        Some("scalar_float"),
+    );
+    assert_eq!(
+        consumer.pointer("/issue_class").and_then(Value::as_str),
+        Some("scalar_float"),
+    );
+    assert!(
+        consumer
+            .pointer("/service_tick")
+            .and_then(Value::as_u64)
+            .unwrap()
+            >= event_u64(
+                super::mixed_compute::o3_event_at_pc(&json, FP_ADD_PC),
+                "writeback_tick",
+            ),
+    );
     assert_eq!(
         json.pointer("/memory/0/hex").and_then(Value::as_str),
         Some("00001041"),
-        "dependent fmul.s result bytes: {json}",
-    );
-    let producer_queued = queue_event_at_pc(&json, FP_ADD_PC, "queued");
-    let producer_selected = queue_event_at_pc(&json, FP_ADD_PC, "selected");
-    assert_eq!(
-        producer_queued.pointer("/sequence"),
-        producer_selected.pointer("/sequence"),
-    );
-    assert!(super::queue_events(&json)
-        .iter()
-        .all(|event| { event.pointer("/pc").and_then(Value::as_str) != Some(DEPENDENT_FP_PC) }));
-    let dependent = super::mixed_compute::o3_event_at_pc(&json, DEPENDENT_FP_PC);
-    assert_eq!(
-        dependent
-            .pointer("/fu_latency_class")
-            .and_then(Value::as_str),
-        Some("scalar_float_mul"),
-    );
-    assert!(
-        event_u64(dependent, "commit_tick")
-            > event_u64(event_at_pc(&json, FP_ADD_PC), "commit_tick"),
-        "dependent fmul.s must retire after its queued producer: {json}",
     );
 }
 
