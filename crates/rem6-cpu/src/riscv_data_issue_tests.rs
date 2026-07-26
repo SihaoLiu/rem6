@@ -32,6 +32,8 @@ mod dependent_result_address_multiple;
 mod dependent_result_address_three_pending;
 #[path = "riscv_data_issue_tests/forwarding.rs"]
 mod forwarding;
+#[path = "riscv_data_issue_tests/fp_load_forwarding_cleanup.rs"]
+mod fp_load_forwarding_cleanup;
 #[path = "riscv_data_issue_tests/lifecycle.rs"]
 mod lifecycle;
 #[path = "riscv_data_issue_tests/multi_load.rs"]

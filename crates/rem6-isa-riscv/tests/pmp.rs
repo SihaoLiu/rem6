@@ -100,6 +100,56 @@ fn pmp_locked_entries_gate_machine_access_and_reject_later_writes() {
 }
 
 #[test]
+fn pmp_tor_partial_overlap_denies_before_lock_and_privilege_bypass() {
+    for (locked, privilege) in [
+        (false, RiscvPrivilegeMode::Machine),
+        (false, RiscvPrivilegeMode::Supervisor),
+        (true, RiscvPrivilegeMode::Machine),
+        (true, RiscvPrivilegeMode::Supervisor),
+    ] {
+        let mut pmp = RiscvPmpTable::new(2).unwrap();
+        pmp.write_addr(0, 0x8000_00c0 >> 2).unwrap();
+        pmp.write_addr(1, 0x8000_00c4 >> 2).unwrap();
+        pmp.write_config(
+            1,
+            RiscvPmpConfig::new(RiscvPmpAddressMode::Tor)
+                .with_read(true)
+                .with_locked(locked),
+        )
+        .unwrap();
+
+        assert_eq!(
+            pmp.check_access(0x8000_00c0, 8, RiscvPmpAccessKind::Read, privilege,),
+            Err(RiscvPmpError::AccessDenied {
+                address: 0x8000_00c0,
+                size: 8,
+                kind: RiscvPmpAccessKind::Read,
+                privilege,
+                matched_entry: Some(1),
+            }),
+            "locked={locked}, privilege={privilege:?}"
+        );
+    }
+
+    let mut unlocked = RiscvPmpTable::new(2).unwrap();
+    unlocked.write_addr(0, 0x8000_00c0 >> 2).unwrap();
+    unlocked.write_addr(1, 0x8000_00c4 >> 2).unwrap();
+    unlocked
+        .write_config(1, RiscvPmpConfig::new(RiscvPmpAddressMode::Tor))
+        .unwrap();
+    assert_eq!(
+        unlocked.check_access(
+            0x8000_00c0,
+            4,
+            RiscvPmpAccessKind::Write,
+            RiscvPrivilegeMode::Machine,
+        ),
+        Ok(()),
+        "a full match still uses the unlocked Machine-mode bypass"
+    );
+}
+
+#[test]
 fn pmp_locked_tor_entry_rejects_lower_bound_address_updates() {
     let mut pmp = RiscvPmpTable::new(2).unwrap();
 

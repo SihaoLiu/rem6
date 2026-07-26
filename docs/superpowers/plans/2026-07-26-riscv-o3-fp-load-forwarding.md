@@ -683,9 +683,12 @@ production correction was needed, commit only the fixture and tests.
 - Modify: `crates/rem6-cpu/src/o3_runtime_memory_result_tests/fp_load_forwarding.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_control_window_tests/fp_load_forwarding.rs`
 - Modify: `crates/rem6-cpu/src/o3_runtime_issue/service_tests/fp_load_forwarding.rs`
+- Create: `crates/rem6-cpu/src/riscv_data_issue_tests/fp_load_forwarding_cleanup.rs`
+- Modify: `crates/rem6-cpu/src/riscv_data_issue_tests.rs`
 - Create: `crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/fp_load_forwarding_boundaries.rs`
 - Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq.rs`
 - Modify as RED requires: existing sequence-owned cleanup owners only
+- Modify as RED requires: `crates/rem6-isa-riscv/src/pmp.rs` and `crates/rem6-isa-riscv/tests/pmp.rs` for a locked TOR partial-overlap denial
 
 - [ ] **Step 1: Write CPU RED tests for fail-closed lookup and recursive cleanup**
 
@@ -695,6 +698,8 @@ Add exact tests for:
 fp_load_missing_or_short_response_never_materializes_a_source
 fp_load_retry_clears_value_reservation_and_dependent_speculation
 fp_load_terminal_failure_invalidates_dependent_fp_suffix
+fp_load_retry_cleans_production_request_maps_before_fresh_flw_attempt
+fp_load_failure_cleans_production_request_maps_before_fresh_fld_attempt
 fp_load_wrong_class_waw_never_satisfies_consumer
 fp_load_vector_destination_remains_unforwardable
 ```
@@ -702,7 +707,13 @@ fp_load_vector_destination_remains_unforwardable
 For retry/failure, assert the producer and every dependent sequence disappear
 from queue residency and speculative execution, writeback reservations are
 released, no duplicate request remains, and a later retry cannot observe the
-old value or wake tick.
+old value or wake tick. Drive both terminal outcomes through `RiscvCore`, with
+the exact younger FP request resident in `outstanding_data` and
+`issued_data_for_fetches` before the callback. Prove those identities are
+removed, separately prove a naturally buffered atomic suffix is removed from
+`buffered_o3_effects`, and stage a fresh same-destination FP request after each
+path with a distinct data-request and runtime sequence and no source, wake, or
+writeback artifact.
 
 - [ ] **Step 2: Add real CLI failure and unsupported-shape boundaries**
 
@@ -722,10 +733,13 @@ rem6_run_o3_fp_load_forwarding_unsupported_fp_shapes_use_normal_execution
 rem6_run_o3_fp_load_forwarding_vector_load_boundary_uses_normal_execution
 ```
 
-The denied-load row must use the existing PMP diagnostic conventions, stage a
-dependent FP suffix before the terminal check, exit with the exact structured
-failure, create no output artifact, and expose no committed load or dependent
-result. Unsupported forms must include conversion, comparison, move,
+PMP authorization precedes live suffix staging, so the denied process cannot
+stage the dependent suffix. Pair it with an unrestricted bounded run of the
+same ELF/config proving the load-owned consumer is resident before response;
+the CPU Retry/Failed tests prove recursive cleanup. The denied run must use the
+existing PMP diagnostic conventions, exit with the exact structured failure,
+create no output artifact, and expose no target request, committed load, or
+dependent result. Unsupported forms must include conversion, comparison, move,
 classification, and one CSR/status-sensitive shape; they must produce correct
 architectural results through normal execution without queue lifecycle events
 at their PCs.
@@ -739,9 +753,10 @@ TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run rem6_run_o3_fp_load_for
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run rem6_run_o3_fp_load_forwarding_unsupported -- --nocapture
 ```
 
-Expected RED, if any: stale sequence-owned queue/speculative/writeback state or
-an unsupported row entering the live lane. Fix the existing cleanup path;
-never add an FP-specific parallel cleanup registry.
+Expected RED, if any: stale sequence-owned queue/speculative/writeback state,
+an unsupported row entering the live lane, or a locked TOR partial overlap
+falling through to Machine-mode default access. Fix the existing owner; never
+add an FP-specific parallel cleanup registry.
 
 - [ ] **Step 4: Commit and push**
 
@@ -750,7 +765,7 @@ TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib fp_load_ -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run rem6_run_o3_fp_load_forwarding -- --nocapture
 TMPDIR=$PWD/target/tmp cargo fmt --all
 git diff --check
-git add crates/rem6-cpu/src/o3_runtime_memory_result_tests/fp_load_forwarding.rs crates/rem6-cpu/src/o3_runtime_control_window_tests/fp_load_forwarding.rs crates/rem6-cpu/src/o3_runtime_issue/service_tests/fp_load_forwarding.rs crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq.rs crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/fp_load_forwarding_boundaries.rs crates/rem6-cpu/src/o3_runtime_issue/lifecycle_cleanup.rs crates/rem6-cpu/src/o3_runtime_issue/durable_cleanup.rs crates/rem6-cpu/src/o3_runtime_memory_window.rs crates/rem6-cpu/src/o3_runtime_control_window.rs
+git add crates/rem6-cpu/src/o3_runtime_memory_result_tests/fp_load_forwarding.rs crates/rem6-cpu/src/o3_runtime_control_window_tests/fp_load_forwarding.rs crates/rem6-cpu/src/o3_runtime_issue/service_tests/fp_load_forwarding.rs crates/rem6-cpu/src/riscv_data_issue_tests.rs crates/rem6-cpu/src/riscv_data_issue_tests/fp_load_forwarding_cleanup.rs crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq.rs crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/fp_load_forwarding_boundaries.rs crates/rem6-isa-riscv/src/pmp.rs crates/rem6-isa-riscv/tests/pmp.rs crates/rem6-cpu/src/o3_runtime_issue/lifecycle_cleanup.rs crates/rem6-cpu/src/o3_runtime_issue/durable_cleanup.rs crates/rem6-cpu/src/o3_runtime_memory_window.rs crates/rem6-cpu/src/o3_runtime_control_window.rs
 git commit -m "test: cover fp load forwarding cleanup"
 git push
 ```

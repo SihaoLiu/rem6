@@ -284,6 +284,19 @@ impl O3RuntimeState {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn live_issue_forwarding_artifacts_for_test(
+        &self,
+        sequence: u64,
+        source: O3ArchitecturalRegister,
+    ) -> (bool, Option<u64>, bool) {
+        (
+            self.live_issue_source_value(sequence, source).is_some(),
+            self.completed_live_data_access_ready_tick(sequence),
+            self.writeback_reservation(sequence).is_some(),
+        )
+    }
+
     pub(super) fn completed_live_data_access_ready_tick(&self, sequence: u64) -> Option<u64> {
         let live = self.live_data_accesses.iter().find(|live| {
             live.sequence == sequence && live.outcome == O3LiveDataAccessOutcome::Completed

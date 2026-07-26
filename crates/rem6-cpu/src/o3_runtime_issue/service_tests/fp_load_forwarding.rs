@@ -16,6 +16,15 @@ fn boxed_single(value: f32) -> u64 {
 }
 
 fn float_load_event(rd: u8) -> RiscvCpuExecutionEvent {
+    float_load_event_at(LOAD_PC, 10, 0x9000, rd)
+}
+
+fn float_load_event_at(
+    pc: u64,
+    fetch_sequence: u64,
+    address: u64,
+    rd: u8,
+) -> RiscvCpuExecutionEvent {
     let instruction = RiscvInstruction::FloatLoad {
         rd: f(rd),
         rs1: reg(10),
@@ -23,16 +32,16 @@ fn float_load_event(rd: u8) -> RiscvCpuExecutionEvent {
         width: MemoryWidth::Word,
     };
     RiscvCpuExecutionEvent::new(
-        fetch_event(LOAD_PC, 10),
+        fetch_event(pc, fetch_sequence),
         instruction,
         RiscvExecutionRecord::new(
             instruction,
-            LOAD_PC,
-            LOAD_PC + 4,
+            pc,
+            pc + 4,
             Vec::new(),
             Some(MemoryAccessKind::FloatLoad {
                 rd: f(rd),
-                address: 0x9000,
+                address,
                 width: MemoryWidth::Word,
             }),
         ),
@@ -252,4 +261,250 @@ fn fp_load_service_handles_nearest_fp_waw_and_two_producer_fan_in() {
         &[FloatRegisterWrite::new(f(5), boxed_single(15.0))],
     );
     assert_eq!(hart.read_float(f(4)), canonical_f4);
+}
+
+struct FpLoadCleanupFixture {
+    runtime: O3RuntimeState,
+    hart: RiscvHartState,
+    older: RiscvCpuExecutionEvent,
+    older_sequence: u64,
+    younger_sequence: u64,
+    consumer_sequence: u64,
+    descendant_sequence: u64,
+    consumer_admitted_tick: u64,
+}
+
+impl FpLoadCleanupFixture {
+    fn staged_with_younger_speculation() -> Self {
+        let mut runtime = O3RuntimeState::default();
+        assert!(runtime.set_window_depths(4, 8));
+        assert!(runtime.set_issue_width(4));
+        assert!(runtime.set_writeback_width(4));
+        let older = float_load_event_at(LOAD_PC, 10, 0x9000, 4);
+        let younger = float_load_event_at(BRANCH_PC, 11, 0x9010, 6);
+        for (event, request_sequence, issue_tick) in [(&older, 20, 31), (&younger, 21, 32)] {
+            assert!(runtime.stage_live_data_access_issue(
+                event,
+                request(request_sequence),
+                issue_tick,
+                O3DataAccessWindowPolicy::MemoryResultWindow,
+            ));
+        }
+        let [older_live, younger_live] = runtime.live_data_accesses.as_slice() else {
+            panic!("two FP loads remain live")
+        };
+        let older_sequence = older_live.sequence;
+        let younger_sequence = younger_live.sequence;
+        let consumer = float_mul_s(7, 6, 3);
+        let descendant = float_add_s(8, 7, 2);
+        assert_eq!(
+            runtime.stage_live_data_access_younger_window(
+                younger.fetch().request_id(),
+                [(Address::new(SECOND_PC), consumer)],
+            ),
+            1,
+        );
+        let consumer_sequence = runtime
+            .snapshot()
+            .reorder_buffer()
+            .iter()
+            .find(|entry| entry.pc() == Address::new(SECOND_PC))
+            .expect("load-dependent multiply stages")
+            .sequence();
+        let descendant_sequence = runtime
+            .stage_live_instruction(Address::new(THIRD_PC), descendant, 0)
+            .expect("dependent add stages behind the multiply");
+        runtime
+            .live_data_access_younger_sequences
+            .insert(descendant_sequence);
+        for (pc, instruction, request_sequence) in
+            [(SECOND_PC, consumer, 22), (THIRD_PC, descendant, 23)]
+        {
+            assert!(runtime.bind_live_staged_issue_packet(
+                Address::new(pc),
+                fp_decoded(instruction),
+                &[request(request_sequence)],
+                RESPONSE_TICK,
+            ));
+        }
+
+        let mut completed_younger = younger;
+        completed_younger.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
+        assert!(runtime
+            .complete_live_data_access_response(
+                &completed_younger,
+                request(21),
+                RESPONSE_TICK,
+                9,
+                Some(&2.0_f32.to_bits().to_le_bytes()),
+            )
+            .unwrap());
+        let younger_admitted_tick = runtime
+            .writeback_reservation(younger_sequence)
+            .expect("younger FP load has an admitted result")
+            .admitted_tick();
+        let mut hart = RiscvHartState::new(SECOND_PC);
+        hart.write_float(f(2), boxed_single(4.0));
+        hart.write_float(f(3), boxed_single(3.0));
+        let blocked = runtime
+            .service_live_issue_queue_at(&hart, RESPONSE_TICK)
+            .unwrap();
+        assert_eq!(blocked.issued_rows(), 0);
+        assert_eq!(blocked.next_service_tick(), Some(younger_admitted_tick));
+        let issued = runtime
+            .service_live_issue_queue_at(&hart, younger_admitted_tick)
+            .unwrap();
+        assert_eq!(issued.issued_rows(), 1);
+        let consumer_admitted_tick = runtime
+            .writeback_reservation(consumer_sequence)
+            .expect("load-dependent multiply owns speculative writeback")
+            .admitted_tick();
+        assert!(runtime
+            .live_speculative_executions
+            .iter()
+            .any(|row| row.sequence == consumer_sequence
+                && row.producer_sequences == [younger_sequence]));
+        assert_eq!(
+            runtime.live_issue.resident_sequences(),
+            &[descendant_sequence]
+        );
+        assert!(runtime.live_issue_trace_records().iter().any(|record| {
+            record.sequence() == descendant_sequence
+                && record.action() == O3LiveIssueTraceAction::RetainedDependency
+                && record.next_wake_tick() == Some(consumer_admitted_tick)
+        }));
+        assert!(runtime
+            .live_issue_source_value(
+                younger_sequence,
+                O3ArchitecturalRegister::floating_point(f(6)),
+            )
+            .is_some());
+
+        Self {
+            runtime,
+            hart,
+            older,
+            older_sequence,
+            younger_sequence,
+            consumer_sequence,
+            descendant_sequence,
+            consumer_admitted_tick,
+        }
+    }
+
+    fn terminate_older(&mut self, kind: RiscvDataAccessEventKind) -> RiscvCpuExecutionEvent {
+        let mut terminal = self.older.clone();
+        terminal.set_data_access_event_kind(kind);
+        assert!(self
+            .runtime
+            .complete_live_data_access_response(
+                &terminal,
+                request(20),
+                self.consumer_admitted_tick.saturating_sub(1),
+                12,
+                None,
+            )
+            .unwrap());
+        terminal
+    }
+
+    fn assert_sequence_owned_suffix_is_empty(&self, expected: O3LiveDataAccessOutcome) {
+        assert_eq!(self.runtime.live_data_accesses.len(), 1);
+        assert_eq!(
+            self.runtime.live_data_accesses[0].sequence,
+            self.older_sequence
+        );
+        assert_eq!(self.runtime.live_data_accesses[0].outcome, expected);
+        assert!(self.runtime.snapshot().reorder_buffer().is_empty());
+        assert!(self.runtime.snapshot().load_store_queue().is_empty());
+        assert!(self.runtime.live_issue.resident_sequences().is_empty());
+        assert!(self.runtime.live_speculative_executions.is_empty());
+        assert!(self.runtime.live_data_access_younger_sequences.is_empty());
+        assert!(self.runtime.writeback_reservations().is_empty());
+        assert!(self
+            .runtime
+            .younger_live_scalar_memory_requests(self.older.fetch().request_id(), request(20),)
+            .is_empty());
+        for sequence in [
+            self.younger_sequence,
+            self.consumer_sequence,
+            self.descendant_sequence,
+        ] {
+            assert!(self.runtime.writeback_reservation(sequence).is_none());
+        }
+        assert_eq!(
+            self.runtime.live_issue_source_value(
+                self.younger_sequence,
+                O3ArchitecturalRegister::floating_point(f(6)),
+            ),
+            None,
+        );
+        assert!(self
+            .runtime
+            .live_issue_trace_records()
+            .iter()
+            .any(|record| {
+                record.sequence() == self.descendant_sequence
+                    && record.action() == O3LiveIssueTraceAction::Squashed
+            }));
+    }
+}
+
+#[test]
+fn fp_load_retry_clears_value_reservation_and_dependent_speculation() {
+    let mut fixture = FpLoadCleanupFixture::staged_with_younger_speculation();
+    let retry = fixture.terminate_older(RiscvDataAccessEventKind::Retry);
+    fixture.assert_sequence_owned_suffix_is_empty(O3LiveDataAccessOutcome::Retried);
+    assert_eq!(
+        fixture.runtime.take_ready_live_data_access_event(u64::MAX),
+        Some(retry.clone()),
+    );
+    fixture
+        .runtime
+        .record_retired_instruction_with_trace(&retry, true);
+    assert!(fixture.runtime.live_data_accesses.is_empty());
+
+    let later_retry = float_load_event_at(LOAD_PC, 40, 0x9010, 6);
+    assert!(fixture.runtime.stage_live_data_access_issue(
+        &later_retry,
+        request(50),
+        fixture.consumer_admitted_tick + 1,
+        O3DataAccessWindowPolicy::MemoryResultWindow,
+    ));
+    let later_sequence = fixture.runtime.live_data_accesses[0].sequence;
+    assert_ne!(later_sequence, fixture.younger_sequence);
+    assert_eq!(
+        fixture.runtime.live_issue_source_value(
+            later_sequence,
+            O3ArchitecturalRegister::floating_point(f(6)),
+        ),
+        None,
+        "a later retry cannot observe the prior attempt's value or wake tick"
+    );
+    assert_eq!(
+        fixture
+            .runtime
+            .completed_live_data_access_ready_tick(later_sequence),
+        None,
+    );
+    assert!(fixture
+        .runtime
+        .writeback_reservation(later_sequence)
+        .is_none());
+    assert_eq!(fixture.hart.read_float(f(6)), 0);
+}
+
+#[test]
+fn fp_load_terminal_failure_invalidates_dependent_fp_suffix() {
+    let mut fixture = FpLoadCleanupFixture::staged_with_younger_speculation();
+    let failed = fixture.terminate_older(RiscvDataAccessEventKind::Failed);
+    fixture.assert_sequence_owned_suffix_is_empty(O3LiveDataAccessOutcome::Failed);
+    assert_eq!(
+        fixture.runtime.take_ready_live_data_access_event(u64::MAX),
+        Some(failed.clone()),
+    );
+    fixture
+        .runtime
+        .record_retired_instruction_with_trace(&failed, true);
+    assert!(fixture.runtime.live_data_access_lifecycle_is_quiescent());
 }

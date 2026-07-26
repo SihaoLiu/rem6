@@ -164,11 +164,14 @@ impl RiscvPmpRange {
         self.end
     }
 
-    fn contains_access(self, address: u64, size: u64) -> Result<bool, RiscvPmpError> {
+    fn access_match(self, address: u64, size: u64) -> Result<Option<bool>, RiscvPmpError> {
         let Some(last) = address.checked_add(size - 1) else {
             return Err(RiscvPmpError::AddressOverflow { address, size });
         };
-        Ok(address >= self.start && last < self.end)
+        if address >= self.end || last < self.start {
+            return Ok(None);
+        }
+        Ok(Some(address >= self.start && last < self.end))
     }
 }
 
@@ -318,26 +321,29 @@ impl RiscvPmpTable {
         }
 
         for (index, entry) in self.entries.iter().enumerate() {
-            if entry
+            let Some(contains_whole_access) = entry
                 .range
-                .map(|range| range.contains_access(address, size))
+                .map(|range| range.access_match(address, size))
                 .transpose()?
-                .unwrap_or(false)
-            {
+                .flatten()
+            else {
+                continue;
+            };
+            if contains_whole_access {
                 if privilege == RiscvPrivilegeMode::Machine && !entry.config.locked() {
                     return Ok(());
                 }
                 if entry.config.permits(kind) {
                     return Ok(());
                 }
-                return Err(RiscvPmpError::AccessDenied {
-                    address,
-                    size,
-                    kind,
-                    privilege,
-                    matched_entry: Some(index),
-                });
             }
+            return Err(RiscvPmpError::AccessDenied {
+                address,
+                size,
+                kind,
+                privilege,
+                matched_entry: Some(index),
+            });
         }
 
         self.default_access(address, size, kind, privilege)

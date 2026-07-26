@@ -11,6 +11,8 @@ use super::*;
 
 #[path = "persistent_iq/fp_load_forwarding.rs"]
 mod fp_load_forwarding;
+#[path = "persistent_iq/fp_load_forwarding_boundaries.rs"]
+mod fp_load_forwarding_boundaries;
 #[path = "persistent_iq/fp_load_forwarding_fixture.rs"]
 mod fp_load_forwarding_fixture;
 #[path = "persistent_iq/mixed_compute.rs"]

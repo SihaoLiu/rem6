@@ -34,7 +34,10 @@ fn float_load_event(width: MemoryWidth) -> RiscvCpuExecutionEvent {
     )
 }
 
-fn completed_float_load(width: MemoryWidth, data: &[u8]) -> (O3RuntimeState, u64, u64) {
+fn completed_float_load_response(
+    width: MemoryWidth,
+    data: Option<&[u8]>,
+) -> (O3RuntimeState, u64, u64) {
     let mut runtime = O3RuntimeState::default();
     let load = float_load_event(width);
     assert!(runtime.stage_live_data_access_issue_for_test(&load, request(20), 31));
@@ -42,13 +45,17 @@ fn completed_float_load(width: MemoryWidth, data: &[u8]) -> (O3RuntimeState, u64
     let mut completed = load;
     completed.set_data_access_event_kind(RiscvDataAccessEventKind::Completed);
     assert!(runtime
-        .complete_live_data_access_response(&completed, request(20), RESPONSE_TICK, 10, Some(data),)
+        .complete_live_data_access_response(&completed, request(20), RESPONSE_TICK, 10, data,)
         .unwrap());
     let admitted_tick = runtime
         .writeback_reservation(sequence)
         .expect("FP load owns a memory-result writeback reservation")
         .admitted_tick();
     (runtime, sequence, admitted_tick)
+}
+
+fn completed_float_load(width: MemoryWidth, data: &[u8]) -> (O3RuntimeState, u64, u64) {
+    completed_float_load_response(width, Some(data))
 }
 
 #[test]
@@ -101,4 +108,39 @@ fn fp_load_source_rejects_wrong_class_wrong_register_and_missing_reservation() {
         runtime.live_issue_source_value(sequence, O3ArchitecturalRegister::floating_point(f(4)),),
         None,
     );
+}
+
+#[test]
+fn fp_load_missing_or_short_response_never_materializes_a_source() {
+    for (label, width, data) in [
+        ("flw missing", MemoryWidth::Word, None),
+        (
+            "flw short",
+            MemoryWidth::Word,
+            Some(&[0x00, 0x00, 0x00][..]),
+        ),
+        (
+            "fld short",
+            MemoryWidth::Doubleword,
+            Some(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00][..]),
+        ),
+    ] {
+        let (runtime, sequence, _) = completed_float_load_response(width, data);
+        let source = O3ArchitecturalRegister::floating_point(f(4));
+
+        assert_eq!(
+            runtime.live_issue_source_value(sequence, source),
+            None,
+            "{label}"
+        );
+        assert_eq!(
+            runtime.completed_live_data_access_ready_tick(sequence),
+            None,
+            "{label}: malformed bytes never advertise a wake tick"
+        );
+        assert!(
+            runtime.writeback_reservation(sequence).is_some(),
+            "{label}: fail-closed lookup is independent of reservation ownership"
+        );
+    }
 }
