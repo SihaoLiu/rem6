@@ -5,6 +5,7 @@ use super::*;
 use crate::o3_dependency::O3RegisterClass;
 
 const BOXED_THREE: u64 = 0xffff_ffff_4040_0000;
+const BOXED_FIVE: u64 = 0xffff_ffff_40a0_0000;
 
 struct TypedForwardingFixture {
     runtime: O3RuntimeState,
@@ -172,6 +173,10 @@ fn typed_live_forwarding_rejects_wrong_class_write() {
             fp_record(producer_instruction, BRANCH_PC, f(4), BOXED_THREE),
         )
         .unwrap());
+    assert!(fixture
+        .runtime
+        .live_speculative_issue_candidate(Address::new(SECOND_PC), consumer_instruction)
+        .is_some());
     fixture
         .runtime
         .live_speculative_executions
@@ -210,9 +215,12 @@ fn typed_live_forwarding_selects_nearest_fp_waw_producer() {
 #[test]
 fn typed_live_forwarding_keeps_two_fp_fanin_producers() {
     let mut fixture = TypedForwardingFixture::new();
-    let left = fixture.stage(BRANCH_PC, float_add_s(4, 1, 2), 11);
-    let right = fixture.stage(SECOND_PC, float_add_s(6, 2, 3), 12);
-    let consumer = fixture.stage(THIRD_PC, float_mul_s(5, 4, 6), 13);
+    let left_instruction = float_add_s(4, 1, 2);
+    let right_instruction = float_add_s(6, 2, 3);
+    let consumer_instruction = float_mul_s(5, 4, 6);
+    let left = fixture.stage(BRANCH_PC, left_instruction, 11);
+    let right = fixture.stage(SECOND_PC, right_instruction, 12);
+    let consumer = fixture.stage(THIRD_PC, consumer_instruction, 13);
     let queue = fixture.queue();
 
     assert_eq!(
@@ -225,6 +233,66 @@ fn typed_live_forwarding_keeps_two_fp_fanin_producers() {
             .map(|producer| producer.sequence())
             .collect::<Vec<_>>(),
         [left, right],
+    );
+
+    let left_candidate = fixture
+        .runtime
+        .live_speculative_issue_candidate(Address::new(BRANCH_PC), left_instruction)
+        .unwrap();
+    assert!(fixture
+        .runtime
+        .record_live_speculative_execution(
+            left_candidate,
+            &[request(11)],
+            20,
+            fp_record(left_instruction, BRANCH_PC, f(4), BOXED_THREE),
+        )
+        .unwrap());
+    let right_candidate = fixture
+        .runtime
+        .live_speculative_issue_candidate(Address::new(SECOND_PC), right_instruction)
+        .unwrap();
+    assert!(fixture
+        .runtime
+        .record_live_speculative_execution(
+            right_candidate,
+            &[request(12)],
+            21,
+            fp_record(right_instruction, SECOND_PC, f(6), BOXED_FIVE),
+        )
+        .unwrap());
+    let left_ready = fixture
+        .runtime
+        .live_speculative_executions
+        .iter()
+        .find(|row| row.sequence == left)
+        .unwrap()
+        .admitted_writeback_tick;
+    let right_ready = fixture
+        .runtime
+        .live_speculative_executions
+        .iter()
+        .find(|row| row.sequence == right)
+        .unwrap()
+        .admitted_writeback_tick;
+    assert_ne!(left_ready, right_ready);
+
+    let consumer_candidate = fixture
+        .runtime
+        .live_speculative_issue_candidate(Address::new(THIRD_PC), consumer_instruction)
+        .unwrap();
+
+    assert_eq!(
+        consumer_candidate.forwarded_values(),
+        &[
+            O3LiveIssueForwardedValue::FloatingPoint(FloatRegisterWrite::new(f(4), BOXED_THREE,)),
+            O3LiveIssueForwardedValue::FloatingPoint(FloatRegisterWrite::new(f(6), BOXED_FIVE)),
+        ],
+    );
+    assert_eq!(consumer_candidate.producer_sequences(), &[left, right]);
+    assert_eq!(
+        consumer_candidate.issue_tick(0),
+        left_ready.max(right_ready),
     );
 }
 
