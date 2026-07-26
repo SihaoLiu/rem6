@@ -17,7 +17,7 @@ use crate::O3RuntimeFuLatencyClass;
 pub(super) struct O3LiveComputeCandidateMetadata {
     destination: O3RenameMapEntry,
     op_class: O3IssueOpClass,
-    integer_sources: Vec<Register>,
+    sources: Vec<O3ArchitecturalRegister>,
 }
 
 impl O3LiveComputeCandidateMetadata {
@@ -25,12 +25,12 @@ impl O3LiveComputeCandidateMetadata {
         destination: O3RenameMapEntry,
         operands: &O3LiveComputeOperands,
         instruction: RiscvInstruction,
-    ) -> Option<Self> {
-        Some(Self {
+    ) -> Self {
+        Self {
             destination,
             op_class: compute_op_class_from_operands(instruction, operands),
-            integer_sources: integer_sources(operands)?,
-        })
+            sources: operands.sources().to_vec(),
+        }
     }
 
     pub(super) const fn destination(&self) -> O3RenameMapEntry {
@@ -41,8 +41,8 @@ impl O3LiveComputeCandidateMetadata {
         self.op_class
     }
 
-    pub(super) fn integer_sources(&self) -> &[Register] {
-        &self.integer_sources
+    pub(super) fn sources(&self) -> &[O3ArchitecturalRegister] {
+        &self.sources
     }
 }
 
@@ -57,9 +57,8 @@ pub(super) fn compute_candidate_metadata(
     if !typed_destination_matches_rename_entry(operands.destination(), staged_rename_entry) {
         return None;
     }
-    let metadata =
-        O3LiveComputeCandidateMetadata::new(staged_rename_entry, &operands, instruction)?;
-    if has_unforwardable_live_source(runtime, consumer_index, operands.sources()) {
+    let metadata = O3LiveComputeCandidateMetadata::new(staged_rename_entry, &operands, instruction);
+    if has_unforwardable_live_vector_source(runtime, consumer_index, operands.sources()) {
         return None;
     }
     Some(metadata)
@@ -165,20 +164,6 @@ fn compute_op_class_from_operands(
     }
 }
 
-fn integer_sources(operands: &O3LiveComputeOperands) -> Option<Vec<Register>> {
-    operands
-        .sources()
-        .iter()
-        .copied()
-        .filter(|source| source.register_class() == O3RegisterClass::Integer)
-        .map(|source| {
-            u8::try_from(source.architectural())
-                .ok()
-                .and_then(|index| Register::new(index).ok())
-        })
-        .collect()
-}
-
 pub(super) fn rename_matches_integer_register(
     rename: O3RenameMapEntry,
     register: Register,
@@ -195,13 +180,13 @@ fn typed_destination_matches_rename_entry(
         && rename.architectural() == destination.architectural()
 }
 
-fn has_unforwardable_live_source(
+fn has_unforwardable_live_vector_source(
     runtime: &O3RuntimeState,
     consumer_index: usize,
     sources: &[O3ArchitecturalRegister],
 ) -> bool {
     sources.iter().copied().any(|source| {
-        source.register_class() != O3RegisterClass::Integer
+        source.register_class() == O3RegisterClass::Vector
             && older_live_source_producer(runtime, consumer_index, source)
     })
 }

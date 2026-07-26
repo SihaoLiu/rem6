@@ -11,6 +11,8 @@ use crate::o3_pipeline::O3IssueOpClass;
 
 #[path = "queue/compute.rs"]
 mod compute;
+#[path = "queue/forwarding.rs"]
+mod forwarding;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::o3_runtime) struct O3LiveIssuePacket {
@@ -49,7 +51,7 @@ pub(crate) struct O3LiveIssueSchedulingCandidate {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct O3LiveIssueSourceProducer {
     sequence: u64,
-    source: Register,
+    source: O3ArchitecturalRegister,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -199,7 +201,7 @@ impl O3LiveIssueSourceProducer {
         self.sequence
     }
 
-    pub(crate) const fn source(self) -> Register {
+    pub(crate) const fn source(self) -> O3ArchitecturalRegister {
         self.source
     }
 }
@@ -396,9 +398,12 @@ impl O3RuntimeState {
         {
             let expected_producer = O3LiveIssueSourceProducer {
                 sequence: producer_sequence,
-                source: producer_register,
+                source: O3ArchitecturalRegister::integer(producer_register),
             };
-            let mut data_producers = self.live_issue_source_producers(index, &[producer_register]);
+            let mut data_producers = self.live_issue_source_producers(
+                index,
+                &[O3ArchitecturalRegister::integer(producer_register)],
+            );
             if data_producers.is_empty()
                 && self
                     .pending_data_address_committed_producer_ready_tick(
@@ -434,7 +439,7 @@ impl O3RuntimeState {
                 kind: O3LiveSpeculativeIssueKind::Compute(metadata.destination()),
                 op_class: metadata.op_class(),
                 control_dependency: self.pending_control_sequence_for(sequence),
-                data_producers: self.live_issue_source_producers(index, metadata.integer_sources()),
+                data_producers: self.live_issue_source_producers(index, metadata.sources()),
             });
         }
         let control = o3_live_control_operands(instruction)?;
@@ -443,6 +448,12 @@ impl O3RuntimeState {
             None if entry.destination().is_none() && entry.rename_destination().is_none() => None,
             None => return None,
         };
+        let sources = control
+            .sources()
+            .iter()
+            .copied()
+            .map(O3ArchitecturalRegister::integer)
+            .collect::<Vec<_>>();
         Some(O3LiveIssueSchedulingCandidate {
             sequence,
             pc,
@@ -453,7 +464,7 @@ impl O3RuntimeState {
             },
             op_class: live_issue_op_class(instruction),
             control_dependency: self.pending_control_sequence_for(sequence),
-            data_producers: self.live_issue_source_producers(index, control.sources()),
+            data_producers: self.live_issue_source_producers(index, &sources),
         })
     }
 
@@ -465,14 +476,15 @@ impl O3RuntimeState {
         let mut forwarded_register_writes = Vec::new();
         let mut forwarded_ready_tick = 0;
         for producer in scheduling.data_producers.iter().copied() {
+            let source = producer.source().integer_register()?;
             let (write, ready_tick) =
-                match self.live_issue_source_value(producer.sequence(), producer.source()) {
+                match self.live_issue_source_value(producer.sequence(), source) {
                     Some((write, ready_tick)) => (Some(write), ready_tick),
                     None if scheduling.is_pending_data_address() => (
                         None,
                         self.pending_data_address_committed_producer_ready_tick(
                             producer.sequence(),
-                            producer.source(),
+                            source,
                         )?,
                     ),
                     None => return None,
@@ -483,7 +495,7 @@ impl O3RuntimeState {
             if let Some(write) = write {
                 if !forwarded_register_writes
                     .iter()
-                    .any(|forwarded: &RegisterWrite| forwarded.register() == producer.source())
+                    .any(|forwarded: &RegisterWrite| forwarded.register() == source)
                 {
                     forwarded_register_writes.push(write);
                 }
@@ -506,30 +518,9 @@ impl O3RuntimeState {
     fn live_issue_source_producers(
         &self,
         consumer_index: usize,
-        sources: &[Register],
+        sources: &[O3ArchitecturalRegister],
     ) -> Vec<O3LiveIssueSourceProducer> {
-        let mut producers = Vec::new();
-        for source in sources.iter().copied().filter(|source| !source.is_zero()) {
-            let producer = self.snapshot.reorder_buffer[..consumer_index]
-                .iter()
-                .rev()
-                .copied()
-                .find(|producer| {
-                    producer.is_live_staged()
-                        && producer.rename_destination()
-                            == Some((O3RegisterClass::Integer, u32::from(source.index())))
-                });
-            if let Some(producer) = producer {
-                let source_producer = O3LiveIssueSourceProducer {
-                    sequence: producer.sequence(),
-                    source,
-                };
-                if !producers.contains(&source_producer) {
-                    producers.push(source_producer);
-                }
-            }
-        }
-        producers
+        forwarding::source_producers(self, consumer_index, sources)
     }
 
     #[cfg(test)]

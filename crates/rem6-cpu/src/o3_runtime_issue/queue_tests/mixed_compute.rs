@@ -67,10 +67,44 @@ fn live_issue_queue_materializes_mixed_compute_classes() {
 }
 
 #[test]
-fn live_issue_queue_rejects_non_integer_live_source_producers() {
+fn live_issue_queue_admits_scalar_fp_live_source_producers() {
     let mut fixture = MixedComputeIssueFixture::new();
-    fixture.stage_and_bind(BRANCH_PC, float_add_s(4, 1, 2), 11);
+    let producer = fixture.stage_and_bind(BRANCH_PC, float_add_s(4, 1, 2), 11);
     let dependent = fixture.stage_and_bind(SECOND_PC, float_mul_s(5, 4, 3), 12);
+
+    assert!(fixture
+        .runtime
+        .enqueue_bound_live_issue_sequence_at(dependent, 20));
+    assert!(fixture
+        .runtime
+        .live_issue
+        .resident_sequences()
+        .contains(&dependent));
+    let queue = fixture.materialize();
+    let producers = queue
+        .entry(dependent)
+        .unwrap()
+        .scheduling()
+        .data_producers();
+    assert_eq!(producers.len(), 1);
+    assert_eq!(producers[0].sequence(), producer);
+}
+
+#[test]
+fn live_issue_queue_rejects_live_vector_source_producers() {
+    let mut fixture = MixedComputeIssueFixture::new();
+    let producer_instruction = addi(3, 0, 1);
+    fixture
+        .runtime
+        .stage_live_instruction_with_rename_destination(
+            Address::new(BRANCH_PC),
+            producer_instruction,
+            0,
+            Some((O3RegisterClass::Vector, 3)),
+        )
+        .unwrap();
+    bind_mixed(&mut fixture.runtime, BRANCH_PC, producer_instruction, 11);
+    let dependent = fixture.stage_and_bind(SECOND_PC, vector_move_to_scalar(11, 3), 12);
 
     assert!(fixture
         .runtime

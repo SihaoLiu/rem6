@@ -98,6 +98,22 @@ fn live_compute_operands_register_wrappers_expose_class_and_architectural_index(
 }
 
 #[test]
+fn integer_typed_identity_converts_only_to_integer_register() {
+    let identity = ireg(5);
+
+    assert_eq!(identity.integer_register(), Some(r(5)));
+    assert_eq!(identity.float_register(), None);
+}
+
+#[test]
+fn floating_point_typed_identity_converts_only_to_float_register() {
+    let identity = freg(6);
+
+    assert_eq!(identity.float_register(), Some(f(6)));
+    assert_eq!(identity.integer_register(), None);
+}
+
+#[test]
 fn live_compute_operands_classifies_supported_scalar_integer_fp_and_vector_results() {
     let cases = [
         (

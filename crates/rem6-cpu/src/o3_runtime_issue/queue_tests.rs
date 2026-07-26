@@ -7,6 +7,8 @@ use super::*;
 mod materialization;
 #[path = "queue_tests/mixed_compute.rs"]
 mod mixed_compute;
+#[path = "queue_tests/typed_forwarding.rs"]
+mod typed_forwarding;
 
 #[test]
 fn live_issue_queue_packet_binding_is_idempotent_and_exact() {

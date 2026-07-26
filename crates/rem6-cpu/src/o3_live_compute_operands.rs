@@ -48,6 +48,26 @@ impl O3ArchitecturalRegister {
     pub(crate) const fn architectural(self) -> u32 {
         self.architectural
     }
+
+    pub(crate) fn integer_register(self) -> Option<Register> {
+        (self.register_class == O3RegisterClass::Integer)
+            .then(|| u8::try_from(self.architectural).ok())
+            .flatten()
+            .and_then(|index| Register::new(index).ok())
+    }
+
+    pub(crate) fn float_register(self) -> Option<FloatRegister> {
+        (self.register_class == O3RegisterClass::FloatingPoint)
+            .then(|| u8::try_from(self.architectural).ok())
+            .flatten()
+            .and_then(|index| FloatRegister::new(index).ok())
+    }
+}
+
+impl PartialEq<Register> for O3ArchitecturalRegister {
+    fn eq(&self, other: &Register) -> bool {
+        self.integer_register() == Some(*other)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
