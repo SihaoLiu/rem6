@@ -445,8 +445,15 @@ impl O3RuntimeState {
                 };
             };
             let mut speculative_hart = hart.clone();
-            for write in candidate.forwarded_register_writes() {
-                speculative_hart.write(write.register(), write.value());
+            for value in candidate.forwarded_values() {
+                match value {
+                    O3LiveIssueForwardedValue::Integer(write) => {
+                        speculative_hart.write(write.register(), write.value());
+                    }
+                    O3LiveIssueForwardedValue::FloatingPoint(write) => {
+                        speculative_hart.write_float(write.register(), write.value());
+                    }
+                }
             }
             speculative_hart.set_pc(entry.scheduling().pc().get());
             let execution = match speculative_hart.execute_decoded(packet.decoded()) {

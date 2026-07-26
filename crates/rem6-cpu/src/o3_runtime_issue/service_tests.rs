@@ -11,6 +11,8 @@ mod mixed_compute;
 mod pending_address_publication;
 #[path = "service_tests/scheduler_request.rs"]
 mod scheduler_request;
+#[path = "service_tests/typed_forwarding.rs"]
+mod typed_forwarding;
 #[cfg(test)]
 pub(in crate::o3_runtime) use legacy_driver::service_live_issue_queue_until_boundary_for_test;
 
