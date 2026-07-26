@@ -115,24 +115,41 @@ pub(crate) fn o3_live_compute_operands(
 
     match instruction {
         RiscvInstruction::FloatAddS { rd, rs1, rs2, .. }
+        | RiscvInstruction::FloatAddD { rd, rs1, rs2, .. }
         | RiscvInstruction::FloatSubS { rd, rs1, rs2, .. }
+        | RiscvInstruction::FloatSubD { rd, rs1, rs2, .. }
         | RiscvInstruction::FloatMulS { rd, rs1, rs2, .. }
-        | RiscvInstruction::FloatDivS { rd, rs1, rs2, .. } => {
+        | RiscvInstruction::FloatMulD { rd, rs1, rs2, .. }
+        | RiscvInstruction::FloatDivS { rd, rs1, rs2, .. }
+        | RiscvInstruction::FloatDivD { rd, rs1, rs2, .. } => {
             Some(scalar_float_operands(rd, [rs1, rs2]))
         }
         RiscvInstruction::FloatMultiplyAddS {
             rd, rs1, rs2, rs3, ..
         }
+        | RiscvInstruction::FloatMultiplyAddD {
+            rd, rs1, rs2, rs3, ..
+        }
         | RiscvInstruction::FloatMultiplySubtractS {
+            rd, rs1, rs2, rs3, ..
+        }
+        | RiscvInstruction::FloatMultiplySubtractD {
             rd, rs1, rs2, rs3, ..
         }
         | RiscvInstruction::FloatNegativeMultiplySubtractS {
             rd, rs1, rs2, rs3, ..
         }
+        | RiscvInstruction::FloatNegativeMultiplySubtractD {
+            rd, rs1, rs2, rs3, ..
+        }
         | RiscvInstruction::FloatNegativeMultiplyAddS {
             rd, rs1, rs2, rs3, ..
+        }
+        | RiscvInstruction::FloatNegativeMultiplyAddD {
+            rd, rs1, rs2, rs3, ..
         } => Some(scalar_float_operands(rd, [rs1, rs2, rs3])),
-        RiscvInstruction::FloatSqrtS { rd, rs1, .. } => Some(scalar_float_operands(rd, [rs1])),
+        RiscvInstruction::FloatSqrtS { rd, rs1, .. }
+        | RiscvInstruction::FloatSqrtD { rd, rs1, .. } => Some(scalar_float_operands(rd, [rs1])),
         RiscvInstruction::VectorScalarMove(RiscvVectorScalarMoveInstruction::MoveToScalar {
             rd,
             vs2,

@@ -85,6 +85,9 @@ fn expect_operands(
     assert_eq!(operands.sources(), sources);
 }
 
+#[path = "o3_live_compute_operands_tests/double_precision.rs"]
+mod double_precision;
+
 #[test]
 fn live_compute_operands_register_wrappers_expose_class_and_architectural_index() {
     for (register, register_class, architectural) in [
@@ -244,13 +247,6 @@ fn live_compute_operands_deduplicates_sources_without_reordering() {
 #[rustfmt::skip]
 fn live_compute_operands_rejects_unsupported_fp_vector_and_system_families() {
     reject!(
-        fp2!(FloatAddD, 1, 2, 3), fp2!(FloatSubD, 1, 2, 3),
-        fp2!(FloatMulD, 1, 2, 3), fp2!(FloatDivD, 1, 2, 3),
-        fp3!(FloatMultiplyAddD, 1, 2, 3, 4),
-        fp3!(FloatMultiplySubtractD, 1, 2, 3, 4),
-        fp3!(FloatNegativeMultiplySubtractD, 1, 2, 3, 4),
-        fp3!(FloatNegativeMultiplyAddD, 1, 2, 3, 4),
-        RiscvInstruction::FloatSqrtD { rd: f(1), rs1: f(2), rounding_mode: rm() },
         fcmp!(FloatLessOrEqualS), fcmp!(FloatLessThanS),
         fcmp!(FloatEqualS), fcmp!(FloatEqualD),
         RiscvInstruction::FloatConvertSFromW { rd: f(1), rs1: r(2), rounding_mode: rm() },

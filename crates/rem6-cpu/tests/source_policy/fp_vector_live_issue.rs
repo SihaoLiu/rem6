@@ -2,6 +2,7 @@ use super::*;
 
 const MAX_LIVE_COMPUTE_OPERAND_LINES: usize = 320;
 const MAX_LIVE_COMPUTE_OPERAND_TEST_LINES: usize = 320;
+const MAX_LIVE_COMPUTE_DOUBLE_PRECISION_TEST_LINES: usize = 120;
 const MAX_O3_RUNTIME_LIVE_WINDOW_MIXED_COMPUTE_TEST_LINES: usize = 120;
 const MAX_LIVE_COMPUTE_QUEUE_LINES: usize = 320;
 const MAX_O3_RUNTIME_ISSUE_QUEUE_LINES: usize = 600;
@@ -37,17 +38,27 @@ fn fp_vector_live_issue_uses_one_focused_operand_authority() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let operand_path = root.join("src/o3_live_compute_operands.rs");
     let test_path = root.join("src/o3_live_compute_operands_tests.rs");
+    let double_precision_relative = "o3_live_compute_operands_tests/double_precision.rs";
+    let double_precision_test_path = root.join("src").join(double_precision_relative);
     let runtime_path = root.join("src/o3_runtime.rs");
     assert!(operand_path.exists());
     assert!(test_path.exists());
+    assert!(double_precision_test_path.exists());
     assert!(line_count(&operand_path) <= MAX_LIVE_COMPUTE_OPERAND_LINES);
     assert!(line_count(&test_path) <= MAX_LIVE_COMPUTE_OPERAND_TEST_LINES);
+    assert!(
+        line_count(&double_precision_test_path) <= MAX_LIVE_COMPUTE_DOUBLE_PRECISION_TEST_LINES
+    );
 
     let source = fs::read_to_string(&operand_path).unwrap();
     let tests = fs::read_to_string(&test_path).unwrap();
+    let double_precision_tests = fs::read_to_string(&double_precision_test_path).unwrap();
     let runtime = fs::read_to_string(&runtime_path).unwrap();
-    let compact = compact_rust_code(&fs::read_to_string(&operand_path).unwrap());
+    let compact = compact_rust_code(&production_rust_source(&source));
     let compact_tests = compact_rust_code(&tests);
+    let compact_double_precision_tests = compact_rust_code(
+        &rust_code_without_comments_and_literals(&double_precision_tests),
+    );
     let compact_runtime = compact_rust_code(&runtime);
     assert_eq!(
         compact
@@ -62,6 +73,58 @@ fn fp_vector_live_issue_uses_one_focused_operand_authority() {
     assert!(!compact_runtime.contains("pub(crate)modo3_live_compute_operands;"));
     assert!(!runtime.contains("#[allow(unused_imports)]"));
     assert!(!compact.contains("const_:fn("));
+
+    let double_precision_module = "double_precision";
+    assert_eq!(
+        active_unconditional_path_owned_module_declaration_count(
+            &tests,
+            &double_precision_tests,
+            double_precision_relative,
+            double_precision_module,
+        ),
+        1,
+    );
+    let attachment =
+        format!("#[path = \"{double_precision_relative}\"]\nmod {double_precision_module};");
+    for mutated_tests in [
+        tests.replacen(&attachment, &format!("#[cfg(any())]\n{attachment}"), 1),
+        tests.replacen(&attachment, "", 1),
+    ] {
+        assert_ne!(mutated_tests, tests, "attachment mutation must apply");
+        assert_eq!(
+            active_unconditional_path_owned_module_declaration_count(
+                &mutated_tests,
+                &double_precision_tests,
+                double_precision_relative,
+                double_precision_module,
+            ),
+            0,
+        );
+    }
+
+    assert!(focused_test_definitions_are_unconditional(
+        &double_precision_tests,
+        &[
+            "double_precision_live_compute_operands_match_single_precision_inventory",
+            "double_precision_live_compute_operands_deduplicate_sources_without_reordering",
+        ],
+    ));
+    for form in [
+        "FloatAddD",
+        "FloatSubD",
+        "FloatMulD",
+        "FloatDivD",
+        "FloatMultiplyAddD",
+        "FloatMultiplySubtractD",
+        "FloatNegativeMultiplySubtractD",
+        "FloatNegativeMultiplyAddD",
+        "FloatSqrtD",
+    ] {
+        assert!(
+            compact_double_precision_tests.contains(form),
+            "double-precision child missing {form}",
+        );
+    }
 
     for required in [
         "O3LiveComputeClass",
@@ -90,16 +153,55 @@ fn fp_vector_live_issue_uses_one_focused_operand_authority() {
         assert!(tests.contains(required), "tests missing {required}");
     }
 
+    for (single_precision, double_precision) in [
+        (
+            "RiscvInstruction::FloatAddS{",
+            "RiscvInstruction::FloatAddD{",
+        ),
+        (
+            "RiscvInstruction::FloatSubS{",
+            "RiscvInstruction::FloatSubD{",
+        ),
+        (
+            "RiscvInstruction::FloatMulS{",
+            "RiscvInstruction::FloatMulD{",
+        ),
+        (
+            "RiscvInstruction::FloatDivS{",
+            "RiscvInstruction::FloatDivD{",
+        ),
+        (
+            "RiscvInstruction::FloatMultiplyAddS{",
+            "RiscvInstruction::FloatMultiplyAddD{",
+        ),
+        (
+            "RiscvInstruction::FloatMultiplySubtractS{",
+            "RiscvInstruction::FloatMultiplySubtractD{",
+        ),
+        (
+            "RiscvInstruction::FloatNegativeMultiplySubtractS{",
+            "RiscvInstruction::FloatNegativeMultiplySubtractD{",
+        ),
+        (
+            "RiscvInstruction::FloatNegativeMultiplyAddS{",
+            "RiscvInstruction::FloatNegativeMultiplyAddD{",
+        ),
+        (
+            "RiscvInstruction::FloatSqrtS{",
+            "RiscvInstruction::FloatSqrtD{",
+        ),
+    ] {
+        assert_eq!(
+            (
+                compact.matches(single_precision).count(),
+                compact.matches(double_precision).count(),
+            ),
+            (1, 1),
+            "live arithmetic inventory changed for {single_precision} and {double_precision}",
+        );
+    }
+
     for positive_pattern in [
-        "RiscvInstruction::FloatAddS{",
-        "RiscvInstruction::FloatSubS{",
-        "RiscvInstruction::FloatMulS{",
-        "RiscvInstruction::FloatMultiplyAddS{",
-        "RiscvInstruction::FloatMultiplySubtractS{",
-        "RiscvInstruction::FloatNegativeMultiplySubtractS{",
-        "RiscvInstruction::FloatNegativeMultiplyAddS{",
-        "RiscvInstruction::FloatDivS{",
-        "RiscvInstruction::FloatSqrtS{",
         "RiscvVectorScalarMoveInstruction::MoveToScalar{",
         "RiscvVectorMaskReductionInstruction::PopCount{",
         "RiscvVectorMaskReductionInstruction::FirstSet{",
@@ -108,15 +210,6 @@ fn fp_vector_live_issue_uses_one_focused_operand_authority() {
     }
 
     for unsupported_pattern in [
-        "RiscvInstruction::FloatAddD{",
-        "RiscvInstruction::FloatSubD{",
-        "RiscvInstruction::FloatMulD{",
-        "RiscvInstruction::FloatDivD{",
-        "RiscvInstruction::FloatMultiplyAddD{",
-        "RiscvInstruction::FloatMultiplySubtractD{",
-        "RiscvInstruction::FloatNegativeMultiplySubtractD{",
-        "RiscvInstruction::FloatNegativeMultiplyAddD{",
-        "RiscvInstruction::FloatSqrtD{",
         "RiscvInstruction::FloatLessOrEqualS{",
         "RiscvInstruction::FloatLessThanS{",
         "RiscvInstruction::FloatEqualS{",
@@ -138,15 +231,6 @@ fn fp_vector_live_issue_uses_one_focused_operand_authority() {
     }
 
     for negative_pattern in [
-        "FloatAddD",
-        "FloatSubD",
-        "FloatMulD",
-        "FloatDivD",
-        "FloatMultiplyAddD",
-        "FloatMultiplySubtractD",
-        "FloatNegativeMultiplySubtractD",
-        "FloatNegativeMultiplyAddD",
-        "FloatSqrtD",
         "FloatLessOrEqualS",
         "FloatEqualD",
         "FloatConvertSFromW",
