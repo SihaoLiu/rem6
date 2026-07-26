@@ -566,8 +566,10 @@ fn rem6_run_executes_m5_switch_cpu_mode_transfer_from_real_riscv_execution() {
         "o3-runtime-state",
         "pc",
         "pmp",
+        "riscv-state-version",
         "tage-sc-l-branch-predictor",
         "tournament-branch-predictor",
+        "vector-state",
         "xregs",
     ];
     for switch_index in 0..2 {
@@ -1833,8 +1835,10 @@ fn rem6_run_emits_m5_checkpoint_host_action_detail_from_real_riscv_execution() {
             "o3-runtime-state",
             "pc",
             "pmp",
+            "riscv-state-version",
             "tage-sc-l-branch-predictor",
             "tournament-branch-predictor",
+            "vector-state",
             "xregs",
         ],
     );
@@ -1922,8 +1926,10 @@ fn rem6_run_emits_m5_dram_checkpoint_host_action_detail_from_real_riscv_executio
             "o3-runtime-state",
             "pc",
             "pmp",
+            "riscv-state-version",
             "tage-sc-l-branch-predictor",
             "tournament-branch-predictor",
+            "vector-state",
             "xregs",
         ],
     );
