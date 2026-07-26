@@ -9,7 +9,7 @@ use rem6_interrupt::{
     InterruptController, InterruptError, InterruptEventKind, InterruptLineChannel, InterruptLineId,
     InterruptLinePort, InterruptPriority, InterruptRoute, InterruptSourceId, InterruptTargetId,
 };
-use rem6_isa_riscv::Register;
+use rem6_isa_riscv::{Register, RiscvVectorConfig};
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
@@ -583,6 +583,27 @@ fn system_action_executor_refreshes_live_riscv_core_checkpoint_before_manifest()
     assert_eq!(hart_run_state, &[0]);
     let pmp = executor.checkpoints().chunk(&component, "pmp").unwrap();
     assert_eq!(&pmp[0..2], &16_u16.to_le_bytes());
+    let riscv_state_version = executor
+        .checkpoints()
+        .chunk(&component, "riscv-state-version")
+        .unwrap();
+    assert_eq!(riscv_state_version, &[1]);
+    let vector_state = executor
+        .checkpoints()
+        .chunk(&component, "vector-state")
+        .unwrap();
+    assert_eq!(vector_state.len(), 526);
+    assert_eq!(vector_state[0], 1);
+    assert_eq!(
+        u32::from_le_bytes(vector_state[1..5].try_into().unwrap()),
+        0
+    );
+    assert_eq!(
+        &vector_state[5..13],
+        &RiscvVectorConfig::VILL_BIT.to_le_bytes()
+    );
+    assert_eq!(vector_state[13], 0);
+    assert!(vector_state[14..].iter().all(|byte| *byte == 0));
     let in_order_pipeline = executor
         .checkpoints()
         .chunk(&component, "in-order-pipeline")
@@ -646,6 +667,7 @@ fn system_action_executor_refreshes_live_riscv_core_checkpoint_before_manifest()
                         CheckpointChunk::new("o3-runtime-state", o3_runtime_state.to_vec()),
                         CheckpointChunk::new("pc", 0x8040_u64.to_le_bytes().to_vec()),
                         CheckpointChunk::new("pmp", pmp.to_vec()),
+                        CheckpointChunk::new("riscv-state-version", riscv_state_version.to_vec(),),
                         CheckpointChunk::new(
                             "tage-sc-l-branch-predictor",
                             tage_sc_l_branch_predictor.to_vec(),
@@ -654,6 +676,7 @@ fn system_action_executor_refreshes_live_riscv_core_checkpoint_before_manifest()
                             "tournament-branch-predictor",
                             tournament_branch_predictor.to_vec(),
                         ),
+                        CheckpointChunk::new("vector-state", vector_state.to_vec()),
                         CheckpointChunk::new("xregs", xregs.to_vec()),
                     ],
                 )],
