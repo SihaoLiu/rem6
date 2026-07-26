@@ -128,6 +128,12 @@ fn live_issue_queue_uses_typed_source_identities() {
         queue.entry(fp).unwrap().scheduling().op_class(),
         O3IssueOpClass::Float
     );
+    assert!(queue
+        .entry(fp)
+        .unwrap()
+        .scheduling()
+        .data_producers()
+        .is_empty());
 }
 
 #[test]

@@ -1,4 +1,4 @@
-use rem6_isa_riscv::{FloatRegister, FloatRegisterWrite, RiscvFloatRoundingMode, RiscvInstruction};
+use rem6_isa_riscv::{FloatRegister, RiscvFloatRoundingMode, RiscvInstruction};
 
 use super::*;
 use crate::o3_dependency::O3RegisterClass;
@@ -72,29 +72,12 @@ fn fp_raw(funct7: u32, rs2: u8, rs1: u8, rd: u8) -> u32 {
     (funct7 << 25) | (u32::from(rs2) << 20) | (u32::from(rs1) << 15) | (u32::from(rd) << 7) | 0x53
 }
 
-#[allow(dead_code)]
-fn fp_record(
-    instruction: RiscvInstruction,
-    pc: u64,
-    register: FloatRegister,
-    value: u64,
-) -> RiscvExecutionRecord {
-    RiscvExecutionRecord::new_with_instruction_bytes_and_float_register_writes(
-        instruction,
-        4,
-        pc,
-        pc + 4,
-        Vec::new(),
-        vec![FloatRegisterWrite::new(register, value)],
-        None,
-    )
-}
-
 #[test]
 fn typed_live_forwarding_discovers_fp_source_producer() {
     let mut fixture = TypedForwardingFixture::new();
     let producer = fixture.stage(BRANCH_PC, float_add_s(4, 1, 2), 11);
-    let consumer = fixture.stage(SECOND_PC, float_mul_s(5, 4, 3), 12);
+    let consumer_instruction = float_mul_s(5, 4, 3);
+    let consumer = fixture.stage(SECOND_PC, consumer_instruction, 12);
     let queue = fixture.queue();
     let producers = queue.entry(consumer).unwrap().scheduling().data_producers();
 
@@ -104,6 +87,10 @@ fn typed_live_forwarding_discovers_fp_source_producer() {
         producers[0].source(),
         O3ArchitecturalRegister::floating_point(f(4)),
     );
+    assert!(fixture
+        .runtime
+        .live_speculative_issue_candidate(Address::new(SECOND_PC), consumer_instruction)
+        .is_none());
 }
 
 #[test]
