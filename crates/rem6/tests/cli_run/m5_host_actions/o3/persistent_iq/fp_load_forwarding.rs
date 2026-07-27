@@ -520,8 +520,8 @@ fn assert_width_one_fixed_fu_collision_delay(run: FpLoadForwardingRun, json: &Va
             FP_LOAD_HIERARCHY_DIVIDE_BLOCKER_ZERO_PC,
             "scalar_integer_div",
             19,
-            54,
-            73,
+            50,
+            69,
         ),
         (
             FP_LOAD_HIERARCHY_BLOCKER_ONE_PC,
@@ -560,6 +560,13 @@ fn assert_width_one_fixed_fu_collision_delay(run: FpLoadForwardingRun, json: &Va
             112,
         ),
     ];
+    let actual_timing = fixed_rows
+        .iter()
+        .map(|(pc, _, _, _, _)| {
+            let event = super::mixed_compute::o3_event_at_pc(json, pc);
+            (*pc, event_u64(event, "issue_tick"), raw_ready_tick(event))
+        })
+        .collect::<Vec<_>>();
     for (expected_sequence, (pc, class, latency, issue_tick, raw_ready)) in
         fixed_rows.into_iter().enumerate()
     {
@@ -575,8 +582,12 @@ fn assert_width_one_fixed_fu_collision_delay(run: FpLoadForwardingRun, json: &Va
             "{pc}",
         );
         assert_eq!(event_u64(event, "fu_latency_cycles"), latency, "{pc}");
-        assert_eq!(event_u64(event, "issue_tick"), issue_tick, "{pc}");
-        assert_eq!(raw_ready_tick(event), raw_ready, "{pc}");
+        assert_eq!(
+            event_u64(event, "issue_tick"),
+            issue_tick,
+            "{pc}: {actual_timing:?}",
+        );
+        assert_eq!(raw_ready_tick(event), raw_ready, "{pc}: {actual_timing:?}",);
         assert_eq!(event_u64(event, "writeback_tick"), raw_ready, "{pc}");
     }
     let fixed_pc = run
@@ -614,13 +625,24 @@ fn assert_width_one_fixed_fu_collision_delay(run: FpLoadForwardingRun, json: &Va
         .pointer("/debug/fetch_trace")
         .and_then(Value::as_array)
         .unwrap_or_else(|| panic!("missing hierarchy fetch trace: {json}"));
-    for (pc, expected_tick) in [(run.load_pc(), 81), (run.multiply_pc(), 85)] {
+    let actual_fetch_timing = [run.load_pc(), run.multiply_pc()].map(|pc| {
+        let tick = fetch_trace
+            .iter()
+            .find(|record| record.pointer("/pc").and_then(Value::as_str) == Some(pc))
+            .map(|record| event_u64(record, "tick"));
+        (pc, tick)
+    });
+    for (pc, expected_tick) in [(run.load_pc(), 82), (run.multiply_pc(), 86)] {
         let matches = fetch_trace
             .iter()
             .filter(|record| record.pointer("/pc").and_then(Value::as_str) == Some(pc))
             .collect::<Vec<_>>();
         assert_eq!(matches.len(), 1, "one exact fetch for {pc}: {matches:#?}");
-        assert_eq!(event_u64(matches[0], "tick"), expected_tick, "{pc}");
+        assert_eq!(
+            event_u64(matches[0], "tick"),
+            expected_tick,
+            "{pc}: {actual_fetch_timing:?}",
+        );
     }
     assert_eq!(fixed_issue, 93);
     assert_eq!(load_issue, 95);

@@ -21,15 +21,15 @@ fn live_issue_state_enqueues_supported_bound_rows_once_and_orders_by_sequence() 
 #[test]
 fn live_issue_state_skips_bound_unsupported_float_vector_destination_and_system_rows() {
     let mut runtime = O3RuntimeState::default();
-    let unsupported_float_add_d = 0x0220_81d3;
+    let unsupported_float_equal_d = r_type(0x51, 2, 1, 0x2, 3, 0x53);
     assert!(matches!(
-        RiscvInstruction::decode_with_length(unsupported_float_add_d)
+        RiscvInstruction::decode_with_length(unsupported_float_equal_d)
             .unwrap()
             .instruction(),
-        RiscvInstruction::FloatAddD { .. }
+        RiscvInstruction::FloatEqualD { .. }
     ));
     for (pc, raw, request_sequence) in [
-        (BRANCH_PC, unsupported_float_add_d, 11),
+        (BRANCH_PC, unsupported_float_equal_d, 11),
         (SECOND_PC, 0x0220_81d7, 12),
         (THIRD_PC, 0x0000_0073, 13),
     ] {

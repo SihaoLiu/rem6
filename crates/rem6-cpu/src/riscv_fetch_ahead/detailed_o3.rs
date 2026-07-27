@@ -261,6 +261,7 @@ pub(super) fn data_access_waits_for_younger_fetch(
             fetch_events,
             &current,
             translated,
+            false,
         ),
         Some(DetailedFetchAheadCandidate::Blocked)
     ) {
@@ -815,6 +816,7 @@ fn scalar_integer_fu_window_candidate(
         fetch_events,
         current,
         translated,
+        false,
     ) {
         return candidate;
     }
@@ -879,6 +881,7 @@ fn scalar_integer_window_candidate_from(
                     fetch_events,
                     &younger,
                     translated,
+                    decision == RiscvScalarIntegerYoungerDecision::AdmitStop,
                 )
             {
                 return candidate;

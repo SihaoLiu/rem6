@@ -178,6 +178,22 @@ fn o3_fp_load_forwarding_matrix_is_exact_and_mutation_resistant() {
     );
     assert!(!matrix_contract(&fixture, &wrong_runtime_width));
 
+    let runtime_width_statement = [
+        "    assert_eq!(\n        issue.pointer(\"/configured",
+        "width\").and_then(Value::as_u64),\n        Some(4),\n    );",
+    ]
+    .join("_");
+    let commented_runtime_width = positive.replacen(
+        &runtime_width_statement,
+        &format!("/* {runtime_width_statement} */"),
+        1,
+    );
+    assert_ne!(
+        commented_runtime_width, positive,
+        "commented runtime-width mutation must apply"
+    );
+    assert!(!matrix_contract(&fixture, &commented_runtime_width));
+
     let weak_hierarchy_counter = positive.replacen(
         ".is_some_and(|activity| activity > 0)",
         ".is_some_and(|_| true)",
@@ -227,6 +243,23 @@ fn o3_fp_load_forwarding_boundaries_lock_cleanup_compatibility_and_timing() {
         compatibility.replacen("(\"schema_version\", 7)", "(\"schema_version\", 6)", 1);
     assert_ne!(relaxed_o3dh, compatibility, "O3DH mutation must apply");
     assert!(!boundary_contract(&boundaries, &runtime, &relaxed_o3dh));
+
+    let vector_queue_assertion =
+        r#"    assert_no_queue_lifecycle_at(&json, &[VECTOR_LOAD_PC], "vector load");"#;
+    let commented_vector_queue = boundaries.replacen(
+        vector_queue_assertion,
+        &format!("/* {vector_queue_assertion} */"),
+        1,
+    );
+    assert_ne!(
+        commented_vector_queue, boundaries,
+        "commented vector queue mutation must apply"
+    );
+    assert!(!boundary_contract(
+        &commented_vector_queue,
+        &runtime,
+        &compatibility,
+    ));
 }
 
 #[test]
@@ -270,8 +303,8 @@ fn o3_fp_load_forwarding_ledger_claim_is_bounded_and_score_neutral() {
 }
 
 fn matrix_contract(fixture: &str, positive: &str) -> bool {
-    let fixture = compact(fixture);
-    let positive = compact(positive);
+    let fixture = compact_rust(fixture);
+    let positive = compact_rust(positive);
     let configured_width_pointer = ["issue.pointer(\"/configured", "width\")"].join("_");
     let configured_memory_width_pointer =
         [".pointer(\"/configured", "memory", "width\")"].join("_");
@@ -301,13 +334,16 @@ fn matrix_contract(fixture: &str, positive: &str) -> bool {
 }
 
 fn boundary_contract(boundaries: &str, runtime: &str, compatibility: &str) -> bool {
-    let boundaries = compact(boundaries);
-    let runtime = compact(runtime);
-    let compatibility = compact(compatibility);
+    let boundaries = compact_rust(boundaries);
+    let runtime = compact_rust(runtime);
+    let compatibility = compact_rust(compatibility);
     boundaries.contains("rem6.cli.riscv_data_pmp_failure.v1")
         && boundaries.contains("completed_cpu_data_events")
         && boundaries.contains("writeback_reservations")
-        && boundaries.contains("assert_no_queue_lifecycle_at")
+        && boundaries
+            .matches("assert_no_queue_lifecycle_at(&json,")
+            .count()
+            == 3
         && boundaries.contains("unsupportedscalarFPforms")
         && boundaries.contains("vectorload")
         && runtime.contains("(\"checkpoint_version\",23)")
@@ -453,6 +489,13 @@ fn compact(source: &str) -> String {
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect()
+}
+
+fn compact_rust(source: &str) -> String {
+    let tokens = source
+        .parse::<proc_macro2::TokenStream>()
+        .expect("policy input must be valid Rust tokens");
+    compact(&tokens.to_string())
 }
 
 fn read(path: &Path) -> String {

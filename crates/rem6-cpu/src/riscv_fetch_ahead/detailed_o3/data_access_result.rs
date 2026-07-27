@@ -39,7 +39,6 @@ pub(super) fn data_access_result_fetch_ahead_shape(
 ) -> Option<Option<Register>> {
     Some(data_access_result_fetch_ahead_destination(state, instruction)?.integer_register())
 }
-
 fn data_access_result_fetch_ahead_destination(
     state: &RiscvCoreState,
     instruction: RiscvInstruction,
@@ -173,12 +172,12 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_authorization(
         role,
     ))
 }
-
 pub(super) fn fixed_fu_data_access_result_window_candidate(
     state: &RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
     fixed: &RiscvCompletedFetchInstruction,
     translated: TranslatedMemoryFetchAhead,
+    discover_missing_target: bool,
 ) -> Option<DetailedFetchAheadCandidate> {
     if !matches!(
         riscv_o3_fu_latency_class(fixed.decoded().instruction()),
@@ -196,7 +195,8 @@ pub(super) fn fixed_fu_data_access_result_window_candidate(
         completed_instruction_sequential_pc(fixed),
     ) {
         Ok(target) => target,
-        Err(candidate) => return Some(candidate),
+        Err(candidate) if discover_missing_target => return Some(candidate),
+        Err(_) => return None,
     };
     if !matches!(
         target.decoded().instruction(),
@@ -224,7 +224,6 @@ pub(super) fn fixed_fu_data_access_result_window_candidate(
         Some(fixed_destination),
     ))
 }
-
 pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
     state: &RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
@@ -241,7 +240,6 @@ pub(in crate::riscv_fetch_ahead) fn data_access_result_window_candidate(
         None,
     )
 }
-
 fn data_access_result_window_candidate_with_prefix(
     state: &RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
