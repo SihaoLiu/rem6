@@ -9,15 +9,17 @@ use rem6_cpu::{
     GShareBranchPredictorCheckpointPayload, GShareBranchPredictorError,
     InOrderPipelineCheckpointPayload, InOrderPipelineError, InOrderPipelineSnapshot,
     MultiperspectivePerceptronCheckpointPayload, MultiperspectivePerceptronError, O3PipelineError,
-    O3RuntimeCheckpointPayload, O3RuntimeError, O3RuntimeSnapshot, O3RuntimeStats, RiscvCore,
-    RiscvHartRunState, RiscvO3LiveCheckpointError, RiscvO3LiveDataHandoffCapture,
-    RiscvO3WritebackDebugState, TageScLBranchPredictorCheckpointPayload,
-    TageScLBranchPredictorError, TournamentBranchPredictorCheckpointPayload,
-    TournamentBranchPredictorError, RISCV_O3_LIVE_CHECKPOINT_CHUNK,
-    RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,
+    O3RuntimeCheckpointPayload, O3RuntimeError, O3RuntimeSnapshot, O3RuntimeStats,
+    PreparedRiscvCoreRestore, RiscvCore, RiscvCoreCheckpointRestoreError,
+    RiscvCoreCheckpointRestoreInput, RiscvHartRunState, RiscvO3LiveCheckpointCapture,
+    RiscvO3LiveCheckpointError, RiscvO3LiveCheckpointPayload, RiscvO3LiveCheckpointWake,
+    RiscvO3LiveDataHandoffCapture, RiscvO3WritebackDebugState,
+    TageScLBranchPredictorCheckpointPayload, TageScLBranchPredictorError,
+    TournamentBranchPredictorCheckpointPayload, TournamentBranchPredictorError,
+    RISCV_O3_LIVE_CHECKPOINT_CHUNK, RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,
 };
 use rem6_isa_riscv::{
-    FloatRegister, Register, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot,
+    FloatRegister, Register, RiscvHartState, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot,
     RiscvPmpSnapshotEntry, RiscvPmpTable, RiscvVectorArchitecturalState,
 };
 use rem6_kernel::{PendingEventSnapshot, SchedulerInstanceId};
@@ -25,9 +27,11 @@ use rem6_memory::Address;
 
 use crate::ExecutionModeTarget;
 
+mod live_hart;
 mod o3_payload;
 mod vector_state;
 
+use live_hart::O3_LIVE_HART_STATE_CHUNK;
 use o3_payload::{
     decode_o3_live_checkpoint, decode_o3_runtime_authority, O3_PENDING_STATE_CHUNK,
     O3_RUNTIME_STATE_CHUNK,
@@ -76,6 +80,8 @@ pub struct RiscvCoreCheckpointRecord {
     tage_sc_l_branch_predictor_payload: TageScLBranchPredictorCheckpointPayload,
     multiperspective_perceptron_payload: MultiperspectivePerceptronCheckpointPayload,
     o3_runtime_payload: O3RuntimeCheckpointPayload,
+    o3_live_checkpoint: Option<RiscvO3LiveCheckpointPayload>,
+    o3_live_hart_state: Option<RiscvHartState>,
 }
 
 struct RiscvCoreCheckpointRecordParts {
@@ -94,12 +100,35 @@ struct RiscvCoreCheckpointRecordParts {
     tage_sc_l_branch_predictor_payload: TageScLBranchPredictorCheckpointPayload,
     multiperspective_perceptron_payload: MultiperspectivePerceptronCheckpointPayload,
     o3_runtime_payload: O3RuntimeCheckpointPayload,
+    o3_live_checkpoint: Option<RiscvO3LiveCheckpointPayload>,
+    o3_live_hart_state: Option<RiscvHartState>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct RiscvCoreCheckerSnapshotSummary {
     checked_instructions: u64,
     mismatches: u64,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RiscvO3LiveSchedulerRestore {
+    component: CheckpointComponentId,
+    core: RiscvCore,
+    wake: RiscvO3LiveCheckpointWake,
+}
+
+impl RiscvO3LiveSchedulerRestore {
+    pub(crate) fn component(&self) -> &CheckpointComponentId {
+        &self.component
+    }
+
+    pub(crate) fn core(&self) -> &RiscvCore {
+        &self.core
+    }
+
+    pub(crate) const fn wake(&self) -> RiscvO3LiveCheckpointWake {
+        self.wake
+    }
 }
 
 impl RiscvCoreCheckerSnapshotSummary {
@@ -147,6 +176,8 @@ impl RiscvCoreCheckpointRecord {
             multiperspective_perceptron_payload:
                 RiscvCore::default_multiperspective_perceptron_checkpoint_payload(),
             o3_runtime_payload: RiscvCore::default_o3_runtime_checkpoint_payload(),
+            o3_live_checkpoint: None,
+            o3_live_hart_state: None,
         })
     }
 
@@ -167,6 +198,8 @@ impl RiscvCoreCheckpointRecord {
             tage_sc_l_branch_predictor_payload: parts.tage_sc_l_branch_predictor_payload,
             multiperspective_perceptron_payload: parts.multiperspective_perceptron_payload,
             o3_runtime_payload: parts.o3_runtime_payload,
+            o3_live_checkpoint: parts.o3_live_checkpoint,
+            o3_live_hart_state: parts.o3_live_hart_state,
         }
     }
 
@@ -236,6 +269,10 @@ impl RiscvCoreCheckpointRecord {
         &self.o3_runtime_payload
     }
 
+    pub const fn o3_live_checkpoint(&self) -> Option<&RiscvO3LiveCheckpointPayload> {
+        self.o3_live_checkpoint.as_ref()
+    }
+
     pub fn register(&self, register: Register) -> Option<u64> {
         self.registers
             .iter()
@@ -276,14 +313,37 @@ impl RiscvCoreCheckpointPort {
         &self,
         registry: &mut CheckpointRegistry,
     ) -> Result<RiscvCoreCheckpointRecord, CheckpointError> {
-        let record = self.capture_checked_record()?;
+        let record = self.capture_checked_record(None)?;
         self.write_record(registry, &record)?;
         Ok(record)
     }
 
-    fn capture_checked_record(&self) -> Result<RiscvCoreCheckpointRecord, CheckpointError> {
-        self.validate_capture()?;
-        Ok(self.capture_record())
+    pub fn capture_into_at(
+        &self,
+        registry: &mut CheckpointRegistry,
+        tick: u64,
+    ) -> Result<RiscvCoreCheckpointRecord, CheckpointError> {
+        let record = self.capture_checked_record(Some(tick))?;
+        self.write_record(registry, &record)?;
+        Ok(record)
+    }
+
+    fn capture_checked_record(
+        &self,
+        tick: Option<u64>,
+    ) -> Result<RiscvCoreCheckpointRecord, CheckpointError> {
+        self.core.finalize_quiescent_o3_writeback_for_checkpoint();
+        let projection = self.core.capture_checkpoint_projection(tick.unwrap_or(0));
+        let live = match projection.live_capture() {
+            RiscvO3LiveCheckpointCapture::Absent => None,
+            RiscvO3LiveCheckpointCapture::Captured(live) if tick.is_some() => Some(live.clone()),
+            RiscvO3LiveCheckpointCapture::Captured(_) | RiscvO3LiveCheckpointCapture::Rejected => {
+                return Err(CheckpointError::ComponentNotQuiescent {
+                    component: self.component.clone(),
+                });
+            }
+        };
+        Ok(self.capture_record_from_replay(projection.replay(), live))
     }
 
     fn write_record(
@@ -293,6 +353,8 @@ impl RiscvCoreCheckpointPort {
     ) -> Result<(), CheckpointError> {
         registry.remove_chunk(&self.component, RISCV_O3_LIVE_DATA_HANDOFF_CHUNK);
         registry.remove_chunk(&self.component, O3_PENDING_STATE_CHUNK);
+        registry.remove_chunk(&self.component, RISCV_O3_LIVE_CHECKPOINT_CHUNK);
+        registry.remove_chunk(&self.component, O3_LIVE_HART_STATE_CHUNK);
         registry.write_chunk(
             &self.component,
             PC_CHUNK,
@@ -372,18 +434,22 @@ impl RiscvCoreCheckpointPort {
             O3_RUNTIME_STATE_CHUNK,
             encode_o3_runtime_payload(record.o3_runtime_payload()),
         )?;
-        Ok(())
-    }
-
-    fn validate_capture(&self) -> Result<(), CheckpointError> {
-        self.core.finalize_quiescent_o3_writeback_for_checkpoint();
-        if self.core.data_access_lifecycle_is_quiescent() {
-            Ok(())
-        } else {
-            Err(CheckpointError::ComponentNotQuiescent {
-                component: self.component.clone(),
-            })
+        if let (Some(live), Some(hart)) = (
+            record.o3_live_checkpoint(),
+            record.o3_live_hart_state.as_ref(),
+        ) {
+            registry.write_chunk(
+                &self.component,
+                RISCV_O3_LIVE_CHECKPOINT_CHUNK,
+                live.encode().expect("captured O3 live checkpoint is valid"),
+            )?;
+            registry.write_chunk(
+                &self.component,
+                O3_LIVE_HART_STATE_CHUNK,
+                live_hart::encode(hart),
+            )?;
         }
+        Ok(())
     }
 
     pub fn restore_from(
@@ -402,6 +468,10 @@ impl RiscvCoreCheckpointPort {
         let o3_live_checkpoint = registry
             .chunk(&self.component, RISCV_O3_LIVE_CHECKPOINT_CHUNK)
             .map(|payload| decode_o3_live_checkpoint(&self.component, payload))
+            .transpose()?;
+        let o3_live_hart_state = registry
+            .chunk(&self.component, O3_LIVE_HART_STATE_CHUNK)
+            .map(|payload| live_hart::decode(&self.component, payload))
             .transpose()?;
         if o3_live_checkpoint.is_some() {
             if registry
@@ -426,7 +496,15 @@ impl RiscvCoreCheckpointPort {
                 Some(runtime),
                 registry.chunk(&self.component, O3_PENDING_STATE_CHUNK),
             )?;
-            return Err(RiscvCoreCheckpointError::O3LiveCheckpointNotRestorable {
+            if o3_live_hart_state.is_none() {
+                return Err(
+                    RiscvCoreCheckpointError::O3LiveCheckpointRequiresHartState {
+                        component: self.component.clone(),
+                    },
+                );
+            }
+        } else if o3_live_hart_state.is_some() {
+            return Err(RiscvCoreCheckpointError::O3LiveHartStateWithoutCheckpoint {
                 component: self.component.clone(),
             });
         }
@@ -576,6 +654,23 @@ impl RiscvCoreCheckpointPort {
             registry.chunk(&self.component, O3_RUNTIME_STATE_CHUNK),
             registry.chunk(&self.component, O3_PENDING_STATE_CHUNK),
         )?;
+        if let Some(hart) = o3_live_hart_state.as_ref() {
+            let matches_registers = registers
+                .iter()
+                .all(|(register, value)| hart.read(*register) == *value);
+            let matches_float = float_registers
+                .iter()
+                .all(|(register, value)| hart.read_float(*register) == *value);
+            if Address::new(hart.pc()) != pc
+                || !matches_registers
+                || !matches_float
+                || &hart.vector_architectural_state() != &vector_architectural_state
+            {
+                return Err(RiscvCoreCheckpointError::MismatchedO3LiveHartState {
+                    component: self.component.clone(),
+                });
+            }
+        }
         Ok(RiscvCoreCheckpointRecord::from_parts(
             RiscvCoreCheckpointRecordParts {
                 component: self.component.clone(),
@@ -593,6 +688,8 @@ impl RiscvCoreCheckpointPort {
                 tage_sc_l_branch_predictor_payload,
                 multiperspective_perceptron_payload,
                 o3_runtime_payload,
+                o3_live_checkpoint,
+                o3_live_hart_state,
             },
         ))
     }
@@ -601,128 +698,79 @@ impl RiscvCoreCheckpointPort {
         &self,
         record: &RiscvCoreCheckpointRecord,
     ) -> Result<(), RiscvCoreCheckpointError> {
-        self.core
-            .restore_pmp_snapshot(record.pmp_snapshot())
-            .map_err(|error| RiscvCoreCheckpointError::InvalidPmpSnapshot {
-                component: self.component.clone(),
-                error,
-            })?;
-        self.core.redirect_pc(record.pc());
-        for (register, value) in record.registers() {
-            self.core.write_register(*register, *value);
-        }
-        for (register, value) in record.float_registers() {
-            self.core.write_float_register(*register, *value);
-        }
-        match record.hart_run_state() {
-            RiscvHartRunState::Started => self.core.set_hart_started(),
-            RiscvHartRunState::StartPending => self.core.set_hart_start_pending(),
-            RiscvHartRunState::StopPending => self.core.set_hart_stop_pending(),
-            RiscvHartRunState::SuspendPending => self.core.set_hart_suspend_pending(),
-            RiscvHartRunState::ResumePending => self.core.set_hart_resume_pending(),
-            RiscvHartRunState::Stopped => self.core.set_hart_stopped(),
-            RiscvHartRunState::Suspended => self.core.set_hart_suspended(),
-        }
-        self.core
-            .restore_in_order_pipeline_snapshot(record.in_order_pipeline_snapshot().clone())
-            .map_err(
-                |error| RiscvCoreCheckpointError::InvalidInOrderPipelineSnapshot {
-                    component: self.component.clone(),
-                    error,
-                },
-            )?;
-        self.core
-            .restore_branch_predictor_checkpoint_payload(record.branch_predictor_payload().clone())
-            .map_err(
-                |error| RiscvCoreCheckpointError::InvalidBranchPredictorSnapshot {
-                    component: self.component.clone(),
-                    error,
-                },
-            )?;
-        self.core
-            .restore_gshare_branch_predictor_checkpoint_payload(
-                record.gshare_branch_predictor_payload().clone(),
-            )
-            .map_err(
-                |error| RiscvCoreCheckpointError::InvalidGShareBranchPredictorSnapshot {
-                    component: self.component.clone(),
-                    error,
-                },
-            )?;
-        self.core
-            .restore_bimode_branch_predictor_checkpoint_payload(
-                record.bimode_branch_predictor_payload().clone(),
-            )
-            .map_err(
-                |error| RiscvCoreCheckpointError::InvalidBiModeBranchPredictorSnapshot {
-                    component: self.component.clone(),
-                    error,
-                },
-            )?;
-        self.core
-            .restore_tournament_branch_predictor_checkpoint_payload(
-                record.tournament_branch_predictor_payload().clone(),
-            )
-            .map_err(|error| {
-                RiscvCoreCheckpointError::InvalidTournamentBranchPredictorSnapshot {
-                    component: self.component.clone(),
-                    error,
-                }
-            })?;
-        self.core
-            .restore_tage_sc_l_branch_predictor_checkpoint_payload(
-                record.tage_sc_l_branch_predictor_payload().clone(),
-            )
-            .map_err(
-                |error| RiscvCoreCheckpointError::InvalidTageScLBranchPredictorSnapshot {
-                    component: self.component.clone(),
-                    error,
-                },
-            )?;
-        self.core
-            .restore_multiperspective_perceptron_checkpoint_payload(
-                record.multiperspective_perceptron_payload().clone(),
-            )
-            .map_err(|error| {
-                RiscvCoreCheckpointError::InvalidMultiperspectivePerceptronSnapshot {
-                    component: self.component.clone(),
-                    error,
-                }
-            })?;
-        self.core
-            .restore_o3_runtime_checkpoint_payload(record.o3_runtime_payload().clone())
-            .map_err(|error| RiscvCoreCheckpointError::InvalidO3RuntimeSnapshot {
-                component: self.component.clone(),
-                error,
-            })?;
-        self.core
-            .restore_vector_architectural_state(record.vector_architectural_state());
+        let prepared = self.prepare_record(record)?;
+        self.core.install_prepared_checkpoint_restore(prepared);
         Ok(())
     }
 
+    fn prepare_record(
+        &self,
+        record: &RiscvCoreCheckpointRecord,
+    ) -> Result<PreparedRiscvCoreRestore, RiscvCoreCheckpointError> {
+        let mut hart = record
+            .o3_live_hart_state
+            .clone()
+            .unwrap_or_else(|| self.core.checkpoint_hart_state());
+        if record.o3_live_hart_state.is_none() {
+            hart.set_pc(record.pc().get());
+            for (register, value) in record.registers() {
+                hart.write(*register, *value);
+            }
+            for (register, value) in record.float_registers() {
+                hart.write_float(*register, *value);
+            }
+            hart.restore_vector_architectural_state(record.vector_architectural_state());
+        }
+        self.core
+            .prepare_checkpoint_restore(RiscvCoreCheckpointRestoreInput::new(
+                hart,
+                record.pmp_snapshot().clone(),
+                record.hart_run_state(),
+                record.in_order_pipeline_snapshot().clone(),
+                record.branch_predictor_payload().clone(),
+                record.gshare_branch_predictor_payload().clone(),
+                record.bimode_branch_predictor_payload().clone(),
+                record.tournament_branch_predictor_payload().clone(),
+                record.tage_sc_l_branch_predictor_payload().clone(),
+                record.multiperspective_perceptron_payload().clone(),
+                record.o3_runtime_payload().clone(),
+                record.o3_live_checkpoint().cloned(),
+            ))
+            .map_err(|error| RiscvCoreCheckpointError::InvalidPreparedRestore {
+                component: self.component.clone(),
+                error,
+            })
+    }
+
     fn capture_record(&self) -> RiscvCoreCheckpointRecord {
+        let replay = self.core.capture_stable_checkpoint_replay();
+        self.capture_record_from_replay(&replay, None)
+    }
+
+    fn capture_record_from_replay(
+        &self,
+        replay: &RiscvCoreCheckpointRestoreInput,
+        o3_live_checkpoint: Option<RiscvO3LiveCheckpointPayload>,
+    ) -> RiscvCoreCheckpointRecord {
+        let hart = &replay.hart;
         RiscvCoreCheckpointRecord::from_parts(RiscvCoreCheckpointRecordParts {
             component: self.component.clone(),
-            pc: self.core.pc(),
-            registers: all_register_values(&self.core),
-            float_registers: all_float_register_values(&self.core),
-            vector_architectural_state: self.core.vector_architectural_state(),
-            pmp_snapshot: self.core.pmp_snapshot(),
-            hart_run_state: self.core.hart_run_state(),
-            in_order_pipeline_snapshot: self.core.in_order_pipeline_snapshot(),
-            branch_predictor_payload: self.core.branch_predictor_checkpoint_payload(),
-            gshare_branch_predictor_payload: self.core.gshare_branch_predictor_checkpoint_payload(),
-            bimode_branch_predictor_payload: self.core.bimode_branch_predictor_checkpoint_payload(),
-            tournament_branch_predictor_payload: self
-                .core
-                .tournament_branch_predictor_checkpoint_payload(),
-            tage_sc_l_branch_predictor_payload: self
-                .core
-                .tage_sc_l_branch_predictor_checkpoint_payload(),
-            multiperspective_perceptron_payload: self
-                .core
-                .multiperspective_perceptron_checkpoint_payload(),
-            o3_runtime_payload: self.core.o3_runtime_checkpoint_payload(),
+            pc: Address::new(hart.pc()),
+            registers: all_hart_register_values(&hart),
+            float_registers: all_hart_float_register_values(&hart),
+            vector_architectural_state: hart.vector_architectural_state(),
+            pmp_snapshot: replay.pmp.clone(),
+            hart_run_state: replay.run_state,
+            in_order_pipeline_snapshot: replay.pipeline.clone(),
+            branch_predictor_payload: replay.branch.clone(),
+            gshare_branch_predictor_payload: replay.gshare.clone(),
+            bimode_branch_predictor_payload: replay.bimode.clone(),
+            tournament_branch_predictor_payload: replay.tournament.clone(),
+            tage_sc_l_branch_predictor_payload: replay.tage_sc_l.clone(),
+            multiperspective_perceptron_payload: replay.perceptron.clone(),
+            o3_runtime_payload: replay.o3.clone(),
+            o3_live_hart_state: o3_live_checkpoint.as_ref().map(|_| hart.clone()),
+            o3_live_checkpoint,
         })
     }
 }
@@ -737,10 +785,17 @@ impl RiscvCoreCheckpointBank {
     where
         I: IntoIterator<Item = RiscvCoreCheckpointPort>,
     {
-        let mut by_component = BTreeMap::new();
+        let mut by_component = BTreeMap::<CheckpointComponentId, RiscvCoreCheckpointPort>::new();
         for port in ports {
             let component = port.component().clone();
+            let core = port.core();
             if by_component.contains_key(&component) {
+                return Err(CheckpointError::DuplicateComponent { component });
+            }
+            if by_component
+                .values()
+                .any(|existing| existing.core().aliases_riscv_checkpoint_storage(&core))
+            {
                 return Err(CheckpointError::DuplicateComponent { component });
             }
             by_component.insert(component, port);
@@ -813,6 +868,33 @@ impl RiscvCoreCheckpointBank {
             .collect()
     }
 
+    pub(crate) fn pending_o3_writeback_wakes(
+        &self,
+    ) -> Vec<(SchedulerInstanceId, PendingEventSnapshot)> {
+        self.ports
+            .values()
+            .flat_map(|port| port.core().owned_o3_writeback_wakes())
+            .collect()
+    }
+
+    pub(crate) fn live_o3_scheduler_restores(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<Vec<RiscvO3LiveSchedulerRestore>, RiscvCoreCheckpointError> {
+        let mut restores = Vec::new();
+        for port in self.ports.values() {
+            let record = port.decode_from(registry)?;
+            if let Some(live) = record.o3_live_checkpoint() {
+                restores.push(RiscvO3LiveSchedulerRestore {
+                    component: port.component.clone(),
+                    core: port.core.clone(),
+                    wake: live.wake,
+                });
+            }
+        }
+        Ok(restores)
+    }
+
     pub(crate) fn pending_in_order_pipeline_wakes(
         &self,
     ) -> Vec<(SchedulerInstanceId, PendingEventSnapshot)> {
@@ -828,6 +910,12 @@ impl RiscvCoreCheckpointBank {
         }
     }
 
+    pub(crate) fn forget_discarded_o3_writeback_wakes(&self) {
+        for port in self.ports.values() {
+            port.core().forget_discarded_o3_writeback_wakes();
+        }
+    }
+
     pub fn register_all(&self, registry: &mut CheckpointRegistry) -> Result<(), CheckpointError> {
         for port in self.ports.values() {
             port.register(registry)?;
@@ -839,10 +927,29 @@ impl RiscvCoreCheckpointBank {
         &self,
         registry: &mut CheckpointRegistry,
     ) -> Result<Vec<RiscvCoreCheckpointRecord>, CheckpointError> {
+        self.capture_all_into_impl(registry, None)
+    }
+
+    pub fn capture_all_into_at(
+        &self,
+        registry: &mut CheckpointRegistry,
+        tick: u64,
+    ) -> Result<Vec<RiscvCoreCheckpointRecord>, CheckpointError> {
+        self.capture_all_into_impl(registry, Some(tick))
+    }
+
+    fn capture_all_into_impl(
+        &self,
+        registry: &mut CheckpointRegistry,
+        tick: Option<u64>,
+    ) -> Result<Vec<RiscvCoreCheckpointRecord>, CheckpointError> {
         let captured = self
             .ports
             .values()
-            .map(|port| port.capture_checked_record().map(|record| (port, record)))
+            .map(|port| {
+                port.capture_checked_record(tick)
+                    .map(|record| (port, record))
+            })
             .collect::<Result<Vec<_>, _>>()?;
         for (port, record) in &captured {
             port.write_record(registry, record)?;
@@ -924,15 +1031,11 @@ impl RiscvCoreCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<RiscvCoreCheckpointRecord>, RiscvCoreCheckpointError> {
-        self.validate_restore_from(registry)?;
-        let mut decoded = Vec::new();
-        for port in self.ports.values() {
-            decoded.push((port, port.decode_from(registry)?));
-        }
+        let decoded = self.decode_and_prepare_all(registry)?;
 
         let mut restored = Vec::new();
-        for (port, record) in decoded {
-            port.restore_record(&record)?;
+        for (port, record, prepared) in decoded {
+            port.core.install_prepared_checkpoint_restore(prepared);
             restored.push(record);
         }
         Ok(restored)
@@ -942,10 +1045,32 @@ impl RiscvCoreCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<(), RiscvCoreCheckpointError> {
-        for port in self.ports.values() {
-            port.decode_from(registry)?;
-        }
+        self.decode_and_prepare_all(registry)?;
         Ok(())
+    }
+
+    fn decode_and_prepare_all<'a>(
+        &'a self,
+        registry: &CheckpointRegistry,
+    ) -> Result<
+        Vec<(
+            &'a RiscvCoreCheckpointPort,
+            RiscvCoreCheckpointRecord,
+            PreparedRiscvCoreRestore,
+        )>,
+        RiscvCoreCheckpointError,
+    > {
+        let mut decoded = Vec::with_capacity(self.ports.len());
+        for port in self.ports.values() {
+            decoded.push((port, port.decode_from(registry)?));
+        }
+        decoded
+            .into_iter()
+            .map(|(port, record)| {
+                let prepared = port.prepare_record(&record)?;
+                Ok((port, record, prepared))
+            })
+            .collect()
     }
 }
 
@@ -1035,8 +1160,22 @@ pub enum RiscvCoreCheckpointError {
     O3LiveCheckpointConflictsWithDataHandoff {
         component: CheckpointComponentId,
     },
-    O3LiveCheckpointNotRestorable {
+    O3LiveCheckpointRequiresHartState {
         component: CheckpointComponentId,
+    },
+    O3LiveHartStateWithoutCheckpoint {
+        component: CheckpointComponentId,
+    },
+    InvalidO3LiveHartState {
+        component: CheckpointComponentId,
+        reason: &'static str,
+    },
+    MismatchedO3LiveHartState {
+        component: CheckpointComponentId,
+    },
+    InvalidPreparedRestore {
+        component: CheckpointComponentId,
+        error: RiscvCoreCheckpointRestoreError,
     },
     MismatchedO3PendingStateSnapshot {
         component: CheckpointComponentId,
@@ -1164,9 +1303,29 @@ impl fmt::Display for RiscvCoreCheckpointError {
                 "RISC-V core checkpoint component {} has conflicting O3 live checkpoint and live-data handoff authority",
                 component.as_str()
             ),
-            Self::O3LiveCheckpointNotRestorable { component } => write!(
+            Self::O3LiveCheckpointRequiresHartState { component } => write!(
                 formatter,
-                "RISC-V core checkpoint component {} has an O3 live checkpoint that is not yet restorable",
+                "RISC-V core checkpoint component {} has an O3 live checkpoint without source hart state",
+                component.as_str()
+            ),
+            Self::O3LiveHartStateWithoutCheckpoint { component } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has source hart state without an O3 live checkpoint",
+                component.as_str()
+            ),
+            Self::InvalidO3LiveHartState { component, reason } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has invalid O3 live hart state: {reason}",
+                component.as_str()
+            ),
+            Self::MismatchedO3LiveHartState { component } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has O3 live hart state that conflicts with stable architecture chunks",
+                component.as_str()
+            ),
+            Self::InvalidPreparedRestore { component, error } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} cannot prepare restore: {error}",
                 component.as_str()
             ),
             Self::MismatchedO3PendingStateSnapshot { component } => write!(
@@ -1185,20 +1344,20 @@ impl fmt::Display for RiscvCoreCheckpointError {
 
 impl Error for RiscvCoreCheckpointError {}
 
-fn all_register_values(core: &RiscvCore) -> Vec<(Register, u64)> {
+fn all_hart_register_values(hart: &RiscvHartState) -> Vec<(Register, u64)> {
     (0..XREG_COUNT)
         .map(|index| {
             let register = Register::new(index as u8).expect("register index is valid");
-            (register, core.read_register(register))
+            (register, hart.read(register))
         })
         .collect()
 }
 
-fn all_float_register_values(core: &RiscvCore) -> Vec<(FloatRegister, u64)> {
+fn all_hart_float_register_values(hart: &RiscvHartState) -> Vec<(FloatRegister, u64)> {
     (0..FREG_COUNT)
         .map(|index| {
             let register = FloatRegister::new(index as u8).expect("register index is valid");
-            (register, core.read_float_register(register))
+            (register, hart.read_float(register))
         })
         .collect()
 }

@@ -109,6 +109,28 @@ impl SchedulerCheckpointAccess<'_> {
         self.scheduler.pending_event_snapshot(id)
     }
 
+    pub fn schedule_at_kind<F>(
+        &mut self,
+        partition: PartitionId,
+        tick: Tick,
+        kind: ScheduledEventKind,
+        callback: F,
+    ) -> Result<PartitionEventId, SchedulerError>
+    where
+        F: FnOnce(Tick) + Send + 'static,
+    {
+        match kind {
+            ScheduledEventKind::Serial => {
+                self.scheduler
+                    .schedule_at(partition, tick, move |context| callback(context.now()))
+            }
+            ScheduledEventKind::Parallel => {
+                self.scheduler
+                    .schedule_parallel_at(partition, tick, move |context| callback(context.now()))
+            }
+        }
+    }
+
     pub fn validate_quiescent_snapshot_compatibility(
         &self,
         snapshot: &SchedulerSnapshot,

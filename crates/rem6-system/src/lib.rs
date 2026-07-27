@@ -1,6 +1,7 @@
-use rem6_cpu::{CpuId, RiscvCluster, RiscvClusterError, RiscvClusterTurn};
+use rem6_cpu::{CpuId, RiscvCluster, RiscvClusterError, RiscvClusterTurn, RiscvCore};
 use rem6_kernel::{
-    ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, SchedulerContext, Tick,
+    ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, ScheduledEventKind,
+    SchedulerCheckpointAccess, SchedulerContext, SchedulerError, Tick,
 };
 use rem6_mmio::MmioBus;
 use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
@@ -783,22 +784,32 @@ fn schedule_o3_writeback_wakes(
         let Some(tick) = core.requested_o3_writeback_wake_tick(scheduler.now()) else {
             continue;
         };
-        let fired = core.clone();
-        let event_id = if parallel {
-            scheduler.schedule_parallel_at(core.partition(), tick, move |context| {
-                fired.mark_o3_writeback_wake_fired(context.now());
-            })
+        let kind = if parallel {
+            ScheduledEventKind::Parallel
         } else {
-            scheduler.schedule_at(core.partition(), tick, move |context| {
-                fired.mark_o3_writeback_wake_fired(context.now());
-            })
-        }
-        .map_err(SystemError::Scheduler)?;
-        let event = scheduler
-            .pending_event_snapshot(event_id)
-            .expect("new O3 writeback wake is pending");
-        core.mark_o3_writeback_wake_scheduled(scheduler.instance_id(), event);
+            ScheduledEventKind::Serial
+        };
+        let mut checkpoint = scheduler.checkpoint_access();
+        let event_id = schedule_o3_writeback_wake(&core, &mut checkpoint, tick, kind)
+            .map_err(SystemError::Scheduler)?;
         scheduled.push(event_id);
     }
     Ok(scheduled)
+}
+
+pub(crate) fn schedule_o3_writeback_wake(
+    core: &RiscvCore,
+    scheduler: &mut SchedulerCheckpointAccess<'_>,
+    tick: Tick,
+    kind: ScheduledEventKind,
+) -> Result<PartitionEventId, SchedulerError> {
+    let fired = core.clone();
+    let event_id = scheduler.schedule_at_kind(core.partition(), tick, kind, move |now| {
+        fired.mark_o3_writeback_wake_fired(now);
+    })?;
+    let event = scheduler
+        .pending_event_snapshot(event_id)
+        .expect("new O3 writeback wake is pending");
+    core.mark_o3_writeback_wake_scheduled(scheduler.instance_id(), event);
+    Ok(event_id)
 }

@@ -1125,6 +1125,7 @@ impl SystemActionExecutor {
         mut scheduler_checkpoint_bank: Option<&mut SchedulerCheckpointBankGuard<'_>>,
     ) -> Result<(), SystemError> {
         let owned_scheduler_events = self.owned_scheduler_checkpoint_events();
+        let live_o3_restores = self.live_o3_scheduler_restores(checkpoints)?;
         let borrowed_scheduler_restore_mode = scheduler_checkpoint
             .as_ref()
             .map(|scheduler| {
@@ -1183,6 +1184,15 @@ impl SystemActionExecutor {
             }
             .map_err(SystemError::SchedulerCheckpoint)?;
         }
+        self.validate_live_o3_scheduler_restores(
+            checkpoints,
+            &live_o3_restores,
+            &owned_scheduler_events,
+            crate::scheduler_checkpoint::LiveO3SchedulerValidationMode::Restore,
+            borrowed_scheduler_restore_mode,
+            scheduler_checkpoint.as_deref(),
+            scheduler_checkpoint_bank.as_deref(),
+        )?;
         if let Some(memory_checkpoints) = &self.memory_checkpoints {
             memory_checkpoints
                 .validate_restore_from(checkpoints)
@@ -1331,12 +1341,13 @@ impl SystemActionExecutor {
     }
     fn restore_checkpoint_banks(
         &mut self,
-        scheduler_checkpoint: Option<
+        mut scheduler_checkpoint: Option<
             &mut crate::scheduler_checkpoint::SchedulerCheckpointContext<'_>,
         >,
-        scheduler_checkpoint_bank: Option<&mut SchedulerCheckpointBankGuard<'_>>,
+        mut scheduler_checkpoint_bank: Option<&mut SchedulerCheckpointBankGuard<'_>>,
     ) -> Result<(), SystemError> {
         let owned_scheduler_events = self.owned_scheduler_checkpoint_events();
+        let live_o3_restores = self.live_o3_scheduler_restores(&self.checkpoints)?;
         let borrowed_scheduler_restore_mode = scheduler_checkpoint
             .as_ref()
             .map(|scheduler| {
@@ -1379,13 +1390,15 @@ impl SystemActionExecutor {
         }
         if self.scheduler_checkpoints.is_some() {
             scheduler_checkpoint_bank
+                .as_deref_mut()
                 .expect("attached scheduler checkpoint bank is locked")
                 .restore_all_from_with_owned_events(&self.checkpoints, &owned_scheduler_events)
                 .map_err(SystemError::SchedulerCheckpoint)?;
         }
         if let Some(mode) = borrowed_scheduler_restore_mode {
-            let scheduler_checkpoint =
-                scheduler_checkpoint.expect("borrowed scheduler restore is present");
+            let scheduler_checkpoint = scheduler_checkpoint
+                .as_deref_mut()
+                .expect("borrowed scheduler restore is present");
             match mode {
                 BorrowedSchedulerRestoreMode::Snapshot => scheduler_checkpoint
                     .restore_from(&self.checkpoints, &owned_scheduler_events)
@@ -1403,6 +1416,12 @@ impl SystemActionExecutor {
             }
         }
         self.forget_pipeline_wakes_after_scheduler_restore(borrowed_scheduler_restore_mode);
+        Self::rebind_live_o3_scheduler_restores(
+            &live_o3_restores,
+            borrowed_scheduler_restore_mode,
+            scheduler_checkpoint.as_deref_mut(),
+            scheduler_checkpoint_bank.as_deref_mut(),
+        );
         if let Some(memory_checkpoints) = &self.memory_checkpoints {
             memory_checkpoints
                 .restore_all_from(&self.checkpoints)

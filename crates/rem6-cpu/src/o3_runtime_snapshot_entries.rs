@@ -49,6 +49,17 @@ impl O3ReorderBufferEntry {
         self
     }
 
+    #[doc(hidden)]
+    pub const fn with_live_staged_rename_for_checkpoint(
+        mut self,
+        register_class: O3RegisterClass,
+        architectural: u32,
+    ) -> Self {
+        self.rename_destination = Some((register_class, architectural));
+        self.live_staged = true;
+        self
+    }
+
     pub(super) fn mark_ready(&mut self) {
         self.ready = true;
     }

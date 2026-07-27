@@ -241,7 +241,11 @@ mod tests {
     use std::time::Duration;
 
     use rem6_checkpoint::CheckpointState;
-    use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
+    use rem6_isa_riscv::Register;
+    use rem6_kernel::{
+        PartitionId, PartitionSnapshot, PartitionedScheduler, ScheduledEventKind, SchedulerError,
+        SchedulerSnapshot,
+    };
     use rem6_memory::PartitionedMemoryStore;
     use rem6_stats::StatsRegistry;
 
@@ -250,10 +254,18 @@ mod tests {
     };
     use crate::{
         GuestEventId, GuestSourceId, HostAction, MemoryStoreCheckpointBank,
-        MemoryStoreCheckpointPort, SchedulerCheckpointError,
+        MemoryStoreCheckpointPort, RiscvCoreCheckpointBank, RiscvCoreCheckpointPort,
+        SchedulerCheckpointError,
     };
 
     use super::*;
+
+    mod live_o3_support {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/support/live_o3.rs"
+        ));
+    }
 
     fn scheduler_component(name: &str) -> CheckpointComponentId {
         CheckpointComponentId::new(name).unwrap()
@@ -1201,5 +1213,47 @@ mod tests {
             panic!("unexpected error: {error:?}");
         };
         assert_eq!(report.pending_event_count(), 1);
+    }
+
+    #[rustfmt::skip]
+    fn live_o3_action_fixture() -> (Arc<Mutex<PartitionedScheduler>>, live_o3_support::SeededLiveCore, SystemActionExecutor, CheckpointManifest) {
+        let scheduler = Arc::new(Mutex::new(PartitionedScheduler::new(1).unwrap()));
+        let seeded = live_o3_support::seed_live_core(0, &mut scheduler.lock().unwrap(), ScheduledEventKind::Serial);
+        let cpu = CheckpointComponentId::new("cpu0").unwrap();
+        let mut executor = SystemActionExecutor::with_checkpoint(StatsRegistry::new(), CheckpointRegistry::new());
+        executor.attach_riscv_checkpoint_bank(RiscvCoreCheckpointBank::new([RiscvCoreCheckpointPort::new(cpu.clone(), seeded.core.clone())]).unwrap()).unwrap();
+        executor.attach_scheduler_checkpoint_bank(SchedulerCheckpointBank::new([SchedulerCheckpointPort::new(scheduler_component("scheduler0"), Arc::clone(&scheduler))]).unwrap()).unwrap();
+        let checkpoint = HostActionRecord::new(live_o3_support::LIVE_TICK, PartitionId::new(0), PartitionId::new(0), GuestEventId::new(1), GuestSourceId::new(1), HostAction::Checkpoint { label: "live".into() });
+        let SystemActionOutcome::Checkpoint { manifest, .. } = executor.apply(&checkpoint).unwrap() else { unreachable!() };
+        assert_eq!(seeded.live.wake.scheduler_order, seeded.wake.order());
+        assert!([live_o3_support::O3LC, live_o3_support::O3LH, live_o3_support::O3RT].into_iter().all(|name| manifest.states().iter().find(|state| state.component() == &cpu).unwrap().chunks().iter().any(|chunk| chunk.name() == name)));
+        (scheduler, seeded, executor, manifest)
+    }
+
+    #[test]
+    #[rustfmt::skip]
+    fn live_o3_restore_rejects_preserved_effective_frontier_exhaustion_preflight() {
+        for (next_local, next_order) in [(u64::MAX - 1, 1), (1, u64::MAX - 1)] {
+            let (scheduler, seeded, mut executor, manifest) = live_o3_action_fixture();
+            scheduler.lock().unwrap().checkpoint_access().discard_exact_events(&[seeded.wake]).unwrap();
+            let template = scheduler.lock().unwrap().snapshot();
+            let exhausted = SchedulerSnapshot::with_parallel_worker_limit(template.now(), template.min_remote_delay(), template.max_parallel_workers(), vec![
+                PartitionSnapshot::quiescent(PartitionId::new(0), template.now(), next_local, next_order),
+            ]);
+            scheduler.lock().unwrap().restore_quiescent(&exhausted).unwrap();
+            let event = {
+                let mut scheduler = scheduler.lock().unwrap();
+                let id = scheduler.schedule_at(PartitionId::new(0), live_o3_support::LIVE_TICK + 2, |_| {}).unwrap();
+                scheduler.pending_event_snapshot(id).unwrap()
+            };
+            executor.register_scheduler_checkpoint_control_event(scheduler.lock().unwrap().instance_id(), event);
+            seeded.core.write_register(Register::new(7).unwrap(), 0xcafe);
+            let before = scheduler.lock().unwrap().snapshot();
+            assert!(event.id().local().saturating_add(1) == u64::MAX || event.order().saturating_add(1) == u64::MAX);
+            let restore = HostActionRecord::new(live_o3_support::LIVE_TICK + 1, PartitionId::new(0), PartitionId::new(0), GuestEventId::new(2), GuestSourceId::new(1), HostAction::RestoreCheckpoint { manifest });
+            assert!(executor.apply(&restore).is_err());
+            assert_eq!(seeded.core.read_register(Register::new(7).unwrap()), 0xcafe);
+            assert_eq!(scheduler.lock().unwrap().snapshot(), before);
+        }
     }
 }

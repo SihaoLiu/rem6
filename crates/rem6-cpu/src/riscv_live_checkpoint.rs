@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
+use std::sync::{Arc, Mutex};
 
 use rem6_isa_riscv::{FloatRegister, MemoryWidth};
 use rem6_kernel::{PartitionId, ScheduledEventKind, Tick};
@@ -28,6 +29,7 @@ pub enum RiscvO3LiveCheckpointCapture {
 pub struct RiscvO3CheckpointProjection {
     stable: crate::O3RuntimeCheckpointPayload,
     live: RiscvO3LiveCheckpointCapture,
+    replay: crate::RiscvCoreCheckpointRestoreInput,
 }
 
 impl RiscvO3CheckpointProjection {
@@ -37,6 +39,11 @@ impl RiscvO3CheckpointProjection {
 
     pub const fn live_capture(&self) -> &RiscvO3LiveCheckpointCapture {
         &self.live
+    }
+
+    #[doc(hidden)]
+    pub const fn replay(&self) -> &crate::RiscvCoreCheckpointRestoreInput {
+        &self.replay
     }
 }
 
@@ -310,20 +317,24 @@ impl RiscvCore {
     ) -> RiscvO3CheckpointProjection {
         let cpu_state = self.core.state.lock().expect("cpu core lock");
         let riscv_state = self.state.lock().expect("riscv core lock");
-        capture_checkpoint_projection_from_guards(&cpu_state, &riscv_state, captured_tick)
+        capture_checkpoint_projection_from_guards(self, &cpu_state, &riscv_state, captured_tick)
+    }
+
+    #[doc(hidden)]
+    pub fn capture_stable_checkpoint_replay(&self) -> crate::RiscvCoreCheckpointRestoreInput {
+        let _cpu_state = self.core.state.lock().expect("cpu core lock");
+        let state = self.state.lock().expect("riscv core lock");
+        checkpoint_replay_from_guarded_state(self, &state, stable_projection(&state), None)
     }
 }
 
 fn capture_checkpoint_projection_from_guards(
+    core: &RiscvCore,
     cpu: &crate::cpu_core::CpuCoreState,
     state: &RiscvCoreState,
     captured_tick: Tick,
 ) -> RiscvO3CheckpointProjection {
-    let projected_stats = state.o3_runtime.stats();
-    let stable = state
-        .o3_runtime
-        .checkpoint_payload_with_projected_stats(projected_stats)
-        .with_live_retire_gate(state.live_retire_gate.checkpoint());
+    let stable = stable_projection(state);
     let live = capture_live_from_guards(&cpu, state, captured_tick).map_or(
         RiscvO3LiveCheckpointCapture::Rejected,
         |capture| {
@@ -333,7 +344,49 @@ fn capture_checkpoint_projection_from_guards(
             )
         },
     );
-    RiscvO3CheckpointProjection { stable, live }
+    let captured = match &live {
+        RiscvO3LiveCheckpointCapture::Captured(live) => Some(live.clone()),
+        _ => None,
+    };
+    let replay = checkpoint_replay_from_guarded_state(core, state, stable.clone(), captured);
+    RiscvO3CheckpointProjection {
+        stable,
+        live,
+        replay,
+    }
+}
+
+fn stable_projection(state: &RiscvCoreState) -> crate::O3RuntimeCheckpointPayload {
+    state
+        .o3_runtime
+        .checkpoint_payload_with_projected_stats(state.o3_runtime.stats())
+        .with_live_retire_gate(state.live_retire_gate.checkpoint())
+}
+
+fn checkpoint_replay_from_guarded_state(
+    core: &RiscvCore,
+    state: &RiscvCoreState,
+    stable: crate::O3RuntimeCheckpointPayload,
+    live: Option<RiscvO3LiveCheckpointPayload>,
+) -> crate::RiscvCoreCheckpointRestoreInput {
+    let snapshot = RiscvCore {
+        core: core.core.clone(),
+        state: Arc::new(Mutex::new(state.clone())),
+    };
+    crate::RiscvCoreCheckpointRestoreInput::new(
+        snapshot.checkpoint_hart_state(),
+        snapshot.pmp_snapshot(),
+        snapshot.hart_run_state(),
+        snapshot.in_order_pipeline_snapshot(),
+        snapshot.branch_predictor_checkpoint_payload(),
+        snapshot.gshare_branch_predictor_checkpoint_payload(),
+        snapshot.bimode_branch_predictor_checkpoint_payload(),
+        snapshot.tournament_branch_predictor_checkpoint_payload(),
+        snapshot.tage_sc_l_branch_predictor_checkpoint_payload(),
+        snapshot.multiperspective_perceptron_checkpoint_payload(),
+        stable.clone(),
+        live,
+    )
 }
 
 fn capture_live_from_guards(
@@ -341,6 +394,42 @@ fn capture_live_from_guards(
     state: &RiscvCoreState,
     captured_tick: Tick,
 ) -> Result<Option<RiscvO3LiveCheckpointPayload>, RiscvO3LiveCheckpointError> {
+    let runtime = match state.o3_runtime.compute_checkpoint_projection()? {
+        Some(runtime) => runtime,
+        None => {
+            let data_quiescent = state.pending_callback_error.is_none()
+                && state.o3_runtime.live_data_access_lifecycle_is_quiescent()
+                && state.o3_runtime.live_issue_is_quiescent()
+                && !state.o3_runtime.has_pending_retirement_authority()
+                && !state.o3_writeback_wake.has_pending_checkpoint_authority()
+                && state.outstanding_data.is_empty()
+                && state.buffered_o3_effects.is_empty()
+                && state.pending_data_translations.is_empty()
+                && state.ready_translated_data.is_empty()
+                && state.memory_result_window_authorizations.is_empty()
+                && state
+                    .data_translation
+                    .as_ref()
+                    .is_none_or(|frontend| frontend.is_empty())
+                && state.events.iter().all(|event| {
+                    event.execution().memory_access().is_none()
+                        || state
+                            .issued_data_for_fetches
+                            .contains(&event.fetch().request_id())
+                });
+            let pending_issued = cpu.events().iter().any(|issued| {
+                issued.kind() == crate::CpuFetchEventKind::Issued
+                    && !cpu.events().iter().any(|event| {
+                        event.request_id() == issued.request_id()
+                            && event.kind() != crate::CpuFetchEventKind::Issued
+                    })
+            });
+            if !cpu.has_outstanding_fetch() && !pending_issued && data_quiescent {
+                return Ok(None);
+            }
+            return Err(invalid("drained capture retains operational authority"));
+        }
+    };
     if cpu.has_outstanding_fetch()
         || state.pending_fetch_prefix.is_some()
         || state.pending_terminal_memory_result.is_some()
@@ -375,17 +464,6 @@ fn capture_live_from_guards(
     {
         return Err(invalid("unsupported RISC-V core authority"));
     }
-    let runtime = match state.o3_runtime.compute_checkpoint_projection()? {
-        Some(runtime) => runtime,
-        None => {
-            if cpu.events().is_empty()
-                && !state.o3_writeback_wake.has_pending_checkpoint_authority()
-            {
-                return Ok(None);
-            }
-            return Err(invalid("drained capture retains operational authority"));
-        }
-    };
     let wake = state
         .o3_writeback_wake
         .checkpoint_scheduled_wake()

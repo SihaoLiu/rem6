@@ -15,20 +15,20 @@ use crate::{
     TageScLBranchPredictorCheckpointPayload, TournamentBranchPredictorCheckpointPayload,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvCoreCheckpointRestoreInput {
-    hart: RiscvHartState,
-    pmp: RiscvPmpSnapshot,
-    run_state: RiscvHartRunState,
-    pipeline: InOrderPipelineSnapshot,
-    branch: BranchPredictorCheckpointPayload,
-    gshare: GShareBranchPredictorCheckpointPayload,
-    bimode: BiModeBranchPredictorCheckpointPayload,
-    tournament: TournamentBranchPredictorCheckpointPayload,
-    tage_sc_l: TageScLBranchPredictorCheckpointPayload,
-    perceptron: MultiperspectivePerceptronCheckpointPayload,
-    o3: O3RuntimeCheckpointPayload,
-    live: Option<RiscvO3LiveCheckpointPayload>,
+    pub hart: RiscvHartState,
+    pub pmp: RiscvPmpSnapshot,
+    pub run_state: RiscvHartRunState,
+    pub pipeline: InOrderPipelineSnapshot,
+    pub branch: BranchPredictorCheckpointPayload,
+    pub gshare: GShareBranchPredictorCheckpointPayload,
+    pub bimode: BiModeBranchPredictorCheckpointPayload,
+    pub tournament: TournamentBranchPredictorCheckpointPayload,
+    pub tage_sc_l: TageScLBranchPredictorCheckpointPayload,
+    pub perceptron: MultiperspectivePerceptronCheckpointPayload,
+    pub o3: O3RuntimeCheckpointPayload,
+    pub live: Option<RiscvO3LiveCheckpointPayload>,
     live_data_handoff_present: bool,
 }
 

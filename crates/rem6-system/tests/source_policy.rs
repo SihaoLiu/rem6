@@ -328,7 +328,7 @@ fn riscv_checkpoint_emits_one_o3_authority_and_isolates_legacy_decode() {
         "struct RiscvCoreCheckpointRecordParts {",
         "#[derive(Clone, Copy, Debug, Eq, PartialEq)]",
     );
-    let write_record = source_section(&checkpoint_rs, "fn write_record(", "fn validate_capture(");
+    let write_record = source_section(&checkpoint_rs, "fn write_record(", "pub fn restore_from(");
 
     for definition in [record, record_parts] {
         assert!(
@@ -418,7 +418,7 @@ fn riscv_checkpoint_owns_one_versioned_vector_state_authority() {
         "struct RiscvCoreCheckpointRecordParts {",
         "#[derive(Clone, Copy, Debug, Eq, PartialEq)]",
     );
-    let write_record = source_section(&checkpoint, "fn write_record(", "fn validate_capture(");
+    let write_record = source_section(&checkpoint, "fn write_record(", "pub fn restore_from(");
     let decode_from = source_section(&checkpoint, "fn decode_from(", "fn restore_record(");
     let restore_record = source_section(&checkpoint, "fn restore_record(", "fn capture_record(");
     let compact_write = without_whitespace(write_record);
@@ -592,26 +592,27 @@ fn riscv_checkpoint_owns_one_versioned_vector_state_authority() {
         );
     }
 
-    assert_eq!(
-        restore_record
-            .matches("restore_vector_architectural_state")
-            .count(),
-        1,
-        "restore_record must apply the complete vector state exactly once"
-    );
-    let vector_restore = restore_record
-        .find("restore_vector_architectural_state")
-        .expect("missing complete vector restore");
-    let o3_restore = restore_record
-        .find("restore_o3_runtime_checkpoint_payload")
-        .expect("missing O3 runtime restore");
-    let last_fallible_restore = restore_record
-        .rfind("?;")
-        .expect("restore_record must retain fallible restore calls");
-    assert!(
-        vector_restore > o3_restore && vector_restore > last_fallible_restore,
-        "vector state must be applied after O3 runtime and every fallible restore call"
-    );
+    for required in [
+        "prepare_checkpoint_restore",
+        "install_prepared_checkpoint_restore",
+        "hart.restore_vector_architectural_state",
+        "unwrap_or_else(|| self.core.checkpoint_hart_state())",
+    ] {
+        assert!(
+            restore_record.contains(required),
+            "missing prepared restore `{required}`"
+        );
+    }
+    for forbidden in [
+        "restore_o3_runtime_checkpoint_payload",
+        "restore_branch_predictor_checkpoint_payload",
+        "restore_in_order_pipeline_snapshot",
+    ] {
+        assert!(
+            !restore_record.contains(forbidden),
+            "commit path retains `{forbidden}`"
+        );
+    }
     assert!(
         line_count(&checkpoint_path) <= 1800,
         "src/riscv_checkpoint.rs must remain at or below 1,800 lines"

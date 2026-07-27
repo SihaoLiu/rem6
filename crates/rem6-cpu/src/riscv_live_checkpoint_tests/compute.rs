@@ -57,6 +57,9 @@ fn compute_capture_rejects_live_issued_membership() {
 fn checkpoint_capture_holds_cpu_then_riscv_state_for_one_projection() {
     let (_fixture, projection) = fixture_projection();
     assert!(matches!(projection.live_capture(), RiscvO3LiveCheckpointCapture::Captured(_)));
+    assert_eq!(projection.replay().hart, _fixture.core.checkpoint_hart_state());
+    _fixture.core.write_register(reg(2), 99);
+    assert_ne!(projection.replay().hart.read(reg(2)), _fixture.core.read_register(reg(2)));
     let source = include_str!("../riscv_live_checkpoint.rs");
     let capture = source.split("pub fn capture_checkpoint_projection").nth(1).expect("bundled capture API");
     let cpu_lock = capture.find("cpu core lock").expect("CPU lock in capture");
@@ -64,6 +67,33 @@ fn checkpoint_capture_holds_cpu_then_riscv_state_for_one_projection() {
     let guarded = capture.find("capture_checkpoint_projection_from_guards").expect("guard-taking projection helper");
     assert!(cpu_lock < riscv_lock && riscv_lock < guarded);
     assert!(!capture[..guarded].contains("o3_runtime_checkpoint_payload("));
+    let guarded = source.split("fn capture_checkpoint_projection_from_guards").nth(1).unwrap();
+    assert!(guarded.contains("state: Arc::new(Mutex::new(state.clone()))"));
+    assert!(guarded.contains("RiscvCoreCheckpointRestoreInput::new"));
+}
+
+#[test]
+#[rustfmt::skip]
+fn capture_rejects_pending_fetch_and_in_order_pipeline_authority() {
+    let fetch_core = core();
+    fetch_core.core.state.lock().expect("cpu core lock").events.push(CpuFetchEvent::issued(CpuFetchRecord::new(0, PartitionId::new(0), MemoryRouteId::new(0), TransportEndpointId::new("cpu0.ifetch").unwrap(), request(0), Address::new(0x8000), AccessSize::new(4).unwrap())));
+    assert!(matches!(fetch_core.capture_checkpoint_projection(0).live_capture(), RiscvO3LiveCheckpointCapture::Rejected));
+
+    let wake = ComputeFixture::new();
+    wake.core.core.state.lock().expect("cpu core lock").events.push(compute_event(0x8000, 3, i_type(0, 0, 0, 0, 0x13), Vec::new(), Vec::new(), None, None).fetch);
+    wake.core.inner().advance_sequence_past(request(3));
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+    schedule_pipeline_wake(&wake.core, &mut scheduler);
+    { let state = wake.core.state.lock().expect("riscv core lock"); assert!(state.pending_in_order_pipeline_wake.is_some()); assert!(state.pending_in_order_pipeline_advance.is_some()); }
+    assert!(matches!(wake.core.capture_checkpoint_projection(100).live_capture(), RiscvO3LiveCheckpointCapture::Rejected));
+
+    let detached = ComputeFixture::new();
+    detached.core.core.state.lock().expect("cpu core lock").events.push(compute_event(0x8000, 3, i_type(0, 0, 0, 0, 0x13), Vec::new(), Vec::new(), None, None).fetch);
+    detached.core.inner().advance_sequence_past(request(3));
+    schedule_pipeline_wake(&detached.core, &mut scheduler);
+    detached.core.restore_in_order_pipeline_snapshot(RiscvCore::default_in_order_pipeline_snapshot()).unwrap();
+    assert!(!detached.core.state.lock().expect("riscv core lock").detached_in_order_pipeline_wakes.is_empty());
+    assert!(matches!(detached.core.capture_checkpoint_projection(100).live_capture(), RiscvO3LiveCheckpointCapture::Rejected));
 }
 
 #[test]

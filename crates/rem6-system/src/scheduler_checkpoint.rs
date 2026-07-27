@@ -1,3 +1,4 @@
+mod live_o3;
 mod locked_bank;
 
 use std::collections::BTreeMap;
@@ -14,6 +15,7 @@ use rem6_kernel::{
     SchedulerStorageId, Tick,
 };
 
+use live_o3::{rebind_live_o3_for_scheduler, validate_live_o3_for_scheduler};
 pub(crate) use locked_bank::SchedulerCheckpointBankGuard;
 
 const SCHEDULER_CHUNK: &str = "scheduler";
@@ -100,6 +102,12 @@ enum SchedulerCheckpointRestorePolicy {
 struct ResolvedSchedulerCheckpointEvents {
     discarded: Vec<PendingEventSnapshot>,
     preserved: Vec<PendingEventSnapshot>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LiveO3SchedulerValidationMode {
+    Restore,
+    SourceCapture,
 }
 
 impl ResolvedSchedulerCheckpointEvents {
@@ -1151,6 +1159,10 @@ pub enum SchedulerCheckpointError {
         component: CheckpointComponentId,
         reason: String,
     },
+    InvalidLiveO3Authority {
+        component: CheckpointComponentId,
+        reason: String,
+    },
     BorrowedSchedulerBindingMismatch {
         borrowed_component: CheckpointComponentId,
         borrowed_scheduler: SchedulerInstanceId,
@@ -1173,6 +1185,7 @@ impl SchedulerCheckpointError {
             Self::NonQuiescent { report } => Some(report.component()),
             Self::MissingChunk { component, .. }
             | Self::InvalidChunk { component, .. }
+            | Self::InvalidLiveO3Authority { component, .. }
             | Self::Scheduler { component, .. } => Some(component),
             Self::BorrowedSchedulerBindingMismatch {
                 borrowed_component, ..
@@ -1225,6 +1238,11 @@ impl fmt::Display for SchedulerCheckpointError {
                 "scheduler checkpoint component {} has invalid chunk: {reason}",
                 component.as_str()
             ),
+            Self::InvalidLiveO3Authority { component, reason } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has invalid live O3 scheduler authority: {reason}",
+                component.as_str()
+            ),
             Self::BorrowedSchedulerBindingMismatch {
                 borrowed_component,
                 borrowed_scheduler,
@@ -1268,6 +1286,7 @@ impl Error for SchedulerCheckpointError {
             | Self::NonQuiescent { .. }
             | Self::MissingChunk { .. }
             | Self::InvalidChunk { .. }
+            | Self::InvalidLiveO3Authority { .. }
             | Self::BorrowedSchedulerBindingMismatch { .. }
             | Self::BorrowedSchedulerStorageMismatch { .. } => None,
         }

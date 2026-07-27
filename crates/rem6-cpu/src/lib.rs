@@ -165,6 +165,11 @@ impl RiscvCore {
         self.core.clone()
     }
 
+    #[doc(hidden)]
+    pub fn aliases_riscv_checkpoint_storage(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.core.state, &other.core.state) || Arc::ptr_eq(&self.state, &other.state)
+    }
+
     pub fn id(&self) -> CpuId {
         self.core.id()
     }

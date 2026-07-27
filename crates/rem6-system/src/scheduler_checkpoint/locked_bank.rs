@@ -4,12 +4,15 @@ use std::sync::MutexGuard;
 use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
 use rem6_kernel::PartitionedScheduler;
 
+use crate::riscv_checkpoint::RiscvO3LiveSchedulerRestore;
+
 use super::{
-    resolve_owned_events, restore_scheduler_projection, snapshot_owned_event,
-    validate_scheduler_projection_restore, ResolvedSchedulerCheckpointEvents,
-    SchedulerCheckpointBank, SchedulerCheckpointError, SchedulerCheckpointOwnedEvent,
-    SchedulerCheckpointPort, SchedulerCheckpointQuiescenceReport, SchedulerCheckpointRecord,
-    SchedulerCheckpointSourceSnapshot,
+    decode_registered_snapshot, rebind_live_o3_for_scheduler, resolve_owned_events,
+    restore_scheduler_projection, snapshot_owned_event, validate_live_o3_for_scheduler,
+    validate_scheduler_projection_restore, LiveO3SchedulerValidationMode,
+    ResolvedSchedulerCheckpointEvents, SchedulerCheckpointBank, SchedulerCheckpointError,
+    SchedulerCheckpointOwnedEvent, SchedulerCheckpointPort, SchedulerCheckpointQuiescenceReport,
+    SchedulerCheckpointRecord, SchedulerCheckpointSourceSnapshot,
 };
 
 struct LockedSchedulerCheckpointPort<'a> {
@@ -148,6 +151,37 @@ impl SchedulerCheckpointBankGuard<'_> {
         self.validate_records(&decoded, &excluded)
     }
 
+    pub(crate) fn validate_live_o3_scheduler_restores(
+        &self,
+        registry: &CheckpointRegistry,
+        restores: &[RiscvO3LiveSchedulerRestore],
+        owned_events: &[SchedulerCheckpointOwnedEvent],
+        mode: LiveO3SchedulerValidationMode,
+    ) -> Result<Vec<CheckpointComponentId>, SchedulerCheckpointError> {
+        let mut matched = Vec::new();
+        let snapshots = self.snapshots();
+        let resolved = resolve_owned_events(&snapshots, owned_events);
+        let empty = ResolvedSchedulerCheckpointEvents::default();
+        for locked in &self.ports {
+            let component = locked.port.component();
+            let restored = decode_registered_snapshot(component, registry)?;
+            let current = &snapshots
+                .get(component)
+                .expect("locked scheduler checkpoint port has a snapshot")
+                .snapshot;
+            let resolved_events = resolved.get(component).unwrap_or(&empty);
+            matched.extend(validate_live_o3_for_scheduler(
+                locked.port.scheduler_instance(),
+                current,
+                &restored,
+                resolved_events,
+                restores,
+                mode,
+            )?);
+        }
+        Ok(matched)
+    }
+
     pub(crate) fn restore_all_from_with_owned_events(
         &mut self,
         registry: &CheckpointRegistry,
@@ -165,6 +199,16 @@ impl SchedulerCheckpointBankGuard<'_> {
                 .map_err(|error| SchedulerCheckpointError::Scheduler { component, error })?;
         }
         Ok(decoded)
+    }
+
+    pub(crate) fn rebind_live_o3_scheduler_restores(
+        &mut self,
+        restores: &[RiscvO3LiveSchedulerRestore],
+    ) {
+        for locked in &mut self.ports {
+            let mut scheduler = locked.scheduler.checkpoint_access();
+            rebind_live_o3_for_scheduler(&mut scheduler, restores);
+        }
     }
 
     fn snapshots(&self) -> BTreeMap<CheckpointComponentId, SchedulerCheckpointSourceSnapshot> {

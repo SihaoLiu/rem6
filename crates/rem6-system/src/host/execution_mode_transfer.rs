@@ -4,9 +4,10 @@ use rem6_checkpoint::{
 use rem6_cpu::RiscvO3WritebackDebugState;
 use rem6_kernel::{PendingEventSnapshot, SchedulerInstanceId, Tick};
 
+use crate::riscv_checkpoint::RiscvO3LiveSchedulerRestore;
 use crate::scheduler_checkpoint::{
-    remove_scheduler_checkpoint_chunk, SchedulerCheckpointBankGuard, SchedulerCheckpointContext,
-    SchedulerCheckpointOwnedEvent,
+    remove_scheduler_checkpoint_chunk, LiveO3SchedulerValidationMode, SchedulerCheckpointBankGuard,
+    SchedulerCheckpointContext, SchedulerCheckpointOwnedEvent,
 };
 use crate::{
     ExecutionMode, ExecutionModeTarget, HostActionRecord, SchedulerCheckpointBank, SystemError,
@@ -66,6 +67,79 @@ impl ExecutionModeSwitchStateTransfer {
 }
 
 impl SystemActionExecutor {
+    pub(super) fn live_o3_scheduler_restores(
+        &self,
+        checkpoints: &CheckpointRegistry,
+    ) -> Result<Vec<RiscvO3LiveSchedulerRestore>, SystemError> {
+        self.riscv_checkpoints
+            .as_ref()
+            .map(|bank| bank.live_o3_scheduler_restores(checkpoints))
+            .transpose()
+            .map_err(SystemError::RiscvCheckpoint)
+            .map(Option::unwrap_or_default)
+    }
+
+    pub(super) fn validate_live_o3_scheduler_restores(
+        &self,
+        checkpoints: &CheckpointRegistry,
+        restores: &[RiscvO3LiveSchedulerRestore],
+        owned_events: &[SchedulerCheckpointOwnedEvent],
+        mode: LiveO3SchedulerValidationMode,
+        borrowed_mode: Option<BorrowedSchedulerRestoreMode>,
+        borrowed: Option<&SchedulerCheckpointContext<'_>>,
+        attached: Option<&SchedulerCheckpointBankGuard<'_>>,
+    ) -> Result<(), SystemError> {
+        let mut resolved = Vec::new();
+        if let Some(bank) = attached {
+            resolved.extend(
+                bank.validate_live_o3_scheduler_restores(checkpoints, restores, owned_events, mode)
+                    .map_err(SystemError::SchedulerCheckpoint)?,
+            );
+        }
+        if borrowed_mode == Some(BorrowedSchedulerRestoreMode::Snapshot) {
+            resolved.extend(
+                borrowed
+                    .expect("borrowed scheduler snapshot restore is present")
+                    .validate_live_o3_scheduler_restores(checkpoints, restores, owned_events, mode)
+                    .map_err(SystemError::SchedulerCheckpoint)?,
+            );
+        }
+        for restore in restores {
+            if resolved
+                .iter()
+                .filter(|component| *component == restore.component())
+                .count()
+                != 1
+            {
+                return Err(SystemError::SchedulerCheckpoint(
+                    crate::SchedulerCheckpointError::InvalidLiveO3Authority {
+                        component: restore.component().clone(),
+                        reason: "wake does not resolve to exactly one scheduler snapshot"
+                            .to_string(),
+                    },
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn rebind_live_o3_scheduler_restores(
+        restores: &[RiscvO3LiveSchedulerRestore],
+        borrowed_mode: Option<BorrowedSchedulerRestoreMode>,
+        mut borrowed: Option<&mut SchedulerCheckpointContext<'_>>,
+        mut attached: Option<&mut SchedulerCheckpointBankGuard<'_>>,
+    ) {
+        if let Some(bank) = attached.as_deref_mut() {
+            bank.rebind_live_o3_scheduler_restores(restores);
+        }
+        if borrowed_mode == Some(BorrowedSchedulerRestoreMode::Snapshot) {
+            borrowed
+                .as_deref_mut()
+                .expect("borrowed scheduler snapshot restore is present")
+                .rebind_live_o3_scheduler_restores(restores);
+        }
+    }
+
     pub(super) fn forget_pipeline_wakes_after_scheduler_restore(
         &self,
         borrowed_scheduler_restore_mode: Option<BorrowedSchedulerRestoreMode>,
@@ -73,6 +147,7 @@ impl SystemActionExecutor {
         if self.scheduler_checkpoints.is_some() || borrowed_scheduler_restore_mode.is_some() {
             if let Some(riscv_checkpoints) = &self.riscv_checkpoints {
                 riscv_checkpoints.forget_discarded_in_order_pipeline_wakes();
+                riscv_checkpoints.forget_discarded_o3_writeback_wakes();
             }
         }
     }
@@ -259,7 +334,7 @@ impl SystemActionExecutor {
         if !live_data_handoff {
             if let Some(riscv_checkpoints) = &self.riscv_checkpoints {
                 riscv_checkpoints
-                    .capture_all_into(staged_checkpoints)
+                    .capture_all_into_at(staged_checkpoints, tick)
                     .map_err(SystemError::Checkpoint)?;
             }
         }
@@ -271,11 +346,24 @@ impl SystemActionExecutor {
             }
         }
         if capture_borrowed_scheduler {
-            let scheduler_checkpoint =
-                scheduler_checkpoint.expect("borrowed scheduler capture is present");
+            let scheduler_checkpoint = scheduler_checkpoint
+                .as_deref_mut()
+                .expect("borrowed scheduler capture is present");
             scheduler_checkpoint
                 .capture_into(staged_checkpoints, &owned_scheduler_events)
                 .map_err(SystemError::SchedulerCheckpoint)?;
+        }
+        if !live_data_handoff {
+            let restores = self.live_o3_scheduler_restores(staged_checkpoints)?;
+            self.validate_live_o3_scheduler_restores(
+                staged_checkpoints,
+                &restores,
+                &owned_scheduler_events,
+                LiveO3SchedulerValidationMode::SourceCapture,
+                capture_borrowed_scheduler.then_some(BorrowedSchedulerRestoreMode::Snapshot),
+                scheduler_checkpoint.as_deref(),
+                scheduler_checkpoint_bank,
+            )?;
         }
         if let Some(component) = borrowed_scheduler_component {
             self.track_borrowed_scheduler_checkpoint_component(component);
@@ -451,6 +539,15 @@ impl SystemActionExecutor {
                 .as_ref()
                 .into_iter()
                 .flat_map(|checkpoints| checkpoints.pending_live_retire_gate_wakes())
+                .map(|(scheduler, event)| {
+                    SchedulerCheckpointOwnedEvent::discard_on_restore(scheduler, event)
+                }),
+        );
+        events.extend(
+            self.riscv_checkpoints
+                .as_ref()
+                .into_iter()
+                .flat_map(|checkpoints| checkpoints.pending_o3_writeback_wakes())
                 .map(|(scheduler, event)| {
                     SchedulerCheckpointOwnedEvent::discard_on_restore(scheduler, event)
                 }),

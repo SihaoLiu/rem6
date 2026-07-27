@@ -36,6 +36,9 @@ use rem6_transport::{
     MemoryRoute, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
 };
 
+#[path = "support/live_o3.rs"]
+mod live_o3_support;
+
 #[path = "riscv_checkpoint/o3_compatibility.rs"]
 mod o3_compatibility;
 #[path = "riscv_checkpoint/o3_live.rs"]
