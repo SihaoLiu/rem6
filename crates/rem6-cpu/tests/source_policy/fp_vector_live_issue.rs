@@ -968,7 +968,7 @@ fn fp_vector_live_issue_locks_ledger_scope() {
         assert!(cpu.contains(evidence), "CPU ledger missing `{evidence}`");
     }
     assert!(cpu.contains(
-        "true vector-register producers and destinations, vector LMUL/mask/tail/v0/load/VCSR-aware forwarding, FP loads, double precision, conversions, broader or status-sensitive FP chains, arbitrary unbounded mixed dependency graphs, positive system issue rows, a general load/store queue scheduler, dependent stores or arbitrary atomics, checkpoint-restorable live IQ/transport state, and a general O3 engine remain incomplete"
+        "broader FP load shapes, conversions, comparisons, moves, classification, dynamic-CSR/status-sensitive chains, true vector-register/load/VCSR forwarding, arbitrary dependency graphs, positive system issue rows, a general load/store queue scheduler, dependent stores or arbitrary atomics, checkpoint-restorable live IQ/transport state, and a general O3 engine remain incomplete"
     ));
     let normalized_ledger = normalized_policy_text(&ledger);
     for broad_claim in ["persistent vector arithmetic iq", "system issue support"] {

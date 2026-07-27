@@ -860,8 +860,10 @@ serialize transient live state.
 - Modify: `crates/rem6-cpu/tests/source_policy.rs`
 - Modify: `crates/rem6-cpu/tests/source_policy/fp_vector_live_issue.rs`
 - Modify: `crates/rem6/tests/source_policy.rs`
+- Modify: `crates/rem6/tests/source_policy/o3_memory_issue_width_ownership.rs`
 - Modify: `crates/rem6/tests/source_policy/o3_persistent_iq_ownership.rs`
 - Modify: `crates/rem6/tests/source_policy/core_test_anchors.txt`
+- Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/fp_load_forwarding.rs`
 - Modify: `docs/architecture/gem5-to-rem6-migration.md`
 
 - [ ] **Step 1: Write CPU policy for exact ownership**
@@ -936,7 +938,7 @@ TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy o3_persistent_iq 
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy migration -- --nocapture
 TMPDIR=$PWD/target/tmp cargo fmt --all
 git diff --check
-git add crates/rem6-cpu/tests/source_policy.rs crates/rem6-cpu/tests/source_policy/fp_load_forwarding.rs crates/rem6-cpu/tests/source_policy/fp_vector_live_issue.rs crates/rem6/tests/source_policy.rs crates/rem6/tests/source_policy/o3_fp_load_forwarding_ownership.rs crates/rem6/tests/source_policy/o3_persistent_iq_ownership.rs crates/rem6/tests/source_policy/core_test_anchors.txt docs/architecture/gem5-to-rem6-migration.md
+git add crates/rem6-cpu/tests/source_policy.rs crates/rem6-cpu/tests/source_policy/fp_load_forwarding.rs crates/rem6-cpu/tests/source_policy/fp_vector_live_issue.rs crates/rem6/tests/source_policy.rs crates/rem6/tests/source_policy/o3_fp_load_forwarding_ownership.rs crates/rem6/tests/source_policy/o3_memory_issue_width_ownership.rs crates/rem6/tests/source_policy/o3_persistent_iq_ownership.rs crates/rem6/tests/source_policy/core_test_anchors.txt crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/fp_load_forwarding.rs docs/architecture/gem5-to-rem6-migration.md
 git commit -m "test: lock fp load forwarding ownership"
 git push
 ```

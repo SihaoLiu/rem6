@@ -24,6 +24,8 @@ mod m5_host_action_fixture_ownership;
 mod m5_host_action_o3_runtime_ownership;
 #[path = "source_policy/o3_alias_authority.rs"]
 mod o3_alias_authority;
+#[path = "source_policy/o3_fp_load_forwarding_ownership.rs"]
+mod o3_fp_load_forwarding_ownership;
 #[path = "source_policy/o3_issue_queue_telemetry_ownership.rs"]
 mod o3_issue_queue_telemetry_ownership;
 #[path = "source_policy/o3_live_window_ownership.rs"]
@@ -1391,10 +1393,6 @@ fn migration_score_bucket(name: &str) -> Option<MigrationScoreBucket> {
 }
 
 fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    manifest.ancestors().nth(2).unwrap().to_path_buf()
 }

@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "source_policy/fp_load_forwarding.rs"]
+mod fp_load_forwarding;
 #[path = "source_policy/fp_vector_live_issue.rs"]
 mod fp_vector_live_issue;
 #[path = "source_policy/live_issue_durable_cleanup.rs"]
@@ -15,30 +17,31 @@ mod task6_issue_migration;
 mod vector_architectural_checkpoint;
 
 #[test]
-fn fp_vector_live_issue_policy_has_one_focused_child_attachment() {
+fn fp_live_issue_policies_have_one_focused_child_attachment() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let source = fs::read_to_string(root.join("tests/source_policy.rs")).unwrap();
-    let child =
-        fs::read_to_string(root.join("tests/source_policy/fp_vector_live_issue.rs")).unwrap();
-    let attachment =
-        "#[path = \"source_policy/fp_vector_live_issue.rs\"]\nmod fp_vector_live_issue;";
-    let child_is_active = |parent: &str, child: &str| {
-        active_unconditional_path_owned_module_declaration_count(
-            parent,
-            child,
+    for (path, module) in [
+        ("source_policy/fp_load_forwarding.rs", "fp_load_forwarding"),
+        (
             "source_policy/fp_vector_live_issue.rs",
             "fp_vector_live_issue",
-        ) == 1
-    };
-    assert!(child_is_active(&source, &child));
-    for conditional in ["#[cfg(any())]\n", "#[cfg_attr(all(), cfg(any()))]\n"] {
-        let gated = source.replacen(attachment, &format!("{conditional}{attachment}"), 1);
-        assert_ne!(gated, source, "conditional attachment mutation must apply");
-        assert!(!child_is_active(&gated, &child));
-        let inner = conditional.replacen("#[", "#![", 1);
-        assert!(!child_is_active(&format!("{inner}{source}"), &child));
-        let gated_child = format!("{inner}{child}");
-        assert!(!child_is_active(&source, &gated_child));
+        ),
+    ] {
+        let child = fs::read_to_string(root.join("tests").join(path)).unwrap();
+        let attachment = format!("#[path = \"{path}\"]\nmod {module};");
+        let child_is_active = |parent: &str, child: &str| {
+            active_unconditional_path_owned_module_declaration_count(parent, child, path, module)
+                == 1
+        };
+        assert!(child_is_active(&source, &child));
+        for conditional in ["#[cfg(any())]\n", "#[cfg_attr(all(), cfg(any()))]\n"] {
+            let gated = source.replacen(&attachment, &format!("{conditional}{attachment}"), 1);
+            assert_ne!(gated, source, "conditional attachment mutation must apply");
+            assert!(!child_is_active(&gated, &child));
+            let inner = conditional.replacen("#[", "#![", 1);
+            assert!(!child_is_active(&format!("{inner}{source}"), &child));
+            assert!(!child_is_active(&source, &format!("{inner}{child}")));
+        }
     }
 }
 

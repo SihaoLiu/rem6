@@ -8,6 +8,8 @@ const CALENDAR_OWNER: &str = "crates/rem6-cpu/src/o3_runtime_issue/calendar.rs";
 const CONFIG_OWNER: &str = "crates/rem6/src/config.rs";
 const SUMMARY_JSON_OWNER: &str = "crates/rem6/src/core_summary_json.rs";
 const VALIDATION_OWNER: &str = "crates/rem6/tests/cli_run/validation/o3_memory_issue_width.rs";
+const FP_LOAD_FORWARDING_OWNER: &str =
+    "crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/fp_load_forwarding.rs";
 const THREE_PENDING_PARENT: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/three_pending.rs";
 const THREE_PENDING_PARENT_OWNER: &str = "crates/rem6/tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/three_pending.rs";
@@ -40,6 +42,11 @@ fn o3_memory_issue_width_config_and_runtime_ownership() {
         &rem6.join("tests/source_policy.rs"),
         "o3_memory_issue_width_ownership",
         "source_policy/o3_memory_issue_width_ownership.rs",
+    );
+    assert_module_path(
+        &rem6.join("tests/source_policy.rs"),
+        "o3_fp_load_forwarding_ownership",
+        "source_policy/o3_fp_load_forwarding_ownership.rs",
     );
     assert_module_path(
         &cpu.join("src/o3_runtime.rs"),
@@ -123,6 +130,12 @@ fn o3_memory_issue_width_config_and_runtime_ownership() {
         ["configured", "width"].join("_"),
         ["configured", "memory", "width"].join("_"),
     ] {
+        let allowed = vec![
+            (SUMMARY_JSON_OWNER, 1),
+            (VALIDATION_OWNER, 1),
+            (THREE_PENDING_PARENT_OWNER, 1),
+            (FP_LOAD_FORWARDING_OWNER, 1),
+        ];
         assert_eq!(occurrences(&summary_json, &key), 1);
         assert!(
             validation.contains(&key),
@@ -131,11 +144,7 @@ fn o3_memory_issue_width_config_and_runtime_ownership() {
         assert_only_allowed_occurrences(
             &all_sources,
             &[key],
-            &[
-                (SUMMARY_JSON_OWNER, 1),
-                (VALIDATION_OWNER, 1),
-                (THREE_PENDING_PARENT_OWNER, 1),
-            ],
+            &allowed,
             "O3 runtime issue JSON configured-width key",
             json_key_occurrences,
         );
@@ -227,10 +236,26 @@ fn assert_line_cap(path: &Path, maximum: usize) {
 fn assert_module_path(path: &Path, module: &str, expected: &str) {
     let source = read(path);
     assert!(
-        module_has_path_attribute(&source, module, expected),
+        module_has_path_attribute(&source, module, expected)
+            && module_attachment_is_unconditional(&source, module),
         "{} must attach {module} via #[path = \"{expected}\"]",
         relative(path).display()
     );
+}
+
+fn module_attachment_is_unconditional(source: &str, module: &str) -> bool {
+    let syntax = syn::parse_file(source).expect("module owner parses");
+    !syntax.attrs.iter().any(is_conditional_attribute)
+        && syntax.items.iter().any(|item| {
+            let syn::Item::Mod(item) = item else {
+                return false;
+            };
+            item.ident == module && !item.attrs.iter().any(is_conditional_attribute)
+        })
+}
+
+fn is_conditional_attribute(attribute: &syn::Attribute) -> bool {
+    attribute.path().is_ident("cfg") || attribute.path().is_ident("cfg_attr")
 }
 
 fn read(path: &Path) -> String {
