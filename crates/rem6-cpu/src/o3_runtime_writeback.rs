@@ -397,6 +397,38 @@ impl O3WritebackPortStatsSchedule {
 }
 
 impl O3RuntimeState {
+    pub(crate) fn checkpoint_finalized_writeback(
+        &self,
+    ) -> crate::RiscvO3LiveCheckpointFinalizedWriteback {
+        self.finalized_writeback_port_stats.checkpoint_projection()
+    }
+
+    pub(in crate::o3_runtime) fn restore_compute_checkpoint_writeback(
+        &mut self,
+        finalized: &crate::RiscvO3LiveCheckpointFinalizedWriteback,
+        stable_stats: O3RuntimeStats,
+    ) -> Result<(), O3RuntimeError> {
+        self.writeback_calendar.clear();
+        self.published_writeback_sequences.clear();
+        self.live_writeback_counted_sequences.clear();
+        self.finalized_writeback_port_stats =
+            O3FinalizedWritebackPortStats::from_checkpoint_projection(finalized);
+        let mut recomposed = stable_stats;
+        recomposed.set_writeback_port_schedule(
+            &self.finalized_writeback_port_stats,
+            &O3WritebackPortStatsSchedule::default(),
+        )?;
+        if recomposed != stable_stats {
+            return Err(O3RuntimeError::WritebackStatisticsUnderflow {
+                counter: "checkpoint_recomposition",
+                current: recomposed.writeback_port_cycles(),
+                removed: stable_stats.writeback_port_cycles(),
+            });
+        }
+        self.stats = recomposed;
+        Ok(())
+    }
+
     pub(crate) fn has_unpublished_writeback_reservation(&self) -> bool {
         self.writeback_calendar
             .by_tick

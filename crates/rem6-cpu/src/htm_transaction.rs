@@ -268,6 +268,10 @@ impl HtmTransactionState {
     pub const fn last_abort(&self) -> Option<&HtmAbortRecord> {
         self.last_abort.as_ref()
     }
+
+    pub(crate) fn clear_active_preserving_history(&mut self) {
+        self.active = None;
+    }
 }
 
 impl Default for HtmTransactionState {

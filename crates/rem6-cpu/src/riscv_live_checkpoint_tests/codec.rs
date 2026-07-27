@@ -4,10 +4,64 @@ const EVENT_COUNT_OFFSET: usize = 4 + 1 + 1 + 8 + 8 + 8;
 const FIRST_EVENT_OFFSET: usize = EVENT_COUNT_OFFSET + 4;
 
 #[test]
-fn o3_live_checkpoint_v1_round_trips_compute_projection() {
-    let expected = compute_payload();
+#[rustfmt::skip]
+fn o3_live_checkpoint_v1_round_trips_compute_and_rejects_future_watermark() {
+    let mut expected = compute_payload();
+    expected.finalized_writeback.partial_cycle_ticks.clear();
+    expected.finalized_writeback.partial_ready_rows_by_tick.clear();
+    expected.finalized_writeback.partial_deferred_rows_by_tick.clear();
+    expected.finalized_writeback.closed_before_tick = 100;
     let encoded = expected.encode().unwrap();
-    assert_eq!(RiscvO3LiveCheckpointPayload::decode(&encoded), Ok(expected));
+    assert_eq!(RiscvO3LiveCheckpointPayload::decode(&encoded), Ok(expected.clone()));
+    expected.finalized_writeback.closed_before_tick = 101;
+    assert!(matches!(expected.encode(), Err(RiscvO3LiveCheckpointError::InvalidProfileShape { .. })));
+    let encoded = expected.encode_without_validation_for_test().unwrap();
+    assert!(matches!(RiscvO3LiveCheckpointPayload::decode(&encoded), Err(RiscvO3LiveCheckpointError::InvalidProfileShape { .. })));
+}
+
+#[test]
+fn o3_live_checkpoint_v1_distinguishes_absent_and_zero_service_identity() {
+    let mut absent = compute_payload();
+    absent.service.last_service_generation = None;
+    let mut zero = absent.clone();
+    zero.service.last_service_generation = Some((0, 0));
+
+    let absent_bytes = absent.encode().unwrap();
+    let zero_bytes = zero.encode().unwrap();
+    assert_ne!(absent_bytes, zero_bytes);
+    assert_eq!(
+        RiscvO3LiveCheckpointPayload::decode(&absent_bytes),
+        Ok(absent)
+    );
+    assert_eq!(RiscvO3LiveCheckpointPayload::decode(&zero_bytes), Ok(zero));
+}
+
+#[test]
+fn o3_live_checkpoint_rejects_self_suppressing_service_identity_on_encode() {
+    assert!(matches!(
+        self_suppressing_compute_payload().encode(),
+        Err(RiscvO3LiveCheckpointError::InvalidProfileShape { .. })
+    ));
+}
+
+#[test]
+fn o3_live_checkpoint_rejects_self_suppressing_service_identity_on_decode() {
+    let value = self_suppressing_compute_payload();
+    let encoded = value.encode_without_validation_for_test().unwrap();
+    assert!(matches!(
+        RiscvO3LiveCheckpointPayload::decode(&encoded),
+        Err(RiscvO3LiveCheckpointError::InvalidProfileShape { .. })
+    ));
+}
+
+fn self_suppressing_compute_payload() -> RiscvO3LiveCheckpointPayload {
+    let mut value = compute_payload();
+    value.captured_tick = 100;
+    value.service.requested_tick = 100;
+    value.service.mutation_generation = 7;
+    value.service.last_service_generation = Some((100, 7));
+    value.wake.tick = 100;
+    value
 }
 
 #[test]

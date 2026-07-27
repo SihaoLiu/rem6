@@ -12,6 +12,8 @@ use super::*;
 
 #[path = "riscv_live_checkpoint_tests/codec.rs"]
 mod codec;
+#[path = "riscv_live_checkpoint_tests/compute.rs"]
+mod compute;
 
 #[rustfmt::skip]
 fn reg(index: u8) -> Register { Register::new(index).unwrap() }
@@ -85,10 +87,10 @@ fn finalized_writeback() -> RiscvO3LiveCheckpointFinalizedWriteback {
     RiscvO3LiveCheckpointFinalizedWriteback {
         cycles: 31, admitted_rows: 32, deferred_rows: 33, deferred_row_cycles: 34,
         max_ready_rows_per_cycle: 3, max_deferred_rows: 2,
-        partial_cycle_ticks: BTreeSet::from([106, 107]),
-        partial_ready_rows_by_tick: BTreeMap::from([(106, 2), (107, 1)]),
-        partial_deferred_rows_by_tick: BTreeMap::from([(107, 1)]),
-        closed_before_tick: 106,
+        partial_cycle_ticks: BTreeSet::from([96, 97]),
+        partial_ready_rows_by_tick: BTreeMap::from([(96, 2), (97, 1)]),
+        partial_deferred_rows_by_tick: BTreeMap::from([(97, 1)]),
+        closed_before_tick: 96,
     }
 }
 
@@ -111,12 +113,12 @@ fn base_payload(
             O3RenameMapEntry::new(O3RegisterClass::Integer, 3, O3PhysicalRegisterId::new(43)),
             O3RenameMapEntry::new(O3RegisterClass::FloatingPoint, 5, O3PhysicalRegisterId::new(45)),
         ],
-        resident_sequences: sequences, executed_fetch_requests: requests.clone(), issued_fetch_requests: requests,
+        resident_sequences: sequences, executed_fetch_requests: requests.clone(), issued_fetch_requests: if profile == RiscvO3LiveCheckpointProfile::ComputeQueue { Vec::new() } else { requests },
         service: RiscvO3LiveCheckpointService {
-            requested_tick: 108, mutation_generation: 51, last_service_generation: 49, telemetry: telemetry(),
+            requested_tick: 108, mutation_generation: 51, last_service_generation: Some((97, 49)), telemetry: telemetry(),
         },
         finalized_writeback: finalized_writeback(),
-        writeback_counted_sequences: vec![71], writeback_published_sequences: vec![70],
+        writeback_counted_sequences: if profile == RiscvO3LiveCheckpointProfile::ComputeQueue { Vec::new() } else { vec![71] }, writeback_published_sequences: if profile == RiscvO3LiveCheckpointProfile::ComputeQueue { Vec::new() } else { vec![70] },
         reservation, completed_result,
         wake: RiscvO3LiveCheckpointWake {
             scheduler_instance_raw: 0x4455_6677_8899_aabb, partition: PartitionId::new(2),

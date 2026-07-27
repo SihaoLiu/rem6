@@ -64,6 +64,13 @@ impl PartitionEventId {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SchedulerInstanceId(u64);
 
+impl SchedulerInstanceId {
+    #[doc(hidden)]
+    pub const fn checkpoint_raw(self) -> u64 {
+        self.0
+    }
+}
+
 static NEXT_SCHEDULER_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 
 fn next_scheduler_instance_id() -> SchedulerInstanceId {

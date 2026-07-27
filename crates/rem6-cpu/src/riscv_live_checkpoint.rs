@@ -6,7 +6,7 @@ use rem6_isa_riscv::{FloatRegister, MemoryWidth};
 use rem6_kernel::{PartitionId, ScheduledEventKind, Tick};
 use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
-use crate::O3RenameMapEntry;
+use crate::{O3RenameMapEntry, RiscvCore, RiscvCoreState};
 
 #[path = "riscv_live_checkpoint/codec.rs"]
 mod codec;
@@ -16,6 +16,29 @@ mod event;
 pub use event::RiscvO3LiveCheckpointEvent;
 
 pub const RISCV_O3_LIVE_CHECKPOINT_CHUNK: &str = "o3-live-checkpoint";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RiscvO3LiveCheckpointCapture {
+    Absent,
+    Captured(RiscvO3LiveCheckpointPayload),
+    Rejected,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvO3CheckpointProjection {
+    stable: crate::O3RuntimeCheckpointPayload,
+    live: RiscvO3LiveCheckpointCapture,
+}
+
+impl RiscvO3CheckpointProjection {
+    pub const fn stable(&self) -> &crate::O3RuntimeCheckpointPayload {
+        &self.stable
+    }
+
+    pub const fn live_capture(&self) -> &RiscvO3LiveCheckpointCapture {
+        &self.live
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvO3LiveCheckpointProfile {
@@ -48,8 +71,19 @@ pub struct RiscvO3LiveCheckpointTelemetry {
 pub struct RiscvO3LiveCheckpointService {
     pub requested_tick: Tick,
     pub mutation_generation: u64,
-    pub last_service_generation: u64,
+    pub last_service_generation: Option<(Tick, u64)>,
     pub telemetry: RiscvO3LiveCheckpointTelemetry,
+}
+
+impl RiscvO3LiveCheckpointService {
+    pub(crate) fn has_invalid_identity_at(self, captured_tick: Tick) -> bool {
+        self.last_service_generation
+            .is_some_and(|(tick, generation)| {
+                tick > captured_tick
+                    || generation > self.mutation_generation
+                    || (tick, generation) == (self.requested_tick, self.mutation_generation)
+            })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -64,6 +98,24 @@ pub struct RiscvO3LiveCheckpointFinalizedWriteback {
     pub partial_ready_rows_by_tick: BTreeMap<Tick, u64>,
     pub partial_deferred_rows_by_tick: BTreeMap<Tick, u64>,
     pub closed_before_tick: Tick,
+}
+
+impl RiscvO3LiveCheckpointFinalizedWriteback {
+    pub(crate) fn is_valid_without_live_calendar_at(&self, captured_tick: Tick) -> bool {
+        let tick_is_reopenable =
+            |tick: &Tick| self.closed_before_tick <= *tick && *tick <= captured_tick;
+        self.closed_before_tick <= captured_tick
+            && self.partial_cycle_ticks.iter().all(tick_is_reopenable)
+            && self.partial_ready_rows_by_tick.iter().all(|(tick, rows)| {
+                *rows > 0 && self.partial_cycle_ticks.contains(tick) && tick_is_reopenable(tick)
+            })
+            && self
+                .partial_deferred_rows_by_tick
+                .iter()
+                .all(|(tick, rows)| {
+                    *rows > 0 && self.partial_cycle_ticks.contains(tick) && tick_is_reopenable(tick)
+                })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -140,6 +192,13 @@ impl RiscvO3LiveCheckpointPayload {
 
     pub fn decode(payload: &[u8]) -> Result<Self, RiscvO3LiveCheckpointError> {
         codec::decode(payload)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn encode_without_validation_for_test(
+        &self,
+    ) -> Result<Vec<u8>, RiscvO3LiveCheckpointError> {
+        codec::encode_without_validation(self)
     }
 }
 
@@ -243,3 +302,206 @@ impl fmt::Display for RiscvO3LiveCheckpointError {
 }
 
 impl Error for RiscvO3LiveCheckpointError {}
+
+impl RiscvCore {
+    pub fn capture_checkpoint_projection(
+        &self,
+        captured_tick: Tick,
+    ) -> RiscvO3CheckpointProjection {
+        let cpu_state = self.core.state.lock().expect("cpu core lock");
+        let riscv_state = self.state.lock().expect("riscv core lock");
+        capture_checkpoint_projection_from_guards(&cpu_state, &riscv_state, captured_tick)
+    }
+}
+
+fn capture_checkpoint_projection_from_guards(
+    cpu: &crate::cpu_core::CpuCoreState,
+    state: &RiscvCoreState,
+    captured_tick: Tick,
+) -> RiscvO3CheckpointProjection {
+    let projected_stats = state.o3_runtime.stats();
+    let stable = state
+        .o3_runtime
+        .checkpoint_payload_with_projected_stats(projected_stats)
+        .with_live_retire_gate(state.live_retire_gate.checkpoint());
+    let live = capture_live_from_guards(&cpu, state, captured_tick).map_or(
+        RiscvO3LiveCheckpointCapture::Rejected,
+        |capture| {
+            capture.map_or(
+                RiscvO3LiveCheckpointCapture::Absent,
+                RiscvO3LiveCheckpointCapture::Captured,
+            )
+        },
+    );
+    RiscvO3CheckpointProjection { stable, live }
+}
+
+fn capture_live_from_guards(
+    cpu: &crate::cpu_core::CpuCoreState,
+    state: &RiscvCoreState,
+    captured_tick: Tick,
+) -> Result<Option<RiscvO3LiveCheckpointPayload>, RiscvO3LiveCheckpointError> {
+    if cpu.has_outstanding_fetch()
+        || state.pending_fetch_prefix.is_some()
+        || state.pending_terminal_memory_result.is_some()
+        || !state.pending_data_translations.is_empty()
+        || !state.ready_translated_data.is_empty()
+        || state
+            .data_translation
+            .as_ref()
+            .is_some_and(|frontend| !frontend.is_empty())
+        || !state.outstanding_data.is_empty()
+        || state.next_unissued_data_access().is_some()
+        || !state.buffered_o3_effects.is_empty()
+        || !state.translated_scalar_load_window_fetches.is_empty()
+        || !state.memory_result_window_authorizations.is_empty()
+        || state.pending_trap.is_some()
+        || state.pending_trap_event.is_some()
+        || state.htm_hart_checkpoint.is_some()
+        || !state.branch_speculations.is_empty()
+        || !state.branch_speculation_kinds.is_empty()
+        || !state.return_address_stack_operations.is_empty()
+        || state.producer_forwarded_scalar_continuation.is_some()
+        || !state.selected_branch_speculations.is_empty()
+        || !state.branch_target_predictions.is_empty()
+        || state.live_retire_gate.checkpoint().is_some()
+        || state.pending_in_order_pipeline_wake.is_some()
+        || !state.detached_in_order_pipeline_wakes.is_empty()
+        || state.pending_in_order_pipeline_advance.is_some()
+        || !state.rebound_in_order_execute_waits.is_empty()
+        || !state.o3_force_normal_execute_fetches.is_empty()
+        || state.pending_callback_error.is_some()
+        || state.reservation.is_some()
+    {
+        return Err(invalid("unsupported RISC-V core authority"));
+    }
+    let runtime = match state.o3_runtime.compute_checkpoint_projection()? {
+        Some(runtime) => runtime,
+        None => {
+            if cpu.events().is_empty()
+                && !state.o3_writeback_wake.has_pending_checkpoint_authority()
+            {
+                return Ok(None);
+            }
+            return Err(invalid("drained capture retains operational authority"));
+        }
+    };
+    let wake = state
+        .o3_writeback_wake
+        .checkpoint_scheduled_wake()
+        .ok_or(invalid("live queue does not own exactly one attached wake"))?;
+    if wake.tick() != runtime.service.requested_tick
+        || wake.event().partition()
+            != cpu
+                .events()
+                .first()
+                .map_or(wake.event().partition(), |event| event.partition())
+    {
+        return Err(invalid("scheduled wake does not match queue service"));
+    }
+    let expected_requests = runtime
+        .issue_rows
+        .iter()
+        .map(|row| row.fetch_request)
+        .collect::<Vec<_>>();
+    if cpu.events().len() != expected_requests.len()
+        || cpu
+            .events()
+            .iter()
+            .map(|event| event.request_id())
+            .ne(expected_requests.iter().copied())
+        || cpu.events().iter().any(|event| {
+            event.kind() != crate::CpuFetchEventKind::Completed
+                || !matches!(event.data().map(<[u8]>::len), Some(2 | 4))
+                || event.data().map(|bytes| bytes.len() as u64) != Some(event.size().bytes())
+        })
+    {
+        return Err(invalid(
+            "operational fetch stream is not exact completed instructions",
+        ));
+    }
+    if expected_requests
+        .iter()
+        .any(|request| request.sequence() >= cpu.next_sequence())
+    {
+        return Err(invalid(
+            "next fetch sequence does not follow restored requests",
+        ));
+    }
+    let by_request = state
+        .events
+        .iter()
+        .map(|event| (event.fetch().request_id(), event))
+        .collect::<BTreeMap<_, _>>();
+    let mut events = Vec::with_capacity(expected_requests.len());
+    for request in &expected_requests {
+        let event = by_request
+            .get(request)
+            .ok_or(invalid("issue fetch has no execution event"))?;
+        let projected = project_event(event);
+        if projected.memory_access.is_some()
+            || projected.data_access_event_kind.is_some()
+            || projected.rebuild().as_ref() != Ok(*event)
+        {
+            return Err(invalid(
+                "execution event contains unsupported transient state",
+            ));
+        }
+        events.push(projected);
+    }
+    let event_requests = expected_requests.iter().copied().collect::<BTreeSet<_>>();
+    let live_issued_requests = expected_requests
+        .iter()
+        .filter(|request| state.issued_data_for_fetches.contains(request))
+        .copied()
+        .collect::<Vec<_>>();
+    if !event_requests.is_subset(&state.executed_fetches) || !live_issued_requests.is_empty() {
+        return Err(invalid(
+            "live replay execution is incomplete or carries data issue state",
+        ));
+    }
+    Ok(Some(RiscvO3LiveCheckpointPayload {
+        profile: RiscvO3LiveCheckpointProfile::ComputeQueue,
+        captured_tick,
+        next_fetch_pc: cpu.pc(),
+        next_fetch_request_sequence: cpu.next_sequence(),
+        events,
+        issue_rows: runtime.issue_rows,
+        rename_rows: runtime.rename_rows,
+        resident_sequences: runtime.resident_sequences,
+        executed_fetch_requests: event_requests.iter().copied().collect(),
+        issued_fetch_requests: live_issued_requests,
+        service: runtime.service,
+        finalized_writeback: runtime.finalized_writeback,
+        writeback_counted_sequences: Vec::new(),
+        writeback_published_sequences: Vec::new(),
+        reservation: None,
+        completed_result: None,
+        wake: RiscvO3LiveCheckpointWake {
+            scheduler_instance_raw: wake.scheduler().checkpoint_raw(),
+            partition: wake.event().partition(),
+            tick: wake.tick(),
+            scheduler_order: wake.event().order(),
+            kind: wake.event().kind(),
+        },
+    }))
+}
+
+fn project_event(event: &crate::RiscvCpuExecutionEvent) -> RiscvO3LiveCheckpointEvent {
+    let execution = event.execution();
+    RiscvO3LiveCheckpointEvent {
+        fetch: event.fetch().clone(),
+        execution_pc: execution.pc(),
+        next_pc: execution.next_pc(),
+        instruction_bytes: execution.instruction_bytes(),
+        register_writes: execution.register_writes().to_vec(),
+        float_register_writes: execution.float_register_writes().to_vec(),
+        memory_access: execution.memory_access().cloned(),
+        data_access_event_kind: event.data_access_event_kind(),
+        counts_as_retired_instruction: event.counts_as_retired_instruction(),
+    }
+}
+
+fn invalid(reason: &'static str) -> RiscvO3LiveCheckpointError {
+    RiscvO3LiveCheckpointError::InvalidProfileShape { reason }
+}

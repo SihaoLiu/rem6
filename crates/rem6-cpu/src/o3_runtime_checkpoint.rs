@@ -439,9 +439,16 @@ impl O3RuntimeCheckpointPayload {
 
 impl O3RuntimeState {
     pub(crate) fn checkpoint_payload(&self) -> O3RuntimeCheckpointPayload {
+        self.checkpoint_payload_with_projected_stats(self.stats())
+    }
+
+    pub(crate) fn checkpoint_payload_with_projected_stats(
+        &self,
+        projected_stats: O3RuntimeStats,
+    ) -> O3RuntimeCheckpointPayload {
         O3RuntimeCheckpointPayload::from_snapshot_with_stats_and_dependency_producers(
             self.snapshot.clone(),
-            self.stats(),
+            projected_stats,
             self.dependency_producers_with_consumers.clone(),
         )
         .expect("captured O3 runtime checkpoint is internally consistent")

@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_cpu::{
     CpuFetchEvent, CpuFetchRecord, RiscvO3LiveCheckpointEvent,
-    RiscvO3LiveCheckpointFinalizedWriteback, RiscvO3LiveCheckpointPayload,
-    RiscvO3LiveCheckpointProfile, RiscvO3LiveCheckpointService, RiscvO3LiveCheckpointTelemetry,
-    RiscvO3LiveCheckpointWake,
+    RiscvO3LiveCheckpointFinalizedWriteback, RiscvO3LiveCheckpointIssueRow,
+    RiscvO3LiveCheckpointPayload, RiscvO3LiveCheckpointProfile, RiscvO3LiveCheckpointService,
+    RiscvO3LiveCheckpointTelemetry, RiscvO3LiveCheckpointWake,
 };
 use rem6_isa_riscv::RegisterWrite;
 use rem6_kernel::ScheduledEventKind;
@@ -74,10 +74,11 @@ fn valid_compute_o3lc() -> Vec<u8> {
         profile: RiscvO3LiveCheckpointProfile::ComputeQueue,
         captured_tick: 20, next_fetch_pc: Address::new(0x8004), next_fetch_request_sequence: 2,
         events: vec![event],
-        issue_rows: Vec::new(), rename_rows: Vec::new(), resident_sequences: Vec::new(),
-        executed_fetch_requests: Vec::new(), issued_fetch_requests: Vec::new(),
+        issue_rows: vec![RiscvO3LiveCheckpointIssueRow { sequence: 1, fetch_request: request }],
+        rename_rows: Vec::new(), resident_sequences: vec![1],
+        executed_fetch_requests: vec![request], issued_fetch_requests: Vec::new(),
         service: RiscvO3LiveCheckpointService {
-            requested_tick: 21, mutation_generation: 1, last_service_generation: 0,
+            requested_tick: 21, mutation_generation: 1, last_service_generation: None,
             telemetry: RiscvO3LiveCheckpointTelemetry {
                 enqueued_rows: 1, service_turns: 0, wake_requests: 1,
                 current_occupancy: 1, peak_occupancy: 1,

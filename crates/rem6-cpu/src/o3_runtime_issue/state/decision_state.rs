@@ -3,6 +3,12 @@ use super::decision_projection::O3LiveIssueDecisionProjection;
 use super::*;
 
 impl O3LiveIssueState {
+    pub(in crate::o3_runtime) fn reset_checkpoint_decisions(&mut self) {
+        self.decision_window = Default::default();
+        self.scheduler_entry_tick = None;
+        self.active_tick = None;
+    }
+
     pub(in crate::o3_runtime) fn observe_sequences(
         &mut self,
         tick: u64,

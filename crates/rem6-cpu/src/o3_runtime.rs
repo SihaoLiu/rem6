@@ -22,6 +22,8 @@ use rem6_isa_riscv::{
 };
 use rem6_memory::{Address, MemoryRequestId};
 use std::collections::{BTreeMap, BTreeSet};
+#[path = "o3_runtime_live_checkpoint.rs"]
+mod live_checkpoint;
 #[path = "o3_runtime_authority.rs"]
 mod o3_runtime_authority;
 #[path = "o3_runtime_checkpoint.rs"]

@@ -56,8 +56,24 @@ wire_tags!(RiscvO3LiveCheckpointWritebackSource; 0 => RiscvO3LiveCheckpointWrite
 wire_tags!(ScheduledEventKind; 0 => ScheduledEventKind::Serial, 1 => ScheduledEventKind::Parallel);
 
 pub(super) fn encode(checkpoint: &RiscvO3LiveCheckpointPayload) -> Result<Vec<u8>, Error> {
+    encode_impl(checkpoint, true)
+}
+
+#[cfg(test)]
+pub(super) fn encode_without_validation(
+    checkpoint: &RiscvO3LiveCheckpointPayload,
+) -> Result<Vec<u8>, Error> {
+    encode_impl(checkpoint, false)
+}
+
+fn encode_impl(
+    checkpoint: &RiscvO3LiveCheckpointPayload,
+    validate_semantics: bool,
+) -> Result<Vec<u8>, Error> {
     preflight(checkpoint)?;
-    validate(checkpoint)?;
+    if validate_semantics {
+        validate(checkpoint)?;
+    }
     let mut out = Vec::new();
     out.extend_from_slice(&MAGIC);
     byte(&mut out, VERSION);
@@ -337,10 +353,14 @@ fn read_event(reader: &mut Reader<'_>) -> Result<RiscvO3LiveCheckpointEvent, Err
 }
 
 fn write_service(out: &mut Vec<u8>, service: RiscvO3LiveCheckpointService) {
+    u64v(out, service.requested_tick);
+    u64v(out, service.mutation_generation);
+    boolv(out, service.last_service_generation.is_some());
+    if let Some((tick, generation)) = service.last_service_generation {
+        u64v(out, tick);
+        u64v(out, generation);
+    }
     for value in [
-        service.requested_tick,
-        service.mutation_generation,
-        service.last_service_generation,
         service.telemetry.enqueued_rows,
         service.telemetry.service_turns,
         service.telemetry.wake_requests,
@@ -358,10 +378,21 @@ fn write_service(out: &mut Vec<u8>, service: RiscvO3LiveCheckpointService) {
 }
 
 fn read_service(reader: &mut Reader<'_>) -> Result<RiscvO3LiveCheckpointService, Error> {
+    let requested_tick = reader.u64("service requested tick")?;
+    let mutation_generation = reader.u64("service mutation generation")?;
+    let last_service_generation = reader
+        .bool("service last identity present")?
+        .then(|| {
+            Ok((
+                reader.u64("service last tick")?,
+                reader.u64("service last generation")?,
+            ))
+        })
+        .transpose()?;
     Ok(RiscvO3LiveCheckpointService {
-        requested_tick: reader.u64("service requested tick")?,
-        mutation_generation: reader.u64("service mutation generation")?,
-        last_service_generation: reader.u64("service last generation")?,
+        requested_tick,
+        mutation_generation,
+        last_service_generation,
         telemetry: RiscvO3LiveCheckpointTelemetry {
             enqueued_rows: reader.u64("telemetry enqueued rows")?,
             service_turns: reader.u64("telemetry service turns")?,
@@ -588,6 +619,9 @@ fn validate(value: &RiscvO3LiveCheckpointPayload) -> Result<(), Error> {
     if value.events.is_empty() {
         return Err(invalid_shape("live event list is empty"));
     }
+    if value.service.has_invalid_identity_at(value.captured_tick) {
+        return Err(invalid_shape("last service identity is invalid"));
+    }
     for event in &value.events {
         event.rebuild()?;
     }
@@ -611,16 +645,30 @@ fn validate(value: &RiscvO3LiveCheckpointPayload) -> Result<(), Error> {
     }
     match value.profile {
         RiscvO3LiveCheckpointProfile::ComputeQueue => {
+            let event_requests = value
+                .events
+                .iter()
+                .map(|event| event.fetch.request_id())
+                .collect::<BTreeSet<_>>();
+            let executed_requests = value
+                .executed_fetch_requests
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>();
             if value.reservation.is_some()
                 || value.completed_result.is_some()
-                || value
-                    .events
-                    .iter()
-                    .any(|event| event.memory_access.is_some())
+                || !value.issued_fetch_requests.is_empty()
+                || !value.writeback_counted_sequences.is_empty()
+                || !value.writeback_published_sequences.is_empty()
+                || executed_requests != event_requests
+                || !value
+                    .finalized_writeback
+                    .is_valid_without_live_calendar_at(value.captured_tick)
+                || value.events.iter().any(|event| {
+                    event.memory_access.is_some() || event.data_access_event_kind.is_some()
+                })
             {
-                return Err(invalid_shape(
-                    "compute queue carries completed memory state",
-                ));
+                return Err(invalid_shape("compute queue ownership is inconsistent"));
             }
         }
         RiscvO3LiveCheckpointProfile::CompletedFpLoad => {

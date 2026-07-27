@@ -95,6 +95,31 @@ impl CpuCore {
         state.events.clear();
     }
 
+    pub(crate) fn checkpoint_state(&self) -> CpuCoreCheckpointState {
+        CpuCoreCheckpointState(self.state.lock().expect("cpu core lock").clone())
+    }
+
+    pub(crate) fn checkpoint_state_from_guard(state: &CpuCoreState) -> CpuCoreCheckpointState {
+        CpuCoreCheckpointState(state.clone())
+    }
+
+    pub(crate) fn from_checkpoint_state(state: CpuCoreCheckpointState) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(state.0)),
+        }
+    }
+
+    pub(crate) fn install_checkpoint_state(&self, state: CpuCoreCheckpointState) {
+        *self.state.lock().expect("cpu core lock") = state.0;
+    }
+
+    pub(crate) fn install_checkpoint_state_into_guard(
+        guard: &mut CpuCoreState,
+        state: CpuCoreCheckpointState,
+    ) {
+        *guard = state.0;
+    }
+
     pub fn add_fetch_line_layout_range(&self, range: AddressRange, line_layout: CacheLineLayout) {
         self.state
             .lock()
@@ -358,6 +383,23 @@ impl CpuCore {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CpuCoreCheckpointState(CpuCoreState);
+
+impl CpuCoreCheckpointState {
+    pub(crate) fn replace_operational_fetch(
+        &mut self,
+        pc: Address,
+        next_sequence: u64,
+        events: Vec<CpuFetchEvent>,
+    ) {
+        self.0.pc = pc;
+        self.0.next_sequence = next_sequence;
+        self.0.outstanding.clear();
+        self.0.events = events;
+    }
+}
+
 impl fmt::Debug for CpuCore {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let state = self.state.lock().expect("cpu core lock");
@@ -394,6 +436,22 @@ impl CpuCoreState {
             events: Vec::new(),
             history: Vec::new(),
         }
+    }
+
+    pub(crate) const fn pc(&self) -> Address {
+        self.pc
+    }
+
+    pub(crate) const fn next_sequence(&self) -> u64 {
+        self.next_sequence
+    }
+
+    pub(crate) fn events(&self) -> &[CpuFetchEvent] {
+        &self.events
+    }
+
+    pub(crate) fn has_outstanding_fetch(&self) -> bool {
+        !self.outstanding.is_empty()
     }
 }
 

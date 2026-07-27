@@ -61,6 +61,27 @@ impl O3LiveIssueTelemetry {
     copy_getters!(scalar_integer_issued_rows -> u64, integer_mul_div_issued_rows -> u64);
     copy_getters!(memory_agu_issued_rows -> u64, control_issued_rows -> u64);
     copy_getters!(scalar_float_issued_rows -> u64, vector_to_scalar_issued_rows -> u64);
+
+    pub(in crate::o3_runtime) const fn from_checkpoint(values: [u64; 11]) -> Self {
+        Self {
+            enqueued_rows: values[0],
+            service_turns: values[1],
+            wake_requests: values[2],
+            current_occupancy: values[3],
+            peak_occupancy: values[4],
+            scalar_integer_issued_rows: values[5],
+            integer_mul_div_issued_rows: values[6],
+            memory_agu_issued_rows: values[7],
+            control_issued_rows: values[8],
+            scalar_float_issued_rows: values[9],
+            vector_to_scalar_issued_rows: values[10],
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn from_checkpoint_for_test(values: [u64; 11]) -> Self {
+        Self::from_checkpoint(values)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -171,6 +192,32 @@ pub(in crate::o3_runtime) struct O3LiveIssueState {
 impl O3LiveIssueState {
     pub(in crate::o3_runtime) fn resident_sequences(&self) -> &[u64] {
         self.resident_sequences.as_slice()
+    }
+
+    pub(in crate::o3_runtime) const fn mutation_generation(&self) -> u64 {
+        self.mutation_generation
+    }
+
+    pub(in crate::o3_runtime) const fn last_service_generation(&self) -> Option<(u64, u64)> {
+        self.last_service_generation
+    }
+
+    pub(in crate::o3_runtime) fn install_checkpoint_projection(
+        &mut self,
+        resident_sequences: Vec<u64>,
+        requested_service_tick: u64,
+        mutation_generation: u64,
+        last_service_generation: Option<(u64, u64)>,
+        telemetry: O3LiveIssueTelemetry,
+    ) {
+        self.resident_sequences = O3LiveIssueResidentSequences(resident_sequences);
+        self.requested_service_tick = Some(requested_service_tick);
+        self.transaction_active = false;
+        self.mutation_generation = mutation_generation;
+        self.last_service_generation = last_service_generation;
+        self.telemetry = telemetry;
+        self.trace_records.clear();
+        self.reset_checkpoint_decisions();
     }
 
     pub(in crate::o3_runtime) fn enqueue_at(

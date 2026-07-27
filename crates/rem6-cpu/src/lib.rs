@@ -55,6 +55,7 @@ mod riscv_cluster_run;
 mod riscv_cluster_run_loop;
 mod riscv_cluster_scheduler;
 mod riscv_cluster_translation;
+mod riscv_core_checkpoint_restore;
 mod riscv_cross_line;
 mod riscv_data_access;
 mod riscv_data_completion;
@@ -109,11 +110,15 @@ pub(crate) use riscv_defaults::*;
 pub(crate) use riscv_selected_branch_speculation::RiscvSelectedBranchSpeculation;
 
 pub use public_api::*;
+pub use riscv_core_checkpoint_restore::{
+    PreparedRiscvCoreRestore, RiscvCoreCheckpointRestoreError, RiscvCoreCheckpointRestoreInput,
+};
 pub use riscv_defaults::*;
 #[doc(hidden)]
 pub use riscv_failure_diagnostic::{
     RiscvFailureDiagnosticSnapshot, RiscvFailureDiagnosticSnapshotError,
 };
+pub use riscv_live_checkpoint::{RiscvO3CheckpointProjection, RiscvO3LiveCheckpointCapture};
 
 #[derive(Clone, Debug)]
 pub struct RiscvCore {

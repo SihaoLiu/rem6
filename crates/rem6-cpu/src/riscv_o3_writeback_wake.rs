@@ -54,6 +54,18 @@ pub(crate) struct RiscvO3WritebackWakeState {
 }
 
 impl RiscvO3WritebackWakeState {
+    pub(crate) fn checkpoint_scheduled_wake(&self) -> Option<RiscvO3WritebackWake> {
+        let wake = self.scheduled?;
+        (self.detached.is_empty() && self.desired_tick == Some(wake.tick())).then_some(wake)
+    }
+
+    pub(crate) fn restore_desired_unscheduled(&mut self, tick: Tick) {
+        *self = Self {
+            desired_tick: Some(tick),
+            ..Self::default()
+        };
+    }
+
     pub(crate) fn set_desired_tick(&mut self, desired: Option<Tick>, now: Tick) {
         self.prune(now);
         if self.desired_tick == desired {
