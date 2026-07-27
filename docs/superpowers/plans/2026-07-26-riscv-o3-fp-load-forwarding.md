@@ -776,7 +776,10 @@ the cleanup owner files actually changed.
 ### Task 6: Lock Checkpoint, Handoff, Restore, and Timing Boundaries
 
 **Files:**
-- Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/fp_load_forwarding_boundaries.rs`
+- Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq.rs`
+- Create: `crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/fp_load_forwarding_compatibility.rs`
+- Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/fp_load_forwarding_fixture.rs`
+- Create: `crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/fp_load_forwarding_runtime_boundaries.rs`
 - Modify as RED requires: existing checkpoint/handoff quiescence owners only
 
 - [ ] **Step 1: Add live checkpoint rejection before and after response admission**
@@ -816,6 +819,9 @@ O3PS version = 2
 O3DH version = 7
 ```
 
+FP-owned live state must reject handoff, so pin the shared O3DH version through
+a supported scalar transport transfer in the focused compatibility helper.
+
 - [ ] **Step 3: Add timing-mode suppression**
 
 Add:
@@ -825,8 +831,8 @@ rem6_run_timing_suppresses_o3_fp_load_forwarding
 ```
 
 Run the same ELF in timing mode, require the same result bytes, and assert no
-O3 runtime JSON, no issue-queue debug records, and no
-`sim.cpu0.o3.issue_queue.*` or O3 writeback stats.
+O3 runtime JSON, no issue-queue debug records, and no current, legacy, or
+stats-dump O3 paths.
 
 - [ ] **Step 4: Run boundary GREEN and commit**
 
@@ -837,7 +843,7 @@ TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run rem6_run_o3_fp_load_for
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run rem6_run_timing_suppresses_o3_fp_load_forwarding -- --nocapture
 TMPDIR=$PWD/target/tmp cargo fmt --all
 git diff --check
-git add crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/fp_load_forwarding_boundaries.rs
+git add crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq.rs crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/fp_load_forwarding_compatibility.rs crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/fp_load_forwarding_fixture.rs crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/fp_load_forwarding_runtime_boundaries.rs docs/superpowers/plans/2026-07-26-riscv-o3-fp-load-forwarding.md
 git commit -m "test: lock fp load forwarding boundaries"
 git push
 ```

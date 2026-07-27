@@ -1,4 +1,5 @@
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::Value;
 
@@ -37,6 +38,7 @@ const DIRECT_S_ROUTE_DELAY: u64 = 16;
 const DIRECT_D_COLLISION_ROUTE_DELAY: u64 = 11;
 const HIERARCHY_S_COLLISION_ROUTE_DELAY: u64 = 1;
 const HIERARCHY_D_COLLISION_ROUTE_DELAY: u64 = 1;
+static FP_LOAD_BINARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum FpLoadPrecision {
@@ -45,6 +47,13 @@ pub(super) enum FpLoadPrecision {
 }
 
 impl FpLoadPrecision {
+    pub(super) const fn label(self) -> &'static str {
+        match self {
+            Self::Single => "flw",
+            Self::Double => "fld",
+        }
+    }
+
     pub(super) const fn bytes(self) -> u64 {
         match self {
             Self::Single => 4,
@@ -271,7 +280,12 @@ impl FpLoadForwardingRun {
             .unwrap_or_else(|error| panic!("invalid FP load forwarding stdout JSON: {error}"))
     }
 
-    fn command(self, path: &std::path::Path, max_tick: u64, route_delay: u64) -> Command {
+    pub(super) fn command(
+        self,
+        path: &std::path::Path,
+        max_tick: u64,
+        route_delay: u64,
+    ) -> Command {
         let issue_width = self.issue_width.to_string();
         let memory_issue_width = self.memory_issue_width().to_string();
         let writeback_width = self.writeback_width.to_string();
@@ -324,7 +338,7 @@ impl FpLoadForwardingRun {
     }
 }
 
-fn fp_load_forwarding_binary(run: FpLoadForwardingRun) -> std::path::PathBuf {
+pub(super) fn fp_load_forwarding_binary(run: FpLoadForwardingRun) -> std::path::PathBuf {
     match run.precision {
         FpLoadPrecision::Single => flw_forwarding_binary(run),
         FpLoadPrecision::Double => fld_forwarding_binary(run),
@@ -382,14 +396,12 @@ fn flw_forwarding_binary(run: FpLoadForwardingRun) -> std::path::PathBuf {
     words.extend([3.0f32.to_bits(), 4.0f32.to_bits()]);
     pad_program_to_cache_line(&mut words);
     let program = riscv64_program(&words);
-    temp_binary(
-        if run.hierarchy_collision() {
-            "o3-fp-load-forwarding-flw-hierarchy-collision"
-        } else {
-            "o3-fp-load-forwarding-flw-direct-width-one"
-        },
-        &riscv64_elf(0x8000_0000, 0x8000_0000, &program),
-    )
+    let name = unique_fp_load_binary_name(if run.hierarchy_collision() {
+        "o3-fp-load-forwarding-flw-hierarchy-collision"
+    } else {
+        "o3-fp-load-forwarding-flw-direct-width-one"
+    });
+    temp_binary(&name, &riscv64_elf(0x8000_0000, 0x8000_0000, &program))
 }
 
 fn fld_forwarding_binary(run: FpLoadForwardingRun) -> std::path::PathBuf {
@@ -442,14 +454,17 @@ fn fld_forwarding_binary(run: FpLoadForwardingRun) -> std::path::PathBuf {
     }
     pad_program_to_cache_line(&mut words);
     let program = riscv64_program(&words);
-    temp_binary(
-        if run.hierarchy_collision() {
-            "o3-fp-load-forwarding-fld-hierarchy-collision"
-        } else {
-            "o3-fp-load-forwarding-fld-direct-width-two"
-        },
-        &riscv64_elf(0x8000_0000, 0x8000_0000, &program),
-    )
+    let name = unique_fp_load_binary_name(if run.hierarchy_collision() {
+        "o3-fp-load-forwarding-fld-hierarchy-collision"
+    } else {
+        "o3-fp-load-forwarding-fld-direct-width-two"
+    });
+    temp_binary(&name, &riscv64_elf(0x8000_0000, 0x8000_0000, &program))
+}
+
+fn unique_fp_load_binary_name(base: &str) -> String {
+    let sequence = FP_LOAD_BINARY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!("{base}-{sequence}")
 }
 
 fn hierarchy_operand_prefix(precision: FpLoadPrecision) -> Vec<u32> {
