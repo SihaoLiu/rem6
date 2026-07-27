@@ -10,9 +10,10 @@ use rem6_cpu::{
     InOrderPipelineCheckpointPayload, InOrderPipelineError, InOrderPipelineSnapshot,
     MultiperspectivePerceptronCheckpointPayload, MultiperspectivePerceptronError, O3PipelineError,
     O3RuntimeCheckpointPayload, O3RuntimeError, O3RuntimeSnapshot, O3RuntimeStats, RiscvCore,
-    RiscvHartRunState, RiscvO3LiveDataHandoffCapture, RiscvO3WritebackDebugState,
-    TageScLBranchPredictorCheckpointPayload, TageScLBranchPredictorError,
-    TournamentBranchPredictorCheckpointPayload, TournamentBranchPredictorError,
+    RiscvHartRunState, RiscvO3LiveCheckpointError, RiscvO3LiveDataHandoffCapture,
+    RiscvO3WritebackDebugState, TageScLBranchPredictorCheckpointPayload,
+    TageScLBranchPredictorError, TournamentBranchPredictorCheckpointPayload,
+    TournamentBranchPredictorError, RISCV_O3_LIVE_CHECKPOINT_CHUNK,
     RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,
 };
 use rem6_isa_riscv::{
@@ -27,7 +28,10 @@ use crate::ExecutionModeTarget;
 mod o3_payload;
 mod vector_state;
 
-use o3_payload::{decode_o3_runtime_authority, O3_PENDING_STATE_CHUNK, O3_RUNTIME_STATE_CHUNK};
+use o3_payload::{
+    decode_o3_live_checkpoint, decode_o3_runtime_authority, O3_PENDING_STATE_CHUNK,
+    O3_RUNTIME_STATE_CHUNK,
+};
 use vector_state::{
     decode_vector_architectural_state, encode_vector_architectural_state, RISCV_STATE_VERSION,
     RISCV_STATE_VERSION_CHUNK, VECTOR_STATE_CHUNK,
@@ -395,6 +399,37 @@ impl RiscvCoreCheckpointPort {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<RiscvCoreCheckpointRecord, RiscvCoreCheckpointError> {
+        let o3_live_checkpoint = registry
+            .chunk(&self.component, RISCV_O3_LIVE_CHECKPOINT_CHUNK)
+            .map(|payload| decode_o3_live_checkpoint(&self.component, payload))
+            .transpose()?;
+        if o3_live_checkpoint.is_some() {
+            if registry
+                .chunk(&self.component, RISCV_O3_LIVE_DATA_HANDOFF_CHUNK)
+                .is_some()
+            {
+                return Err(
+                    RiscvCoreCheckpointError::O3LiveCheckpointConflictsWithDataHandoff {
+                        component: self.component.clone(),
+                    },
+                );
+            }
+            let runtime = registry
+                .chunk(&self.component, O3_RUNTIME_STATE_CHUNK)
+                .ok_or_else(
+                    || RiscvCoreCheckpointError::O3LiveCheckpointRequiresRuntime {
+                        component: self.component.clone(),
+                    },
+                )?;
+            decode_o3_runtime_authority(
+                &self.component,
+                Some(runtime),
+                registry.chunk(&self.component, O3_PENDING_STATE_CHUNK),
+            )?;
+            return Err(RiscvCoreCheckpointError::O3LiveCheckpointNotRestorable {
+                component: self.component.clone(),
+            });
+        }
         if registry
             .chunk(&self.component, RISCV_O3_LIVE_DATA_HANDOFF_CHUNK)
             .is_some()
@@ -990,6 +1025,19 @@ pub enum RiscvCoreCheckpointError {
         component: CheckpointComponentId,
         error: O3RuntimeError,
     },
+    InvalidO3LiveCheckpoint {
+        component: CheckpointComponentId,
+        error: RiscvO3LiveCheckpointError,
+    },
+    O3LiveCheckpointRequiresRuntime {
+        component: CheckpointComponentId,
+    },
+    O3LiveCheckpointConflictsWithDataHandoff {
+        component: CheckpointComponentId,
+    },
+    O3LiveCheckpointNotRestorable {
+        component: CheckpointComponentId,
+    },
     MismatchedO3PendingStateSnapshot {
         component: CheckpointComponentId,
     },
@@ -1099,6 +1147,26 @@ impl fmt::Display for RiscvCoreCheckpointError {
             Self::InvalidO3RuntimeSnapshot { component, error } => write!(
                 formatter,
                 "RISC-V core checkpoint component {} has invalid O3 runtime snapshot: {error}",
+                component.as_str()
+            ),
+            Self::InvalidO3LiveCheckpoint { component, error } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has invalid O3 live checkpoint: {error}",
+                component.as_str()
+            ),
+            Self::O3LiveCheckpointRequiresRuntime { component } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has an O3 live checkpoint without O3 runtime authority",
+                component.as_str()
+            ),
+            Self::O3LiveCheckpointConflictsWithDataHandoff { component } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has conflicting O3 live checkpoint and live-data handoff authority",
+                component.as_str()
+            ),
+            Self::O3LiveCheckpointNotRestorable { component } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has an O3 live checkpoint that is not yet restorable",
                 component.as_str()
             ),
             Self::MismatchedO3PendingStateSnapshot { component } => write!(

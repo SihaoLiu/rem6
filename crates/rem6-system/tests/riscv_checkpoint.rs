@@ -38,6 +38,8 @@ use rem6_transport::{
 
 #[path = "riscv_checkpoint/o3_compatibility.rs"]
 mod o3_compatibility;
+#[path = "riscv_checkpoint/o3_live.rs"]
+mod o3_live;
 #[path = "riscv_checkpoint/vector_state.rs"]
 mod vector_state;
 

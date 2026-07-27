@@ -75,6 +75,9 @@ mod riscv_hart_run_state;
 mod riscv_htm;
 mod riscv_in_order_config;
 mod riscv_in_order_drive;
+mod riscv_live_checkpoint;
+#[cfg(test)]
+mod riscv_live_checkpoint_tests;
 mod riscv_live_retire_gate;
 mod riscv_live_retire_window;
 mod riscv_memory_result_window;

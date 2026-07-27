@@ -133,6 +133,13 @@ pub use crate::riscv_execution_mode_handoff::{
     RiscvO3LiveDataHandoffTarget, RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,
 };
 pub use crate::riscv_hart_run_state::RiscvHartRunState;
+pub use crate::riscv_live_checkpoint::{
+    RiscvO3LiveCheckpointCompletedFpLoad, RiscvO3LiveCheckpointError, RiscvO3LiveCheckpointEvent,
+    RiscvO3LiveCheckpointFinalizedWriteback, RiscvO3LiveCheckpointIssueRow,
+    RiscvO3LiveCheckpointPayload, RiscvO3LiveCheckpointProfile, RiscvO3LiveCheckpointReservation,
+    RiscvO3LiveCheckpointService, RiscvO3LiveCheckpointTelemetry, RiscvO3LiveCheckpointWake,
+    RiscvO3LiveCheckpointWritebackSource, RISCV_O3_LIVE_CHECKPOINT_CHUNK,
+};
 pub use crate::riscv_sc_progress::{
     RiscvStoreConditionalFailureDiagnostic, RiscvStoreConditionalFailureStreak,
     RiscvStoreConditionalProgress, RiscvStoreConditionalProgressCheckpointPayload,

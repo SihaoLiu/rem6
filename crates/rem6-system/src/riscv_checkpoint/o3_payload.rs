@@ -1,10 +1,25 @@
 use rem6_checkpoint::CheckpointComponentId;
-use rem6_cpu::{O3PendingStateCheckpointPayload, O3RuntimeCheckpointPayload, RiscvCore};
+use rem6_cpu::{
+    O3PendingStateCheckpointPayload, O3RuntimeCheckpointPayload, RiscvCore,
+    RiscvO3LiveCheckpointPayload,
+};
 
 use super::RiscvCoreCheckpointError;
 
 pub(super) const O3_PENDING_STATE_CHUNK: &str = "o3-pending-state";
 pub const O3_RUNTIME_STATE_CHUNK: &str = "o3-runtime-state";
+
+pub(super) fn decode_o3_live_checkpoint(
+    component: &CheckpointComponentId,
+    payload: &[u8],
+) -> Result<RiscvO3LiveCheckpointPayload, RiscvCoreCheckpointError> {
+    RiscvO3LiveCheckpointPayload::decode(payload).map_err(|error| {
+        RiscvCoreCheckpointError::InvalidO3LiveCheckpoint {
+            component: component.clone(),
+            error,
+        }
+    })
+}
 
 pub(super) fn decode_o3_runtime_authority(
     component: &CheckpointComponentId,
