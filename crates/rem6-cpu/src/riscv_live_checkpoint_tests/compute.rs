@@ -198,7 +198,9 @@ fn checkpoint_capture_holds_cpu_then_riscv_state_for_one_projection() {
     assert!(cpu_lock < riscv_lock && riscv_lock < guarded);
     assert!(!capture[..guarded].contains("o3_runtime_checkpoint_payload("));
     let guarded = source.split("fn capture_checkpoint_projection_from_guards").nth(1).unwrap();
-    assert!(guarded.contains("state: Arc::new(Mutex::new(state.clone()))"));
+    assert!(guarded.contains("let mut checkpoint_state = state.clone()"));
+    assert!(guarded.contains("checkpoint_state.hart = hart"));
+    assert!(guarded.contains("state: Arc::new(Mutex::new(checkpoint_state))"));
     assert!(guarded.contains("RiscvCoreCheckpointRestoreInput::new"));
 }
 
@@ -489,6 +491,12 @@ struct ComputeFixture {
 impl ComputeFixture {
     #[rustfmt::skip]
     fn new() -> Self {
+        Self::new_with_dependent_fetch_requests(&[request(2)])
+    }
+
+    #[rustfmt::skip]
+    fn new_with_dependent_fetch_requests(dependent_fetch_requests: &[MemoryRequestId]) -> Self {
+        assert!(!dependent_fetch_requests.is_empty());
         let core = core();
         let producer = RiscvInstruction::Addi { rd: reg(3), rs1: reg(0), imm: Immediate::new(13) };
         let dependent = RiscvInstruction::Mul { rd: reg(4), rs1: reg(3), rs2: reg(2) };
@@ -515,21 +523,39 @@ impl ComputeFixture {
         state.o3_runtime.checkpoint_reopen_finalized_writeback_for_test(90);
         let first = state.o3_runtime.stage_live_retire_window(Address::new(0x8000), producer, 99, [(Address::new(0x8004), dependent)]).unwrap();
         assert!(state.o3_runtime.bind_live_staged_issue_packet(Address::new(0x8000), RiscvInstruction::decode_with_length(producer_raw).unwrap(), &[request(1)], 100));
-        assert!(state.o3_runtime.bind_live_staged_issue_packet(Address::new(0x8004), RiscvInstruction::decode_with_length(dependent_raw).unwrap(), &[request(2)], 100));
+        assert!(state.o3_runtime.bind_live_staged_issue_packet(Address::new(0x8004), RiscvInstruction::decode_with_length(dependent_raw).unwrap(), dependent_fetch_requests, 100));
         let sequences = state.o3_runtime.live_issue_resident_sequences_for_checkpoint();
         assert_eq!(sequences, vec![first, first + 1]);
         state.o3_runtime.checkpoint_complete_service_and_request_for_test(99, 100);
         state.events = execution_events;
-        state.executed_fetches.extend([request(0), request(1), request(2)]);
+        state.executed_fetches.extend([request(0), request(1)]);
+        state.executed_fetches.extend(dependent_fetch_requests.iter().copied());
         state.refresh_o3_writeback_wake(99);
         let mut scheduler = PartitionedScheduler::new(1).unwrap();
         let wake = scheduler.schedule_at(PartitionId::new(0), 100, |_| {}).unwrap();
         let scheduler_instance_raw = scheduler.instance_id().checkpoint_raw();
         state.o3_writeback_wake.mark_scheduled(scheduler.instance_id(), scheduler.pending_event_snapshot(wake).unwrap());
         drop(state);
-        core.core.state.lock().expect("cpu core lock").events = projected_events.iter().map(|event| event.fetch.clone()).collect();
+        let cpu_fetches = if dependent_fetch_requests == [request(2), request(3)] {
+            let bytes = dependent_raw.to_le_bytes();
+            let fragment = |tick, request_id, pc| CpuFetchRecord::new(
+                tick, PartitionId::new(0), MemoryRouteId::new(0),
+                TransportEndpointId::new("cpu0.ifetch").unwrap(), request_id,
+                Address::new(pc), AccessSize::new(2).unwrap(),
+            );
+            vec![
+                projected_events[0].fetch.clone(),
+                CpuFetchEvent::issued(fragment(21, request(2), 0x8004)),
+                CpuFetchEvent::completed(fragment(22, request(2), 0x8004), bytes[..2].to_vec()),
+                CpuFetchEvent::issued(fragment(22, request(3), 0x8006)),
+                CpuFetchEvent::completed(fragment(23, request(3), 0x8006), bytes[2..].to_vec()),
+            ]
+        } else {
+            projected_events.iter().map(|event| event.fetch.clone()).collect()
+        };
+        core.core.state.lock().expect("cpu core lock").events = cpu_fetches;
         core.inner().set_pc(Address::new(0x8008));
-        core.inner().advance_sequence_past(request(2));
+        core.inner().advance_sequence_past(*dependent_fetch_requests.last().unwrap());
         Self { core, sequences, scheduler_instance_raw }
     }
 }
@@ -638,7 +664,7 @@ fn checkpoint_input_with_live(source: &RiscvCore, stable: O3RuntimeCheckpointPay
 }
 
 #[rustfmt::skip]
-fn rebuilt_stable(
+pub(super) fn rebuilt_stable(
     stable: &O3RuntimeCheckpointPayload, rob: Option<Vec<O3ReorderBufferEntry>>,
     lsq: Option<Vec<O3LoadStoreQueueEntry>>, rename: Option<Vec<O3RenameMapEntry>>,
 ) -> Result<O3RuntimeCheckpointPayload, O3RuntimeError> {
@@ -651,6 +677,143 @@ fn rebuilt_stable(
         )?,
         stable.stats(), stable.dependency_producers_with_consumers().clone(),
     )
+}
+
+pub(super) fn assert_compute_projection_mutation_rejected(
+    mutation: impl FnOnce(&mut O3RuntimeCheckpointPayload, &mut RiscvO3LiveCheckpointPayload),
+) {
+    let fixture = ComputeFixture::new();
+    let projection = fixture.core.capture_checkpoint_projection(100);
+    let mut stable = projection.stable().clone();
+    let mut live = captured_live(&projection).clone();
+    mutation(&mut stable, &mut live);
+    assert_prepare_rejected_atomically(&fixture.core, stable, live);
+}
+
+pub(super) fn assert_compute_capture_mutation_rejected(mutation: impl FnOnce(&RiscvCore)) {
+    let fixture = ComputeFixture::new();
+    mutation(&fixture.core);
+    assert!(matches!(
+        fixture
+            .core
+            .capture_checkpoint_projection(100)
+            .live_capture(),
+        RiscvO3LiveCheckpointCapture::Rejected
+    ));
+}
+
+pub(super) fn assert_split_fetch_issue_packet_capture_rejected() {
+    let fixture = ComputeFixture::new_with_dependent_fetch_requests(&[request(2), request(3)]);
+    let split_fetches = fixture
+        .core
+        .inner()
+        .fetch_events()
+        .into_iter()
+        .filter(|event| [request(2), request(3)].contains(&event.request_id()))
+        .map(|event| {
+            (
+                event.tick(),
+                event.request_id(),
+                event.kind(),
+                event.pc(),
+                event.size(),
+                event.data().map(<[u8]>::to_vec),
+            )
+        })
+        .collect::<Vec<_>>();
+    let dependent_bytes = r_type(1, 2, 3, 0, 4, 0x33).to_le_bytes();
+    assert_eq!(
+        split_fetches,
+        vec![
+            (
+                21,
+                request(2),
+                CpuFetchEventKind::Issued,
+                Address::new(0x8004),
+                AccessSize::new(2).unwrap(),
+                None,
+            ),
+            (
+                22,
+                request(2),
+                CpuFetchEventKind::Completed,
+                Address::new(0x8004),
+                AccessSize::new(2).unwrap(),
+                Some(dependent_bytes[..2].to_vec()),
+            ),
+            (
+                22,
+                request(3),
+                CpuFetchEventKind::Issued,
+                Address::new(0x8006),
+                AccessSize::new(2).unwrap(),
+                None,
+            ),
+            (
+                23,
+                request(3),
+                CpuFetchEventKind::Completed,
+                Address::new(0x8006),
+                AccessSize::new(2).unwrap(),
+                Some(dependent_bytes[2..].to_vec()),
+            ),
+        ],
+    );
+    let state = fixture.core.state.lock().expect("riscv core lock");
+    assert_eq!(
+        state
+            .o3_runtime
+            .live_issue_packet_requests_for_checkpoint_test(fixture.sequences[1]),
+        vec![request(2), request(3)],
+    );
+    assert!(state.pending_fetch_prefix.is_none());
+    assert!(state.pending_data_translations.is_empty());
+    assert!(state.outstanding_data.is_empty());
+    match state.o3_runtime.compute_checkpoint_projection(100) {
+        Err(error) => assert_eq!(
+            error,
+            RiscvO3LiveCheckpointError::InvalidProfileShape {
+                reason: "issue packet is not one completed fetch",
+            }
+        ),
+        Ok(_) => panic!("split-fetch issue packet unexpectedly projected"),
+    }
+    drop(state);
+    assert!(matches!(
+        fixture
+            .core
+            .capture_checkpoint_projection(100)
+            .live_capture(),
+        RiscvO3LiveCheckpointCapture::Rejected
+    ));
+}
+
+pub(super) fn assert_producer_forwarded_continuation_capture_rejected() {
+    let fixture = ComputeFixture::new();
+    assert!(matches!(
+        fixture
+            .core
+            .capture_checkpoint_projection(100)
+            .live_capture(),
+        RiscvO3LiveCheckpointCapture::Captured(_)
+    ));
+    let continuation = crate::riscv_fetch_ahead::tests::producer_forwarded_scalar_return::producer_forwarded_continuation_for_checkpoint_test();
+    let mut state = fixture.core.state.lock().expect("riscv core lock");
+    assert!(state.o3_runtime.live_data_access_lifecycle_is_quiescent());
+    assert!(state.pending_data_translations.is_empty());
+    assert!(state.ready_translated_data.is_empty());
+    assert!(state.outstanding_data.is_empty());
+    assert!(state.buffered_o3_effects.is_empty());
+    assert!(state.producer_forwarded_scalar_continuation.is_none());
+    state.producer_forwarded_scalar_continuation = Some(continuation);
+    drop(state);
+    assert!(matches!(
+        fixture
+            .core
+            .capture_checkpoint_projection(100)
+            .live_capture(),
+        RiscvO3LiveCheckpointCapture::Rejected
+    ));
 }
 
 #[derive(Clone, Copy, Debug)]

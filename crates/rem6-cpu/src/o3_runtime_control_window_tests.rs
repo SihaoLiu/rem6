@@ -1,3 +1,6 @@
+use super::o3_runtime_issue_tests::{bind_o3, decoded};
+use super::*;
+use crate::{CpuFetchEvent, CpuFetchRecord, RiscvCpuExecutionEvent};
 use rem6_isa_riscv::{
     Immediate, MemoryAccessKind, MemoryWidth, Register, RegisterWrite, RiscvExecutionRecord,
     RiscvInstruction,
@@ -5,11 +8,8 @@ use rem6_isa_riscv::{
 use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, Address, AgentId, MemoryRequestId};
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
-
-use super::o3_runtime_issue_tests::{bind_o3, decoded};
-use super::*;
-use crate::{CpuFetchEvent, CpuFetchRecord, RiscvCpuExecutionEvent};
-
+#[path = "o3_runtime_control_window_tests/completed_fp_load_lsq.rs"]
+mod completed_fp_load_lsq;
 #[path = "o3_runtime_control_window_tests/coroutine.rs"]
 mod coroutine;
 #[path = "o3_runtime_control_window_tests/fp_load_forwarding.rs"]
@@ -28,7 +28,6 @@ mod producer_forwarded_scalar_return;
 mod producer_forwarded_target;
 #[path = "o3_runtime_control_window_tests/typed_forwarding.rs"]
 mod typed_forwarding;
-
 #[test]
 fn predicted_control_branch_candidate_has_no_destination_and_keeps_issue_tick() {
     let mut runtime = scalar_load_runtime_with_branch(beq(5, 6));

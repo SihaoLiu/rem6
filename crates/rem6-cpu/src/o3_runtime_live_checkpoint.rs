@@ -6,7 +6,9 @@ use rem6_memory::{AddressRange, MemoryRequestId};
 use super::o3_runtime_issue::queue::{O3LiveIssueQueue, O3LiveIssueQueueCapture};
 #[cfg(test)]
 use super::o3_runtime_issue::{calendar::O3LiveIssueCalendar, O3LiveIssueDependencyTable};
-use super::o3_runtime_writeback::{O3LiveWritebackReady, O3WritebackReservation};
+#[cfg(test)]
+use super::o3_runtime_writeback::O3LiveWritebackReady;
+use super::o3_runtime_writeback::O3WritebackReservation;
 use super::*;
 use crate::{
     riscv_data_completion::RiscvDataCompletion,
@@ -60,6 +62,19 @@ impl PreparedRiscvO3LiveRestore {
 
 impl O3RuntimeState {
     #[cfg(test)]
+    pub(crate) fn stage_store_forwarding_overlay_for_checkpoint_test(
+        &mut self,
+        execution: &RiscvCpuExecutionEvent,
+    ) {
+        let _ = self.record_store_forwarding_window(execution, None, None);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_live_checkpoint_lsq_for_test(&mut self) {
+        self.snapshot.load_store_queue.clear();
+    }
+
+    #[cfg(test)]
     pub(crate) fn rearm_restored_completed_fp_result_for_terminal_injection(
         &mut self,
         fetch_request: MemoryRequestId,
@@ -110,6 +125,16 @@ impl O3RuntimeState {
     #[cfg(test)]
     pub(crate) fn live_issue_resident_sequences_for_checkpoint(&self) -> Vec<u64> {
         self.live_issue.resident_sequences().to_vec()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn live_issue_packet_requests_for_checkpoint_test(
+        &self,
+        sequence: u64,
+    ) -> Vec<MemoryRequestId> {
+        self.live_staged_issue_packet(sequence)
+            .map(|packet| packet.consumed_requests().to_vec())
+            .unwrap_or_default()
     }
 
     #[cfg(test)]
@@ -235,7 +260,14 @@ impl O3RuntimeState {
                     .remove(&row.sequence);
             }
         }
-        finalized_writeback.prune_writeback_calendar_before(captured_tick);
+        let prune_tick = if completed_profile {
+            captured_tick
+                .checked_add(1)
+                .ok_or(invalid("completed FP capture tick overflows"))?
+        } else {
+            captured_tick
+        };
+        finalized_writeback.prune_writeback_calendar_before(prune_tick);
         if completed_profile {
             let completed = completed_fp
                 .as_ref()
@@ -512,6 +544,12 @@ impl O3RuntimeState {
                 .skip(1)
                 .map(|row| row.sequence())
                 .collect::<BTreeSet<_>>();
+            let lsq_matches = matches!(lsq, [entry]
+                if entry.sequence() == live.sequence
+                    && entry.address() == Some(completion.physical_address())
+                    && entry.bytes() == width.bytes() as u32
+                    && entry.kind() == O3LoadStoreQueueKind::Load
+                    && entry.is_completed());
             if response_tick > captured_tick
                 || captured_tick > reservation.admitted_tick()
                 || live.issue_tick.checked_add(latency_ticks) != Some(response_tick)
@@ -550,12 +588,7 @@ impl O3RuntimeState {
                         u32::from(destination.index()),
                     ))
                 || load_owner.and_then(|row| row.destination()).is_none()
-                || lsq.len() != 1
-                || lsq[0].sequence() != live.sequence
-                || lsq[0].address() != Some(completion.physical_address())
-                || lsq[0].bytes() != width.bytes() as u32
-                || lsq[0].kind() != O3LoadStoreQueueKind::Load
-                || !lsq[0].is_completed()
+                || !lsq_matches
             {
                 return Err(invalid("completed FP result ownership is inconsistent"));
             }
@@ -640,10 +673,15 @@ impl O3RuntimeState {
         if live.service.has_invalid_identity_at(live.captured_tick) {
             return Err(invalid("last service identity is invalid"));
         }
-        if !live
-            .finalized_writeback
-            .is_valid_without_live_calendar_at(live.captured_tick)
-        {
+        let finalized_writeback_is_valid = match live.profile {
+            RiscvO3LiveCheckpointProfile::ComputeQueue => live
+                .finalized_writeback
+                .is_valid_without_live_calendar_at(live.captured_tick),
+            RiscvO3LiveCheckpointProfile::CompletedFpLoad => live
+                .finalized_writeback
+                .is_valid_without_live_calendar_closed_through(live.captured_tick),
+        };
+        if !finalized_writeback_is_valid {
             return Err(invalid("finalized writeback ownership is inconsistent"));
         }
         let occupancy = u64::try_from(live.resident_sequences.len())
@@ -919,19 +957,23 @@ impl O3RuntimeState {
             runtime
                 .restore_compute_checkpoint_writeback(&live.finalized_writeback, finalized_stats)
                 .map_err(|_| invalid("finalized writeback ownership is invalid"))?;
-            let restored_reservations = runtime
-                .reserve_writeback_completions([O3LiveWritebackReady::memory_result(
+            let slot = usize::try_from(reservation.slot)
+                .map_err(|_| invalid("completed FP reservation slot does not fit host"))?;
+            if reservation.admitted_tick < reservation.raw_ready_tick
+                || slot >= runtime.writeback_width()
+            {
+                return Err(invalid("completed FP reservation calendar is invalid"));
+            }
+            let restored_reservation = runtime
+                .restore_completed_fp_checkpoint_writeback(
                     result.sequence,
                     result.raw_ready_tick,
-                )])
+                    result.admitted_tick,
+                    slot,
+                )
                 .map_err(|_| invalid("completed FP reservation cannot be restored"))?;
-            let [restored_reservation] = restored_reservations.as_slice() else {
-                return Err(invalid(
-                    "completed FP reservation did not restore exactly once",
-                ));
-            };
             if checkpoint_reservation(
-                *restored_reservation,
+                restored_reservation,
                 result.raw_ready_tick,
                 RiscvO3LiveCheckpointWritebackSource::MemoryResult,
                 true,

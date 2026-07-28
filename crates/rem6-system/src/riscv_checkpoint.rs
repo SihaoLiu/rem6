@@ -118,6 +118,19 @@ pub(crate) struct RiscvO3LiveSchedulerRestore {
 }
 
 impl RiscvO3LiveSchedulerRestore {
+    #[cfg(test)]
+    pub(crate) fn for_scheduler_validation_test(
+        component: CheckpointComponentId,
+        core: RiscvCore,
+        wake: RiscvO3LiveCheckpointWake,
+    ) -> Self {
+        Self {
+            component,
+            core,
+            wake,
+        }
+    }
+
     pub(crate) fn component(&self) -> &CheckpointComponentId {
         &self.component
     }
@@ -999,7 +1012,10 @@ impl RiscvCoreCheckpointBank {
             .ports
             .values()
             .map(|port| match port.capture_checked_record(Some(tick)) {
-                Ok(record) => Ok((port, record, true)),
+                Ok(record) if record.o3_live_checkpoint().is_none() => Ok((port, record, true)),
+                Ok(_) => Err(CheckpointError::ComponentNotQuiescent {
+                    component: port.component.clone(),
+                }),
                 Err(CheckpointError::ComponentNotQuiescent { .. }) => port
                     .capture_execution_mode_switch_record()
                     .map(|record| (port, record, false)),

@@ -159,10 +159,14 @@ fn live_o3_restore_validates_saved_scheduler_order_and_preserves_kind() {
 #[test]
 #[rustfmt::skip]
 fn live_o3_restore_requires_scheduler_snapshot_not_discard_only() {
-    let (_, _, mut executor, _, scheduler_component, manifest) = live_fixture(ScheduledEventKind::Serial, "snapshot");
+    let (scheduler, seeded, mut executor, _, scheduler_component, manifest) = live_fixture(ScheduledEventKind::Serial, "snapshot");
     let states = manifest.states().iter().filter(|state| state.component() != &scheduler_component).cloned().collect();
     let without_scheduler = CheckpointManifest::new(manifest.label(), manifest.tick(), states);
+    seeded.core.write_register(reg(7), 0xfeed);
+    let scheduler_before = scheduler.lock().unwrap().snapshot(); let wakes_before = seeded.core.owned_o3_writeback_wakes();
     assert!(executor.apply(&restore_record(without_scheduler)).is_err());
+    assert_eq!(seeded.core.read_register(reg(7)), 0xfeed); assert_eq!(seeded.core.owned_o3_writeback_wakes(), wakes_before);
+    assert_eq!(scheduler.lock().unwrap().snapshot(), scheduler_before);
 }
 
 #[test]
@@ -171,7 +175,9 @@ fn live_o3_restore_rejects_same_partition_tick_competitor_preflight() {
     let (scheduler, seeded, mut executor, _, _, manifest) = live_fixture(ScheduledEventKind::Serial, "competitor");
     scheduler.lock().unwrap().schedule_at(PartitionId::new(0), LIVE_TICK, |_| {}).unwrap();
     seeded.core.write_register(reg(7), 0xbeef);
+    let scheduler_before = scheduler.lock().unwrap().snapshot(); let wakes_before = seeded.core.owned_o3_writeback_wakes();
     assert!(executor.apply(&restore_record(manifest)).is_err()); assert_eq!(seeded.core.read_register(reg(7)), 0xbeef);
+    assert_eq!(seeded.core.owned_o3_writeback_wakes(), wakes_before); assert_eq!(scheduler.lock().unwrap().snapshot(), scheduler_before);
 }
 
 #[test]

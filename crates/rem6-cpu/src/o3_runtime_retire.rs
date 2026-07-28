@@ -246,11 +246,20 @@ impl O3RuntimeState {
                 self.commit_live_rob_prefix(observation.commits, observation.commit_tick);
             trace_record.set_commit_tick(commit_tick);
         }
+        let first_surviving_rob_sequence = self
+            .snapshot
+            .reorder_buffer
+            .first()
+            .map(|entry| entry.sequence());
         let lsq_commits = self
             .snapshot
             .load_store_queue
             .iter()
-            .take_while(|entry| entry.is_completed())
+            .take_while(|entry| {
+                entry.is_completed()
+                    && first_surviving_rob_sequence
+                        .is_none_or(|sequence| entry.sequence() < sequence)
+            })
             .count();
         self.snapshot.load_store_queue.drain(0..lsq_commits);
         let rename_map_entries = self.snapshot_with_live_rename_map().rename_map.len();

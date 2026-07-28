@@ -118,12 +118,81 @@ fn response_admitted_flw_and_fld_capture_exact_result_and_prepared_restore() {
         );
         assert!(projection.stable().snapshot().load_store_queue()[0].is_completed());
         assert_eq!(live.finalized_writeback.cycles, 0);
+        assert_eq!(
+            live.finalized_writeback.closed_before_tick,
+            CAPTURED_TICK + 1,
+            "completed result closes the captured writeback cycle"
+        );
+        assert!(live.finalized_writeback.partial_cycle_ticks.is_empty());
+        assert!(live
+            .finalized_writeback
+            .partial_ready_rows_by_tick
+            .is_empty());
+        assert!(live
+            .finalized_writeback
+            .partial_deferred_rows_by_tick
+            .is_empty());
         assert_eq!(projection.stable().stats().writeback_port_cycles(), 1);
 
         let destination = test_core();
         install_projection(&destination, &fixture.core, &projection);
         assert_restored_result(&destination, &fixture, live);
     }
+}
+
+#[test]
+fn pending_terminal_completed_fp_projection_replays_at_immediate_canonical_pc() {
+    for width in [MemoryWidth::Word, MemoryWidth::Doubleword] {
+        let fixture = FpResultFixture::new(width);
+        fixture.make_load_pending_terminal();
+        let source_hart = fixture.core.checkpoint_hart_state();
+
+        let projection = fixture.core.capture_checkpoint_projection(CAPTURED_TICK);
+        let live = captured_live(&projection);
+
+        assert_eq!(live.profile, RiscvO3LiveCheckpointProfile::CompletedFpLoad);
+        assert_eq!(source_hart.pc(), LOAD_PC);
+        assert_eq!(live.events[0].next_pc, CONSUMER_PC);
+        assert_eq!(live.next_fetch_pc, Address::new(CONSUMER_PC + 4));
+        assert_eq!(projection.replay().hart.pc(), live.events[0].next_pc);
+        assert_ne!(projection.replay().hart.pc(), live.next_fetch_pc.get());
+        assert_eq!(fixture.core.checkpoint_hart_state(), source_hart);
+    }
+}
+
+#[test]
+fn completed_fp_capture_rejects_an_empty_source_lsq() {
+    let fixture = FpResultFixture::new(MemoryWidth::Word);
+    let source_hart = fixture.core.checkpoint_hart_state();
+    fixture
+        .core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .o3_runtime
+        .clear_live_checkpoint_lsq_for_test();
+
+    assert!(matches!(
+        fixture
+            .core
+            .capture_checkpoint_projection(CAPTURED_TICK)
+            .live_capture(),
+        RiscvO3LiveCheckpointCapture::Rejected
+    ));
+    assert_eq!(fixture.core.checkpoint_hart_state(), source_hart);
+}
+
+#[test]
+fn already_canonical_completed_fp_projection_retains_source_hart() {
+    let fixture = FpResultFixture::new(MemoryWidth::Word);
+    let projection = fixture.core.capture_checkpoint_projection(CAPTURED_TICK);
+    let live = captured_live(&projection);
+
+    assert_eq!(
+        projection.replay().hart,
+        fixture.core.checkpoint_hart_state()
+    );
+    assert_ne!(projection.replay().hart.pc(), live.next_fetch_pc.get());
 }
 
 #[test]
@@ -501,6 +570,29 @@ impl FpResultFixture {
         Self::new_with_fld_collision(MemoryWidth::Doubleword, true)
     }
 
+    fn make_load_pending_terminal(&self) {
+        let raw = self
+            .load_event
+            .fetch()
+            .data()
+            .expect("completed load fetch bytes");
+        let mut bytes = [0_u8; 4];
+        bytes[..raw.len()].copy_from_slice(raw);
+        let decoded = RiscvInstruction::decode_with_length(u32::from_le_bytes(bytes)).unwrap();
+        let mut state = self.core.state.lock().expect("riscv core lock");
+        state
+            .events
+            .retain(|event| event.fetch().request_id() != self.load_fetch);
+        state.executed_fetches.remove(&self.load_fetch);
+        state.pending_terminal_memory_result = Some(
+            crate::riscv_live_retire_window::RiscvPendingTerminalMemoryResult::ready_for_checkpoint_test(
+                self.load_event.clone(),
+                vec![self.load_fetch],
+                decoded,
+            ),
+        );
+    }
+
     fn new_with_fld_collision(width: MemoryWidth, fld_collision: bool) -> Self {
         assert!(!fld_collision || width == MemoryWidth::Doubleword);
         let core = test_core();
@@ -806,6 +898,94 @@ fn checkpoint_input_with_live(
     )
 }
 
+pub(super) fn assert_completed_fp_projection_mutation_rejected(
+    width: MemoryWidth,
+    mutation: impl FnOnce(&mut O3RuntimeCheckpointPayload, &mut RiscvO3LiveCheckpointPayload),
+) {
+    let fixture = FpResultFixture::new(width);
+    let projection = fixture.core.capture_checkpoint_projection(CAPTURED_TICK);
+    let mut stable = projection.stable().clone();
+    let mut live = captured_live(&projection).clone();
+    mutation(&mut stable, &mut live);
+    assert_restore_rejected_without_mutation(&fixture.core, stable, live);
+}
+
+pub(super) fn assert_completed_fld_occupied_slot_collision_rejected() {
+    let fixture = FpResultFixture::new_fld_collision();
+    let source_reservations = fixture
+        .core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .o3_runtime
+        .writeback_reservations();
+    assert_eq!(source_reservations.len(), 2);
+    let peer = source_reservations
+        .iter()
+        .find(|reservation| reservation.sequence() != fixture.load_sequence)
+        .expect("finalized FLD collision peer reservation");
+    assert_eq!(peer.raw_ready_tick(), fixture.admitted_tick);
+    assert_eq!(peer.admitted_tick(), fixture.admitted_tick);
+    assert_eq!(peer.slot(), 1);
+    let projection = fixture
+        .core
+        .capture_checkpoint_projection(fixture.admitted_tick);
+    let mut live = captured_live(&projection).clone();
+    let reservation = live
+        .reservation
+        .as_mut()
+        .expect("completed FLD reservation");
+    assert_eq!(reservation.slot, 0);
+    assert_eq!(live.events.len(), 3);
+    assert_eq!(
+        live.finalized_writeback.partial_ready_rows_by_tick,
+        BTreeMap::from([(fixture.admitted_tick, 1)]),
+    );
+    assert!(O3RuntimeState::completed_fld_peer_collision_for_test(
+        reservation.raw_ready_tick,
+        reservation.admitted_tick,
+        reservation.slot as usize,
+        fixture.admitted_tick,
+        fixture.admitted_tick,
+        1,
+    ));
+    reservation.slot = 1;
+    assert!((reservation.slot as usize) < 2);
+    assert_restore_rejected_without_mutation(&fixture.core, projection.stable().clone(), live);
+}
+
+pub(super) fn assert_completed_fp_terminal_capture_rejected(terminal: RiscvDataAccessEventKind) {
+    let fixture = FpResultFixture::new(MemoryWidth::Word);
+    {
+        let mut state = fixture.core.state.lock().expect("riscv core lock");
+        assert!(state
+            .o3_runtime
+            .rearm_restored_completed_fp_result_for_terminal_injection(
+                fixture.load_fetch,
+                fixture.data_request,
+            ));
+        let mut injected = fixture.load_event.clone();
+        injected.set_data_access_event_kind(terminal);
+        assert!(state
+            .o3_runtime
+            .complete_live_data_access_response(
+                &injected,
+                fixture.data_request,
+                fixture.admitted_tick,
+                LATENCY_TICKS,
+                None,
+            )
+            .unwrap());
+    }
+    assert!(matches!(
+        fixture
+            .core
+            .capture_checkpoint_projection(CAPTURED_TICK)
+            .live_capture(),
+        RiscvO3LiveCheckpointCapture::Rejected
+    ));
+}
+
 #[derive(Debug, Eq, PartialEq)]
 struct CoreSentinel {
     cpu: crate::cpu_core::CpuCoreCheckpointState,
@@ -828,10 +1008,14 @@ fn assert_restore_rejected_without_mutation(
     destination.write_register(reg(9), 0xfeed_face);
     destination.inner().set_pc(Address::new(0xa000));
     let before = core_sentinel(&destination);
+    let runtime_before = destination.o3_runtime_snapshot();
+    let stats_before = destination.o3_runtime_stats();
     assert!(destination
         .prepare_checkpoint_restore(checkpoint_input_with_live(source, stable, live))
         .is_err());
     assert_eq!(core_sentinel(&destination), before);
+    assert_eq!(destination.o3_runtime_snapshot(), runtime_before);
+    assert_eq!(destination.o3_runtime_stats(), stats_before);
 }
 
 fn captured_live(projection: &RiscvO3CheckpointProjection) -> &RiscvO3LiveCheckpointPayload {

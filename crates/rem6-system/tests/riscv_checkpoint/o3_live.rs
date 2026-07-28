@@ -93,11 +93,15 @@ fn riscv_checkpoint_bank_prepares_all_cores_before_first_install() {
     let mut invalid = RiscvO3LiveCheckpointPayload::decode(registry.chunk(&cpu1, O3LC).unwrap()).unwrap(); invalid.issue_rows[0].sequence = 999;
     registry.write_chunk(&cpu1, O3LC, invalid.encode().unwrap()).unwrap();
     let first = core(1); first.write_register(reg(7), 0xdead_beef);
+    let second = compatible_core(); second.write_register(reg(8), 0xcafe_babe);
+    let before = [core_restore_sentinel(&first), core_restore_sentinel(&second)];
     let destination = RiscvCoreCheckpointBank::new([
         RiscvCoreCheckpointPort::new(cpu0, first.clone()),
-        RiscvCoreCheckpointPort::new(cpu1, compatible_core()),
+        RiscvCoreCheckpointPort::new(cpu1, second.clone()),
     ]).unwrap();
-    assert!(destination.restore_all_from(&registry).is_err()); assert_eq!(first.read_register(reg(7)), 0xdead_beef);
+    assert!(destination.restore_all_from(&registry).is_err());
+    assert_eq!([core_restore_sentinel(&first), core_restore_sentinel(&second)], before);
+    assert_eq!(first.read_register(reg(7)), 0xdead_beef); assert_eq!(second.read_register(reg(8)), 0xcafe_babe);
 }
 
 #[test]
@@ -175,6 +179,35 @@ fn compatible_core() -> RiscvCore {
         CpuResetState::new(CpuId::new(9), PartitionId::new(0), AgentId::new(7), Address::new(0x8000)),
         CpuFetchConfig::new(endpoint("cpu0.ifetch"), MemoryRouteId::new(0), layout(), AccessSize::new(4).unwrap()),
     ).unwrap())
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct CoreRestoreSentinel {
+    hart: rem6_isa_riscv::RiscvHartState,
+    riscv_pc: Address,
+    cpu_pc: Address,
+    next_sequence: u64,
+    fetch_events: Vec<CpuFetchEvent>,
+    runtime: O3RuntimeSnapshot,
+    stats: rem6_cpu::O3RuntimeStats,
+    wakes: Vec<(
+        rem6_kernel::SchedulerInstanceId,
+        rem6_kernel::PendingEventSnapshot,
+    )>,
+}
+
+fn core_restore_sentinel(core: &RiscvCore) -> CoreRestoreSentinel {
+    let cpu = core.inner();
+    CoreRestoreSentinel {
+        hart: core.checkpoint_hart_state(),
+        riscv_pc: core.pc(),
+        cpu_pc: cpu.pc(),
+        next_sequence: cpu.next_sequence(),
+        fetch_events: cpu.fetch_events(),
+        runtime: core.o3_runtime_snapshot(),
+        stats: core.o3_runtime_stats(),
+        wakes: core.owned_o3_writeback_wakes(),
+    }
 }
 
 fn restore_with_o3lc(payload: Vec<u8>) -> (RiscvCore, RiscvCoreCheckpointError) {

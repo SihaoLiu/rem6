@@ -1733,4 +1733,4 @@ fn instruction_is_conditional_branch(instruction: RiscvInstruction) -> bool {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

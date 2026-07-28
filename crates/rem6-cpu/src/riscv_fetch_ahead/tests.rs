@@ -37,7 +37,7 @@ mod producer_forwarded_chain_validation;
 mod producer_forwarded_control_validation;
 mod producer_forwarded_return;
 mod producer_forwarded_return_link_shapes;
-mod producer_forwarded_scalar_return;
+pub(crate) mod producer_forwarded_scalar_return;
 mod producer_forwarded_scalar_return_link_shapes;
 mod ras_required_validation;
 #[path = "tests/retire_gate.rs"]

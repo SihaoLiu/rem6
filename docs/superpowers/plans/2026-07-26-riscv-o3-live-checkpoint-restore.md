@@ -955,9 +955,12 @@ debug, or O3 stats leakage.
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib riscv_live_checkpoint_tests::rejections -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6-system --lib live_o3_ -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6-system --test riscv_checkpoint o3_live -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6-system --test live_o3_scheduler_checkpoint -- --nocapture
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run rem6_run_o3_live_checkpoint -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run rem6_run_o3_fp_load_forwarding_checkpoint_boundaries -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run rem6_run_o3_fp_load_forwarding_handoff_rejects_live_state -- --nocapture
 ```
 
 - [ ] **Step 5: Commit and push**

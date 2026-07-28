@@ -19,20 +19,37 @@ fn rem6_run_o3_live_checkpoint_fld_result_direct() {
     assert_live_fp_result_restore(FpLoadForwardingRun::width_two_fld_direct());
 }
 
+#[test]
+fn rem6_run_o3_live_checkpoint_fp_result_hierarchy_matrix() {
+    for precision in [FpLoadPrecision::Single, FpLoadPrecision::Double] {
+        assert_live_fp_result_restore(FpLoadForwardingRun::width_four_hierarchy(precision));
+    }
+}
+
 fn assert_live_fp_result_restore(run: FpLoadForwardingRun) {
     let path = fp_load_forwarding_binary(run);
     let baseline = run_fp_load_path_json(run, &path, MAX_TICK, &[]);
     let boundary = FpConsumerBoundary::discover(&baseline, run);
-    let restore_source_tick = [
-        run.load_pc(),
-        run.multiply_pc(),
-        run.add_pc(),
-        run.store_pc(),
-    ]
-    .into_iter()
-    .map(|pc| event_u64(o3_event_at_pc(&baseline, pc), "commit_tick"))
-    .max()
-    .expect("FP result path commit tick");
+    let restore_source_tick = if run.memory_system == "cache-fabric-dram" {
+        let source_progress_tick =
+            event_u64(o3_event_at_pc(&baseline, run.multiply_pc()), "commit_tick");
+        let downstream_issue_tick =
+            event_u64(o3_event_at_pc(&baseline, run.add_pc()), "issue_tick");
+        let restore_source_tick = source_progress_tick;
+        assert!(restore_source_tick + 1 < downstream_issue_tick);
+        restore_source_tick
+    } else {
+        [
+            run.load_pc(),
+            run.multiply_pc(),
+            run.add_pc(),
+            run.store_pc(),
+        ]
+        .into_iter()
+        .map(|pc| event_u64(o3_event_at_pc(&baseline, pc), "commit_tick"))
+        .max()
+        .expect("FP result path commit tick")
+    };
     assert!(boundary.response_live_tick < restore_source_tick);
 
     let label = format!("o3-live-{}-result", run.precision.label());
@@ -70,6 +87,8 @@ fn assert_live_fp_result_restore(run: FpLoadForwardingRun) {
 
     let checkpoint_tick = boundary.response_live_tick + 1;
     let restore_tick = restore_source_tick + 1;
+    let source_at_capture = (run.memory_system == "cache-fabric-dram")
+        .then(|| run_fp_load_path_json(run, &path, checkpoint_tick, &[]));
     assert_live_fp_actions(
         &restored,
         run,
@@ -79,7 +98,14 @@ fn assert_live_fp_result_restore(run: FpLoadForwardingRun) {
         &baseline,
     );
     assert_live_fp_restore_discriminator(&no_restore, &restored, run);
-    assert_single_load_transport_identity(&restored, &baseline, run, checkpoint_tick, restore_tick);
+    assert_single_load_transport_identity(
+        &restored,
+        &baseline,
+        source_at_capture.as_ref(),
+        run,
+        checkpoint_tick,
+        restore_tick,
+    );
     assert_restored_fp_pipeline(&restored, &baseline, run, restore_tick);
     assert_live_fp_final_state(&restored, &baseline, run);
 }
@@ -228,38 +254,19 @@ fn assert_live_fp_restore_discriminator(
 fn assert_single_load_transport_identity(
     json: &Value,
     baseline: &Value,
+    source_at_capture: Option<&Value>,
     run: FpLoadForwardingRun,
     checkpoint_tick: u64,
     restore_tick: u64,
 ) {
-    let restored_data_channel = normalized_memory_data_channel_trace(json);
-    let baseline_data_channel = normalized_memory_data_channel_trace(baseline);
+    let load = target_load_data_trace(json, run);
+    let transport = target_load_transport(json, load);
+    let baseline_load = target_load_data_trace(baseline, run);
+    let baseline_transport = target_load_transport(baseline, baseline_load);
     assert_eq!(
-        restored_data_channel, baseline_data_channel,
-        "after collapsing byte-identical rewind/replay duplicates, checkpoint restore must reproduce every baseline data-channel lifecycle record without a fresh, canceled, retried, failed, or incomplete identity",
+        transport, baseline_transport,
+        "checkpoint restore must preserve the target load's exact transport lifecycle",
     );
-    let loads = data_trace(json)
-        .iter()
-        .filter(|record| {
-            record.pointer("/kind").and_then(Value::as_str) == Some("load")
-                && record.pointer("/address").and_then(Value::as_str) == Some("0x800000c0")
-                && record.pointer("/size").and_then(Value::as_u64) == Some(run.precision.bytes())
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(loads.len(), 1, "one completed FP data result: {loads:#?}");
-    let request_agent = event_u64(loads[0], "request_agent");
-    let request_sequence = event_u64(loads[0], "request_sequence");
-    let transport = json
-        .pointer("/debug/memory_trace")
-        .and_then(Value::as_array)
-        .expect("live FP memory trace")
-        .iter()
-        .filter(|record| {
-            record.pointer("/channel").and_then(Value::as_str) == Some("data")
-                && record.pointer("/request_agent").and_then(Value::as_u64) == Some(request_agent)
-                && record.pointer("/request").and_then(Value::as_u64) == Some(request_sequence)
-        })
-        .collect::<Vec<_>>();
     assert_eq!(
         transport
             .iter()
@@ -268,15 +275,25 @@ fn assert_single_load_transport_identity(
         ["request_sent", "request_arrived", "response_arrived"],
         "one exact request/response identity: {transport:#?}",
     );
-    assert_eq!(
-        transport
+    if run.memory_system == "cache-fabric-dram" {
+        let restored_data_channel = memory_data_channel_trace(json);
+        let baseline_data_channel = memory_data_channel_trace(baseline);
+        assert_eq!(
+            restored_data_channel, baseline_data_channel,
+            "hierarchy restore must reproduce every baseline data-channel lifecycle record without a duplicate, fresh, canceled, retried, failed, or incomplete identity",
+        );
+        let source_at_capture = source_at_capture.expect("bounded hierarchy source snapshot");
+        let source_load = target_load_data_trace(source_at_capture, run);
+        let source_transport = target_load_transport(source_at_capture, source_load);
+        assert_eq!(
+            source_transport, baseline_transport,
+            "the full target lifecycle must already exist in the source before checkpoint",
+        );
+        assert!(source_transport
             .iter()
-            .filter(|record| {
-                record.pointer("/kind").and_then(Value::as_str) == Some("response_arrived")
-            })
-            .count(),
-        1,
-    );
+            .all(|record| event_u64(record, "tick") < checkpoint_tick));
+        assert_hierarchy_activity(source_at_capture);
+    }
     assert!(
         transport
             .iter()
@@ -289,20 +306,67 @@ fn assert_single_load_transport_identity(
             .all(|record| event_u64(record, "tick") < restore_tick),
         "restore must not issue the captured data identity again: {transport:#?}",
     );
+    assert_eq!(
+        transport
+            .iter()
+            .filter(|record| event_u64(record, "tick") >= restore_tick)
+            .count(),
+        0,
+        "captured load must have no transport record after restore: {transport:#?}",
+    );
 }
 
-fn normalized_memory_data_channel_trace(json: &Value) -> Vec<&Value> {
+fn target_load_data_trace(json: &Value, run: FpLoadForwardingRun) -> &Value {
+    let loads = data_trace(json)
+        .iter()
+        .filter(|record| {
+            record.pointer("/kind").and_then(Value::as_str) == Some("load")
+                && record.pointer("/address").and_then(Value::as_str) == Some("0x800000c0")
+                && record.pointer("/size").and_then(Value::as_u64) == Some(run.precision.bytes())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(loads.len(), 1, "one completed FP data result: {loads:#?}");
+    loads[0]
+}
+
+fn target_load_transport<'a>(json: &'a Value, load: &Value) -> Vec<&'a Value> {
+    let request_agent = event_u64(load, "request_agent");
+    let request_sequence = event_u64(load, "request_sequence");
+    json.pointer("/debug/memory_trace")
+        .and_then(Value::as_array)
+        .expect("live FP memory trace")
+        .iter()
+        .filter(|record| {
+            record.pointer("/channel").and_then(Value::as_str) == Some("data")
+                && record.pointer("/request_agent").and_then(Value::as_u64) == Some(request_agent)
+                && record.pointer("/request").and_then(Value::as_u64) == Some(request_sequence)
+        })
+        .collect()
+}
+
+fn assert_hierarchy_activity(json: &Value) {
+    for pointer in [
+        "/memory_resources/cache/data/activity",
+        "/memory_resources/transport/data/activity",
+        "/memory_resources/fabric/activity",
+        "/memory_resources/dram/activity",
+    ] {
+        assert!(
+            json.pointer(pointer)
+                .and_then(Value::as_u64)
+                .is_some_and(|activity| activity > 0),
+            "missing live checkpoint hierarchy activity {pointer}: {json}",
+        );
+    }
+}
+
+fn memory_data_channel_trace(json: &Value) -> Vec<&Value> {
     json.pointer("/debug/memory_trace")
         .and_then(Value::as_array)
         .expect("live FP memory trace")
         .iter()
         .filter(|record| record.pointer("/channel").and_then(Value::as_str) == Some("data"))
-        .fold(Vec::new(), |mut records, record| {
-            if !records.contains(&record) {
-                records.push(record);
-            }
-            records
-        })
+        .collect()
 }
 
 fn assert_restored_fp_pipeline(

@@ -126,6 +126,24 @@ pub(super) fn retire_data_head(core: &RiscvCore, retire_tick: u64) {
         .retire_producer_forwarded_data_head_for_test(retire_tick));
 }
 
+pub(crate) fn producer_forwarded_continuation_for_checkpoint_test(
+) -> ProducerForwardedScalarContinuation {
+    let core = scalar_return_core(2, false, 1, 1);
+    record_call_and_scalar(&core);
+    retire_data_head(&core, 30);
+    let state = core.state.lock().expect("riscv core lock");
+    assert_eq!(state.o3_runtime.live_data_access_count_for_test(), 0);
+    assert!(!state.o3_runtime.has_pending_data_address());
+    assert!(state.pending_data_translations.is_empty());
+    assert!(state.ready_translated_data.is_empty());
+    assert!(state.outstanding_data.is_empty());
+    assert!(state.buffered_o3_effects.is_empty());
+    state
+        .producer_forwarded_scalar_continuation
+        .clone()
+        .expect("retained producer-forwarded scalar continuation")
+}
+
 fn prepare_record_and_fire(core: &RiscvCore, decision: &RiscvFetchAheadDecision) {
     let prepared = core.prepare_fetch_ahead_speculation(decision).unwrap();
     record_prepared_fetch_ahead_speculation_and_fire_o3_wakes(core, prepared);

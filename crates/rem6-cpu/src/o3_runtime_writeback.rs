@@ -502,6 +502,31 @@ impl O3RuntimeState {
         Ok(reservations)
     }
 
+    pub(in crate::o3_runtime) fn restore_completed_fp_checkpoint_writeback(
+        &mut self,
+        sequence: u64,
+        raw_ready_tick: u64,
+        admitted_tick: u64,
+        slot: usize,
+    ) -> Result<O3WritebackReservation, O3RuntimeError> {
+        let reservation = O3WritebackReservation::new(
+            sequence,
+            raw_ready_tick,
+            admitted_tick,
+            slot,
+            O3LiveWritebackReadySource::MemoryResult,
+            true,
+        );
+        self.writeback_calendar.insert(reservation)?;
+        self.live_writeback_counted_sequences.insert(sequence);
+        let live = self.live_writeback_schedule()?;
+        self.finalized_writeback_port_stats
+            .reconcile_live_schedule(&live)?;
+        self.stats
+            .set_writeback_port_schedule(&self.finalized_writeback_port_stats, &live)?;
+        Ok(reservation)
+    }
+
     pub(crate) fn reserve_fixed_fu_writeback(
         &mut self,
         sequence: u64,

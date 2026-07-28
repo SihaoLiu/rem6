@@ -1279,6 +1279,11 @@ pub(crate) struct OutstandingDataAccess {
 }
 
 impl OutstandingDataAccess {
+    #[cfg(test)]
+    pub(crate) fn issued_for_checkpoint_test(&self) -> IssuedDataAccess {
+        self.clone_without_layout()
+    }
+
     pub(crate) fn memory_route(&self) -> MemoryRouteId {
         let RiscvDataAccessTarget::Memory { route, .. } = &self.target else {
             unreachable!("memory data access target");

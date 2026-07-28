@@ -8,7 +8,10 @@ const MAX_TICK: u64 = 1_200;
 
 #[test]
 fn rem6_run_o3_fp_load_forwarding_checkpoint_boundaries() {
-    for run in direct_fp_load_boundary_runs() {
+    for run in direct_fp_load_boundary_runs()
+        .into_iter()
+        .chain(live_fp_load_boundary_runs())
+    {
         let path = fp_load_forwarding_binary(run);
         let baseline = run_fp_load_path_json(run, &path, MAX_TICK, &[]);
         let boundary = FpConsumerBoundary::discover(&baseline, run);
@@ -17,17 +20,6 @@ fn rem6_run_o3_fp_load_forwarding_checkpoint_boundaries() {
             &path,
             "queued-before-response",
             boundary.queued_tick,
-        );
-    }
-    for run in live_fp_load_boundary_runs() {
-        let path = fp_load_forwarding_binary(run);
-        let baseline = run_fp_load_path_json(run, &path, MAX_TICK, &[]);
-        let boundary = FpConsumerBoundary::discover(&baseline, run);
-        assert_fp_load_checkpoint_rejected(
-            run,
-            &path,
-            "response-admitted",
-            boundary.response_live_tick,
         );
     }
 }
@@ -506,7 +498,7 @@ fn assert_final_fp_load_execution_mode(json: &Value, run: FpLoadForwardingRun) {
     );
 }
 
-fn assert_no_fp_load_o3_stats(json: &Value, run: FpLoadForwardingRun) {
+pub(super) fn assert_no_fp_load_o3_stats(json: &Value, run: FpLoadForwardingRun) {
     let mut leaked = json
         .pointer("/stats")
         .and_then(Value::as_array)

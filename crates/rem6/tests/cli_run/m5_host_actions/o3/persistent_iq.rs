@@ -19,6 +19,8 @@ mod fp_load_forwarding_compatibility;
 mod fp_load_forwarding_fixture;
 #[path = "persistent_iq/fp_load_forwarding_runtime_boundaries.rs"]
 mod fp_load_forwarding_runtime_boundaries;
+#[path = "persistent_iq/live_checkpoint_boundaries.rs"]
+mod live_checkpoint_boundaries;
 #[path = "persistent_iq/live_checkpoint_compute.rs"]
 mod live_checkpoint_compute;
 #[path = "persistent_iq/live_checkpoint_fixture.rs"]

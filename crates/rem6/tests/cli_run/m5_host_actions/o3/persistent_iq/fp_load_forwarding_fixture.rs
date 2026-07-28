@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -338,14 +339,14 @@ impl FpLoadForwardingRun {
     }
 }
 
-pub(super) fn fp_load_forwarding_binary(run: FpLoadForwardingRun) -> std::path::PathBuf {
+pub(super) fn fp_load_forwarding_binary(run: FpLoadForwardingRun) -> PathBuf {
     match run.precision {
-        FpLoadPrecision::Single => flw_forwarding_binary(run),
-        FpLoadPrecision::Double => fld_forwarding_binary(run),
+        FpLoadPrecision::Single => flw_forwarding_binary(run, true),
+        FpLoadPrecision::Double => fld_forwarding_binary(run, true),
     }
 }
 
-fn flw_forwarding_binary(run: FpLoadForwardingRun) -> std::path::PathBuf {
+pub(super) fn flw_forwarding_binary(run: FpLoadForwardingRun, switch_cpu: bool) -> PathBuf {
     let mut words = if run.hierarchy_collision() {
         hierarchy_operand_prefix(FpLoadPrecision::Single)
     } else {
@@ -362,7 +363,11 @@ fn flw_forwarding_binary(run: FpLoadForwardingRun) -> std::path::PathBuf {
         ]);
         words
     };
-    words.push(m5op(M5_SWITCH_CPU));
+    words.push(if switch_cpu {
+        m5op(M5_SWITCH_CPU)
+    } else {
+        i_type(0, 0, 0, 0, 0x13)
+    });
     if run.hierarchy_collision() {
         append_hierarchy_collision_prefix(&mut words);
     }
@@ -381,9 +386,9 @@ fn flw_forwarding_binary(run: FpLoadForwardingRun) -> std::path::PathBuf {
         fp_r_type(0x08, 2, 1, 0, 4), // fmul.s f4, f1, f2
         fp_r_type(0x00, 3, 4, 0, 5), // fadd.s f5, f4, f3
         float_store_type(store_offset, 5, 12, 0b010),
-        csr_read(0x001, 6),
-        m5op(M5_DUMP_STATS),
     ]);
+    append_control_drain_runway(&mut words, run, switch_cpu);
+    words.extend([csr_read(0x001, 6), m5op(M5_DUMP_STATS)]);
     append_host_stop(&mut words);
     assert!(words.len() * 4 <= FP_LOAD_DATA_OFFSET);
     while words.len() * 4 < FP_LOAD_DATA_OFFSET {
@@ -396,15 +401,19 @@ fn flw_forwarding_binary(run: FpLoadForwardingRun) -> std::path::PathBuf {
     words.extend([3.0f32.to_bits(), 4.0f32.to_bits()]);
     pad_program_to_cache_line(&mut words);
     let program = riscv64_program(&words);
-    let name = unique_fp_load_binary_name(if run.hierarchy_collision() {
+    let base = if run.hierarchy_collision() {
         "o3-fp-load-forwarding-flw-hierarchy-collision"
     } else {
         "o3-fp-load-forwarding-flw-direct-width-one"
-    });
+    };
+    let name = unique_fp_load_binary_name(&format!(
+        "{base}{}",
+        if switch_cpu { "" } else { "-drained-control" }
+    ));
     temp_binary(&name, &riscv64_elf(0x8000_0000, 0x8000_0000, &program))
 }
 
-fn fld_forwarding_binary(run: FpLoadForwardingRun) -> std::path::PathBuf {
+pub(super) fn fld_forwarding_binary(run: FpLoadForwardingRun, switch_cpu: bool) -> PathBuf {
     let mut words = if run.hierarchy_collision() {
         hierarchy_operand_prefix(FpLoadPrecision::Double)
     } else {
@@ -419,7 +428,11 @@ fn fld_forwarding_binary(run: FpLoadForwardingRun) -> std::path::PathBuf {
         ]);
         words
     };
-    words.push(m5op(M5_SWITCH_CPU));
+    words.push(if switch_cpu {
+        m5op(M5_SWITCH_CPU)
+    } else {
+        i_type(0, 0, 0, 0, 0x13)
+    });
     if run.hierarchy_collision() {
         append_hierarchy_collision_prefix(&mut words);
     }
@@ -441,9 +454,9 @@ fn fld_forwarding_binary(run: FpLoadForwardingRun) -> std::path::PathBuf {
         fp_r_type(0x09, 2, 1, 0, 4), // fmul.d f4, f1, f2
         fp_r_type(0x01, 3, 4, 0, 5), // fadd.d f5, f4, f3
         float_store_type(store_offset, 5, 12, 0b011),
-        csr_read(0x001, 6),
-        m5op(M5_DUMP_STATS),
     ]);
+    append_control_drain_runway(&mut words, run, switch_cpu);
+    words.extend([csr_read(0x001, 6), m5op(M5_DUMP_STATS)]);
     append_host_stop(&mut words);
     assert!(words.len() * 4 <= FP_LOAD_DATA_OFFSET);
     while words.len() * 4 < FP_LOAD_DATA_OFFSET {
@@ -454,17 +467,27 @@ fn fld_forwarding_binary(run: FpLoadForwardingRun) -> std::path::PathBuf {
     }
     pad_program_to_cache_line(&mut words);
     let program = riscv64_program(&words);
-    let name = unique_fp_load_binary_name(if run.hierarchy_collision() {
+    let base = if run.hierarchy_collision() {
         "o3-fp-load-forwarding-fld-hierarchy-collision"
     } else {
         "o3-fp-load-forwarding-fld-direct-width-two"
-    });
+    };
+    let name = unique_fp_load_binary_name(&format!(
+        "{base}{}",
+        if switch_cpu { "" } else { "-drained-control" }
+    ));
     temp_binary(&name, &riscv64_elf(0x8000_0000, 0x8000_0000, &program))
 }
 
 fn unique_fp_load_binary_name(base: &str) -> String {
     let sequence = FP_LOAD_BINARY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     format!("{base}-{sequence}")
+}
+
+fn append_control_drain_runway(words: &mut Vec<u32>, run: FpLoadForwardingRun, switch_cpu: bool) {
+    if !switch_cpu {
+        words.extend((0..run.scalar_live_window_depth() * 2).map(|_| i_type(0, 0, 0, 0, 0x13)));
+    }
 }
 
 fn hierarchy_operand_prefix(precision: FpLoadPrecision) -> Vec<u32> {

@@ -198,3 +198,161 @@ pub(super) fn rebind_live_o3_for_scheduler(
     }
     rebound
 }
+
+#[cfg(test)]
+mod tests {
+    use rem6_isa_riscv::Register;
+    use rem6_kernel::PartitionedScheduler;
+
+    use super::*;
+
+    #[allow(dead_code)]
+    mod support {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/support/live_o3.rs"
+        ));
+    }
+
+    #[test]
+    fn live_o3_source_cross_reference_rejects_wrong_kind_atomically() {
+        assert_source_cross_reference_rejected(|wake| {
+            wake.kind = match wake.kind {
+                ScheduledEventKind::Serial => ScheduledEventKind::Parallel,
+                ScheduledEventKind::Parallel => ScheduledEventKind::Serial,
+            };
+        });
+    }
+
+    #[test]
+    fn live_o3_source_cross_reference_rejects_wrong_partition_atomically() {
+        assert_source_cross_reference_rejected(|wake| {
+            wake.partition = rem6_kernel::PartitionId::new(1);
+        });
+    }
+
+    #[test]
+    fn live_o3_restore_preflight_rejects_missing_wake_partition_atomically() {
+        let mut scheduler = PartitionedScheduler::new(2).unwrap();
+        let seeded = support::seed_live_core(0, &mut scheduler, ScheduledEventKind::Serial);
+        let current = scheduler.snapshot();
+        let restored = SchedulerSnapshot::with_parallel_worker_limit(
+            current.now(),
+            current.min_remote_delay(),
+            current.max_parallel_workers(),
+            vec![quiescent_partition(&current.partitions()[1])],
+        );
+        let restore = RiscvO3LiveSchedulerRestore::for_scheduler_validation_test(
+            CheckpointComponentId::new("cpu0").unwrap(),
+            seeded.core.clone(),
+            seeded.live.wake,
+        );
+        let resolved = ResolvedSchedulerCheckpointEvents {
+            discarded: vec![seeded.wake],
+            preserved: Vec::new(),
+        };
+        seeded
+            .core
+            .write_register(Register::new(7).unwrap(), 0xcafe);
+        let scheduler_before = scheduler.snapshot();
+        let hart_before = seeded.core.checkpoint_hart_state();
+        let runtime_before = seeded.core.o3_runtime_snapshot();
+        let stats_before = seeded.core.o3_runtime_stats();
+        let wakes_before = seeded.core.owned_o3_writeback_wakes();
+
+        let error = validate_live_o3_for_scheduler(
+            scheduler.instance_id(),
+            &current,
+            &restored,
+            &resolved,
+            &[restore],
+            LiveO3SchedulerValidationMode::Restore,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            SchedulerCheckpointError::InvalidLiveO3Authority { ref reason, .. }
+                if reason == "saved partition is not present"
+        ));
+        assert_eq!(scheduler.snapshot(), scheduler_before);
+        assert_eq!(seeded.core.checkpoint_hart_state(), hart_before);
+        assert_eq!(seeded.core.o3_runtime_snapshot(), runtime_before);
+        assert_eq!(seeded.core.o3_runtime_stats(), stats_before);
+        assert_eq!(seeded.core.owned_o3_writeback_wakes(), wakes_before);
+    }
+
+    fn assert_source_cross_reference_rejected(
+        mutation: impl FnOnce(&mut rem6_cpu::RiscvO3LiveCheckpointWake),
+    ) {
+        let mut scheduler = PartitionedScheduler::new(1).unwrap();
+        let seeded = support::seed_live_core(0, &mut scheduler, ScheduledEventKind::Serial);
+        let current = scheduler.snapshot();
+        let restored = quiescent_projection(&current);
+        let mut wake = seeded.live.wake;
+        mutation(&mut wake);
+        let restore = RiscvO3LiveSchedulerRestore::for_scheduler_validation_test(
+            CheckpointComponentId::new("cpu0").unwrap(),
+            seeded.core.clone(),
+            wake,
+        );
+        let resolved = ResolvedSchedulerCheckpointEvents {
+            discarded: vec![seeded.wake],
+            preserved: Vec::new(),
+        };
+        seeded
+            .core
+            .write_register(Register::new(7).unwrap(), 0xcafe);
+        let scheduler_before = scheduler.snapshot();
+        let hart_before = seeded.core.checkpoint_hart_state();
+        let runtime_before = seeded.core.o3_runtime_snapshot();
+        let stats_before = seeded.core.o3_runtime_stats();
+        let wakes_before = seeded.core.owned_o3_writeback_wakes();
+
+        let error = validate_live_o3_for_scheduler(
+            scheduler.instance_id(),
+            &current,
+            &restored,
+            &resolved,
+            &[restore],
+            LiveO3SchedulerValidationMode::SourceCapture,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            SchedulerCheckpointError::InvalidLiveO3Authority { ref reason, .. }
+                if reason == "saved O3 wake does not match source scheduler authority"
+        ));
+        assert_eq!(scheduler.snapshot(), scheduler_before);
+        assert_eq!(seeded.core.checkpoint_hart_state(), hart_before);
+        assert_eq!(seeded.core.o3_runtime_snapshot(), runtime_before);
+        assert_eq!(seeded.core.o3_runtime_stats(), stats_before);
+        assert_eq!(seeded.core.owned_o3_writeback_wakes(), wakes_before);
+    }
+
+    fn quiescent_projection(source: &SchedulerSnapshot) -> SchedulerSnapshot {
+        let partitions = source
+            .partitions()
+            .iter()
+            .map(quiescent_partition)
+            .collect();
+        SchedulerSnapshot::with_parallel_worker_limit(
+            source.now(),
+            source.min_remote_delay(),
+            source.max_parallel_workers(),
+            partitions,
+        )
+    }
+
+    fn quiescent_partition(partition: &PartitionSnapshot) -> PartitionSnapshot {
+        PartitionSnapshot::quiescent_with_orders(
+            partition.partition(),
+            partition.now(),
+            partition.next_event_local(),
+            partition.next_event_order(),
+            partition.next_remote_order(),
+            partition.next_progress_order(),
+        )
+    }
+}

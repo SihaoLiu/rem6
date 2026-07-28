@@ -168,6 +168,24 @@ impl RiscvPendingTerminalMemoryResult {
     pub(crate) fn consumed_requests(&self) -> &[MemoryRequestId] {
         &self.consumed_requests
     }
+
+    #[cfg(test)]
+    pub(crate) fn ready_for_checkpoint_test(
+        execution: RiscvCpuExecutionEvent,
+        consumed_requests: Vec<MemoryRequestId>,
+        decoded: RiscvDecodedInstruction,
+    ) -> Self {
+        Self {
+            predecessor_pc: execution.fetch_pc(),
+            predecessor_instruction: execution.instruction(),
+            predecessor_consumed_requests: consumed_requests.clone(),
+            execution,
+            consumed_requests,
+            decoded,
+            issue_wake_generation: 0,
+            issue_ready: true,
+        }
+    }
 }
 
 impl<'a> RiscvLiveRetireWindowRequest<'a> {

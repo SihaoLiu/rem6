@@ -185,6 +185,7 @@ fn o3_live_checkpoint_rejects_completed_fp_load_structural_mismatches() {
         |v| v.completed_result.as_mut().unwrap().fetch_request = request(99),
         |v| v.completed_result.as_mut().unwrap().destination = freg(4),
         |v| { let r = v.completed_result.as_mut().unwrap(); r.width = MemoryWidth::Doubleword; r.response_bytes.resize(8, 0); r.access_size = AccessSize::new(8).unwrap(); },
+        |v| { v.completed_result.as_mut().unwrap().response_bytes.pop(); },
         |v| v.completed_result.as_mut().unwrap().physical_address = Address::new(0x9004),
         |v| v.reservation.as_mut().unwrap().source = RiscvO3LiveCheckpointWritebackSource::FixedFunction,
         |v| v.reservation.as_mut().unwrap().sequence += 1,
