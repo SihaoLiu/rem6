@@ -14,6 +14,8 @@ use super::*;
 mod codec;
 #[path = "riscv_live_checkpoint_tests/compute.rs"]
 mod compute;
+#[path = "riscv_live_checkpoint_tests/fp_result.rs"]
+mod fp_result;
 
 #[rustfmt::skip]
 fn reg(index: u8) -> Register { Register::new(index).unwrap() }

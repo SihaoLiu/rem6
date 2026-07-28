@@ -70,6 +70,15 @@ impl O3MemoryResultWindowAuthorization {
         }
     }
 
+    pub(crate) const fn restored_completed_fp_load(physical_range: AddressRange) -> Self {
+        Self {
+            integer_destination: None,
+            route: O3MemoryResultWindowRoute::Memory,
+            address_authority: O3MemoryResultWindowAddressAuthority::ResolvedRange(physical_range),
+            role: O3MemoryResultWindowRole::Head,
+        }
+    }
+
     pub(in crate::riscv_fetch_ahead) const fn dependent(
         integer_destination: Register,
         register: Register,

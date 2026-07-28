@@ -7,6 +7,7 @@ use rem6_isa_riscv::{RiscvHartState, RiscvPmpSnapshot};
 use rem6_memory::{Address, MemoryRequestId};
 
 use crate::cpu_core::CpuCoreCheckpointState;
+use crate::riscv_live_retire_gate::RiscvLiveRetireGatePolicy;
 use crate::{
     BiModeBranchPredictorCheckpointPayload, BranchPredictorCheckpointPayload, CpuCore,
     GShareBranchPredictorCheckpointPayload, InOrderPipelineSnapshot,
@@ -210,7 +211,14 @@ fn prepare_and_install_live(
     let fetch_agent = core.agent();
     let fetch_route = core.inner().fetch_route();
     let fetch_endpoint = core.inner().fetch_endpoint();
+    let completed_data_request_invalid = live.completed_result.as_ref().is_some_and(|result| {
+        result.data_request.agent() != fetch_agent
+            || result.data_request.sequence() <= result.fetch_request.sequence()
+            || result.data_request.sequence() >= live.next_fetch_request_sequence
+            || event_requests.contains(&result.data_request)
+    });
     if event_requests.len() != live.events.len()
+        || completed_data_request_invalid
         || event_requests
             .iter()
             .any(|request| request.sequence() >= live.next_fetch_request_sequence)
@@ -236,7 +244,7 @@ fn prepare_and_install_live(
         .o3_runtime
         .prepare_live_checkpoint_restore(stable_o3, live)
         .map_err(RiscvCoreCheckpointRestoreError::InvalidLive)?;
-    let (runtime, restored_events) = prepared_live.into_parts();
+    let (runtime, restored_events, memory_result_authorization) = prepared_live.into_parts();
     replacement_riscv.events.retain(|event| {
         event.fetch().request_id().sequence() < live.next_fetch_request_sequence
             && !event_requests.contains(&event.fetch().request_id())
@@ -254,7 +262,25 @@ fn prepare_and_install_live(
         &event_requests,
         &live.issued_fetch_requests,
     );
+    if let Some((request, authorization)) = memory_result_authorization {
+        if !replacement_riscv
+            .memory_result_window_authorizations
+            .is_empty()
+        {
+            return Err(live_error(
+                "stable restore retained memory-result authorization",
+            ));
+        }
+        replacement_riscv
+            .memory_result_window_authorizations
+            .insert(request, authorization);
+    }
     replacement_riscv.o3_runtime = runtime;
+    if live.profile == crate::RiscvO3LiveCheckpointProfile::CompletedFpLoad {
+        replacement_riscv
+            .live_retire_gate
+            .set_policy(RiscvLiveRetireGatePolicy::detailed());
+    }
     replacement_riscv
         .o3_writeback_wake
         .restore_desired_unscheduled(live.wake.tick);

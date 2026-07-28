@@ -18,6 +18,9 @@ impl RiscvCoreState {
             tick,
             fetch_events,
         );
+        let issued = &self.issued_data_for_fetches;
+        self.memory_result_window_authorizations
+            .retain(|request, _| !issued.contains(request));
     }
 }
 
