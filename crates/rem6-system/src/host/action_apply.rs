@@ -168,7 +168,7 @@ impl SystemActionExecutor {
                     .as_ref()
                     .map(|stats| stats.retired_instruction_probe_snapshot());
                 let mut staged_checkpoints = self.checkpoints.clone();
-                self.capture_attached_checkpoint_banks_into_with_scheduler(
+                let capture = self.capture_attached_checkpoint_banks_into_with_scheduler(
                     &mut staged_checkpoints,
                     record.tick(),
                     scheduler_checkpoint,
@@ -180,6 +180,7 @@ impl SystemActionExecutor {
                 let manifest = staged_checkpoints
                     .capture(label.clone(), record.tick())
                     .map_err(SystemError::Checkpoint)?;
+                self.commit_attached_checkpoint_capture(&capture);
                 self.checkpoints = staged_checkpoints;
                 self.captured_manifests
                     .insert(manifest.label().to_string(), manifest.clone());
@@ -322,6 +323,9 @@ mod tests {
             "/tests/support/live_o3.rs"
         ));
     }
+
+    #[path = "checkpoint_atomicity_tests.rs"]
+    mod checkpoint_atomicity_tests;
 
     fn scheduler_component(name: &str) -> CheckpointComponentId {
         CheckpointComponentId::new(name).unwrap()

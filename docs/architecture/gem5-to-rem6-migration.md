@@ -168,6 +168,7 @@ tests `rv64i`, `rv64m`, `rv64f`, `rv64f_add`, `rv64f_sub`, `rv64f_fma`,
 privileged Linux trap and interrupt smoke tests.
 ### CPU Execution Models - 74% representative
 **Score calculation:** 8 of 10 items have executable evidence, or 80% raw, capped at the 74% representative bucket cap.
+Bounded live-state evidence now covers a checkpoint-restorable compute IQ window plus exactly one response-admitted scalar FLW/FLD result, with exact decision, writeback, retirement, and final-state replay through `rem6_run_o3_live_checkpoint_compute_serial_direct`, `rem6_run_o3_live_checkpoint_compute_parallel_direct`, `rem6_run_o3_live_checkpoint_compute_restore_replays_after_source_progress`, `rem6_run_o3_live_checkpoint_flw_result_direct`, `rem6_run_o3_live_checkpoint_fld_result_direct`, `rem6_run_o3_live_checkpoint_fp_result_hierarchy_matrix`, and `rem6_run_o3_live_checkpoint_timing_schedule_suppresses_o3_surfaces`; the existing `rem6_run_o3_fp_load_forwarding_checkpoint_boundaries` and `rem6_run_o3_fp_load_forwarding_handoff_rejects_live_state` rejection rows remain authoritative outside that envelope. Pre-response transport, general IQ shapes, broader memory/result state, and a general O3 engine remain non-restorable.
 The bucket cap is representative because RISC-V core timing now uses focused `riscv_in_order_drive` authority to schedule one kernel tick per Fetch1/Fetch2/Decode/Execute/Commit transition in normal serial, parallel-cluster, and translated drivers, withholding architectural visibility until Commit across direct one-/two-core and cache/fabric/DRAM one-core CLI rows and through per-tick scheduler-owned scalar integer, scalar FP, and vector FU ExecuteWait stalls, including direct single-core MUL and FCLASS, direct two-core DIV, cache/fabric/DRAM single-core MUL, and focused FDIV.S/VDIVU.VV rows; one typed `riscv_fu_latency` authority also keeps vector-memory waits data-completion-owned and supplies O3 FU classes, and the CPU has a live execution-mode-transfer matrix across single-core CPU0 and two-worker multicore CPU1, direct untranslated and TOML-configured translated memory, cache/fabric/DRAM untranslated memory, single-/multicore untranslated readfile-MMIO targets, and single-core translated readfile-MMIO, live FU and outstanding scalar-load authority, mixed CPU0-memory/CPU1-device ownership, and peer-load suppression, plus direct completed-fetch overlap and bounded normal-driver
 fetch-ahead, v1/v2 decode-compatible and current v3 instruction-keyed progress checkpoint replay for a partially consumed normal DIV ExecuteWait with replacement-fetch rebinding, same-instruction remaining-cycle preservation, equal-latency changed-instruction reset, latency-class reset before Execute or Commit, and exactly-once draining across a normal-to-detailed mode handoff, narrow pending-fetch and data-access resource-stall slices, and
 a targeted execution-owned bounded four-row scalar FU/ALU ROB/rename staging window plus
@@ -729,7 +730,6 @@ tests, PCI/VirtIO/storage/network checkpoint tests, CLINT/PLIC/UART tests,
 network evidence.
 
 ### Stats, Probes, Debug, Host Actions, and Checkpointing - 74% representative
-
 **Score calculation:** 24 of 26 items have executable evidence, or 92% raw. The bucket cap is
 representative because canonical normal-run target selection spans four memory routes
 and both power formats, with exact cache and DRAM calibration, while complete hierarchy counters,
@@ -784,7 +784,7 @@ coefficient calibration remain open.
 - [ ] Cache/bank/fabric/DRAM hierarchy counters are complete.
 - [ ] Broader GDB CSR register-cache coverage exists.
 - [x] Normal-run power target selection follows canonical memory activity, with exact cache and DRAM calibration.
-- [x] O3 pending-state checkpoints exist.
+- [x] O3 pending-state checkpoints exist, including exact live O3 decision/writeback replay from O3LC capture through prepared restore.
 
 **Migrated:** Structured stats, real RISC-V probe producers, checkpoint banks including read-only backing file-image restore preflight before host checkpoint metadata commit,
 m5ops, host actions, run-level `sim.host_actions.*` stats, GDB packet/session parsing, RISC-V integer/PC register

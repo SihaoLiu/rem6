@@ -196,6 +196,28 @@ impl RiscvO3RuntimeStats {
         Ok(())
     }
 
+    pub(crate) fn validate_cpu_snapshot_schema(
+        &self,
+        registry: &StatsRegistry,
+        cpu: CpuId,
+        snapshot: O3RuntimeStats,
+        live_issue: O3LiveIssueTelemetry,
+        runtime_snapshot: &O3RuntimeSnapshot,
+        in_order_pipeline_cycles: u64,
+    ) -> Result<(), StatsError> {
+        let Some(stats) = self.stats.get(&cpu) else {
+            return Ok(());
+        };
+        let mut staged = registry.clone();
+        stats.set_snapshot(
+            &mut staged,
+            snapshot,
+            live_issue,
+            runtime_snapshot,
+            self.projected_resettable_pipeline_cycles(cpu, in_order_pipeline_cycles),
+        )
+    }
+
     pub(crate) fn active_cpu_indices(&self) -> Vec<u32> {
         self.active_cpus
             .lock()
@@ -267,6 +289,20 @@ impl RiscvO3RuntimeStats {
             *baseline = 0;
         }
         in_order_pipeline_cycles.saturating_sub(*baseline)
+    }
+
+    fn projected_resettable_pipeline_cycles(
+        &self,
+        cpu: CpuId,
+        in_order_pipeline_cycles: u64,
+    ) -> u64 {
+        let baselines = self.cycle_baselines.lock().expect("O3 runtime stats lock");
+        let baseline = baselines.get(&cpu).copied().unwrap_or(0);
+        in_order_pipeline_cycles.saturating_sub(
+            (in_order_pipeline_cycles >= baseline)
+                .then_some(baseline)
+                .unwrap_or(0),
+        )
     }
 
     fn observe_event_window_records(
@@ -1169,6 +1205,31 @@ mod tests {
         assert!(core.o3_runtime_snapshot().reorder_buffer().is_empty());
         assert!(core.o3_runtime_snapshot().load_store_queue().is_empty());
         assert!(core.o3_live_data_access_lifecycle_is_quiescent());
+    }
+
+    #[test]
+    fn snapshot_schema_validation_preserves_cycle_baseline_on_failure() {
+        let cpu = CpuId::new(0);
+        let mut registered = StatsRegistry::new();
+        let o3_stats =
+            RiscvO3RuntimeStats::register_for_cpus(&mut registered, [cpu], false).unwrap();
+        o3_stats.cycle_baselines.lock().unwrap().insert(cpu, 10);
+        let core = inactive_o3_core(cpu);
+
+        assert!(o3_stats
+            .validate_cpu_snapshot_schema(
+                &StatsRegistry::new(),
+                cpu,
+                core.o3_runtime_stats(),
+                core.o3_runtime_live_issue_telemetry(),
+                &core.o3_runtime_snapshot(),
+                5,
+            )
+            .is_err());
+        assert_eq!(
+            o3_stats.cycle_baselines.lock().unwrap().get(&cpu).copied(),
+            Some(10)
+        );
     }
 
     #[test]

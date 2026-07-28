@@ -1,10 +1,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use quote::ToTokens;
+
 #[path = "source_policy/fp_load_forwarding.rs"]
 mod fp_load_forwarding;
 #[path = "source_policy/fp_vector_live_issue.rs"]
 mod fp_vector_live_issue;
+#[path = "source_policy/live_checkpoint.rs"]
+mod live_checkpoint;
 #[path = "source_policy/live_issue_durable_cleanup.rs"]
 mod live_issue_durable_cleanup;
 #[path = "source_policy/live_issue_raw_removal.rs"]
@@ -4779,18 +4783,21 @@ fn o3_persistent_live_issue_lifecycle_boundaries_are_queue_aware() {
     assert!(quiescence.contains("state.o3_runtime.live_issue_is_quiescent()"));
 
     let finalize = compact_rust_code(
-        &rust_function_definition(&wake, "finalize_quiescent_o3_writeback_for_checkpoint")
-            .expect("missing finalize_quiescent_o3_writeback_for_checkpoint"),
+        &rust_function_definition(
+            &wake,
+            "finalize_quiescent_o3_writeback_state_for_checkpoint",
+        )
+        .expect("missing projected checkpoint writeback finalizer"),
     );
     assert!(ordered_once_for_live_issue_cleanup(
         &finalize,
-        "if!state.o3_runtime.live_issue_is_quiescent()",
-        "state.o3_runtime.seal_live_issue_decision();",
+        "if!self.o3_runtime.live_issue_is_quiescent()",
+        "self.o3_runtime.seal_live_issue_decision();",
     ));
     assert!(ordered_once_for_live_issue_cleanup(
         &finalize,
-        "state.o3_runtime.seal_live_issue_decision();",
-        "state.o3_runtime.finalize_all_writeback_reservations()",
+        "self.o3_runtime.seal_live_issue_decision();",
+        "self.o3_runtime.finalize_all_writeback_reservations()",
     ));
 
     let restore = compact_rust_code(
@@ -9462,6 +9469,56 @@ fn rust_function_definition(source: &str, name: &str) -> Option<String> {
         index = end;
     }
     None
+}
+
+fn unconditional_rust_function_definitions(source: &str, name: &str) -> Vec<String> {
+    fn conditional(attributes: &[syn::Attribute]) -> bool {
+        attributes.iter().any(|attribute| {
+            attribute.path().is_ident("cfg") || attribute.path().is_ident("cfg_attr")
+        })
+    }
+
+    fn collect(items: &[syn::Item], name: &str, definitions: &mut Vec<String>) {
+        for item in items {
+            match item {
+                syn::Item::Fn(function)
+                    if function.sig.ident == name && !conditional(&function.attrs) =>
+                {
+                    definitions.push(function.to_token_stream().to_string());
+                }
+                syn::Item::Impl(item) if !conditional(&item.attrs) => {
+                    definitions.extend(item.items.iter().filter_map(|member| {
+                        let syn::ImplItem::Fn(function) = member else {
+                            return None;
+                        };
+                        (function.sig.ident == name && !conditional(&function.attrs))
+                            .then(|| function.to_token_stream().to_string())
+                    }));
+                }
+                syn::Item::Mod(module) if !conditional(&module.attrs) => {
+                    if let Some((_, items)) = &module.content {
+                        collect(items, name, definitions);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let Ok(syntax) = syn::parse_file(source) else {
+        return Vec::new();
+    };
+    if conditional(&syntax.attrs) {
+        return Vec::new();
+    }
+    let mut definitions = Vec::new();
+    collect(&syntax.items, name, &mut definitions);
+    definitions
+}
+
+fn unconditional_rust_function_definition(source: &str, name: &str) -> Option<String> {
+    let mut definitions = unconditional_rust_function_definitions(source, name);
+    (definitions.len() == 1).then(|| definitions.pop().unwrap())
 }
 
 const O3_LIVE_ISSUE_ALLOWED_CLONE_RECEIVERS: [&str; 8] = [

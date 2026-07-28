@@ -1172,6 +1172,7 @@ impl SystemActionExecutor {
                 .validate_restore_from(checkpoints)
                 .map_err(SystemError::RiscvCheckpoint)?;
         }
+        self.validate_riscv_o3_runtime_stats_checkpoint_restore()?;
         if self.scheduler_checkpoints.is_some() {
             scheduler_checkpoint_bank
                 .as_deref_mut()
@@ -1574,16 +1575,15 @@ impl SystemActionExecutor {
                 .restore_all_from(&self.checkpoints)
                 .map_err(SystemError::VirtioPciDeviceConfigCheckpoint)?;
         }
-        self.sync_riscv_o3_runtime_stats_after_checkpoint_restore()?;
+        self.sync_riscv_o3_runtime_stats_after_checkpoint_restore();
         Ok(rebound_o3_wake_components)
     }
-
-    fn sync_riscv_o3_runtime_stats_after_checkpoint_restore(&mut self) -> Result<(), SystemError> {
+    fn sync_riscv_o3_runtime_stats_after_checkpoint_restore(&mut self) {
         let Some(o3_runtime_stats) = self.riscv_o3_runtime_stats.clone() else {
-            return Ok(());
+            return;
         };
         let Some(riscv_checkpoints) = &self.riscv_checkpoints else {
-            return Ok(());
+            return;
         };
 
         for (cpu, snapshot, live_issue, runtime_snapshot, in_order_pipeline_cycles) in
@@ -1598,9 +1598,8 @@ impl SystemActionExecutor {
                     &runtime_snapshot,
                     in_order_pipeline_cycles,
                 )
-                .map_err(SystemError::Stats)?;
+                .expect("O3 stats restore schema was validated before state installation");
         }
-        Ok(())
     }
 }
 

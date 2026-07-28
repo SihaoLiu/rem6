@@ -15,8 +15,10 @@ rem6-topology = { path = "../rem6-topology" }
 rem6-transport = { path = "../rem6-transport" }
 
 [dev-dependencies]
+quote = "1"
 rem6-cache = { path = "../rem6-cache" }
 rem6-fabric = { path = "../rem6-fabric" }
+syn = { version = "2", features = ["full"] }
 
 [lints]
 workspace = true

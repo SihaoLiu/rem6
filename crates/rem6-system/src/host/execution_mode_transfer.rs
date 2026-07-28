@@ -22,9 +22,9 @@ use super::{
     SystemActionExecutor, EXECUTION_MODE_SWITCH_STATE_TRANSFER_LABEL_PREFIX,
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct AttachedCheckpointCapture {
-    borrowed_scheduler: bool,
+    borrowed_scheduler_component: Option<CheckpointComponentId>,
     live_data_handoff: bool,
     restorable: bool,
 }
@@ -82,6 +82,32 @@ impl ExecutionModeSwitchStateTransfer {
 }
 
 impl SystemActionExecutor {
+    pub(super) fn validate_riscv_o3_runtime_stats_checkpoint_restore(
+        &self,
+    ) -> Result<(), SystemError> {
+        let Some(o3_runtime_stats) = &self.riscv_o3_runtime_stats else {
+            return Ok(());
+        };
+        let Some(riscv_checkpoints) = &self.riscv_checkpoints else {
+            return Ok(());
+        };
+        for (cpu, snapshot, live_issue, runtime_snapshot, in_order_pipeline_cycles) in
+            riscv_checkpoints.o3_runtime_snapshots()
+        {
+            o3_runtime_stats
+                .validate_cpu_snapshot_schema(
+                    &self.stats,
+                    cpu,
+                    snapshot,
+                    live_issue,
+                    &runtime_snapshot,
+                    in_order_pipeline_cycles,
+                )
+                .map_err(SystemError::Stats)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn live_o3_scheduler_restores(
         &self,
         checkpoints: &CheckpointRegistry,
@@ -224,7 +250,7 @@ impl SystemActionExecutor {
             live_data_handoff_target,
             true,
         )?;
-        if !has_state_transfer_banks && !capture.borrowed_scheduler {
+        if !has_state_transfer_banks && capture.borrowed_scheduler_component.is_none() {
             return Ok(None);
         }
         self.capture_execution_modes_into(&mut staged_checkpoints)?;
@@ -235,6 +261,7 @@ impl SystemActionExecutor {
                 record.tick(),
             )
             .map_err(SystemError::Checkpoint)?;
+        self.commit_attached_checkpoint_capture(&capture);
         let checker = self
             .riscv_checkpoints
             .as_ref()
@@ -339,12 +366,16 @@ impl SystemActionExecutor {
             if let Some(riscv_checkpoints) = &self.riscv_checkpoints {
                 if execution_mode_switch {
                     let (_records, riscv_restorable) = riscv_checkpoints
-                        .capture_all_for_execution_mode_switch_into(staged_checkpoints, tick)
+                        .stage_all_for_execution_mode_switch_into(
+                            staged_checkpoints,
+                            tick,
+                            scheduler_checkpoint.is_some(),
+                        )
                         .map_err(SystemError::Checkpoint)?;
                     restorable &= riscv_restorable;
                 } else {
                     riscv_checkpoints
-                        .capture_all_into_at(staged_checkpoints, tick)
+                        .stage_all_into_at(staged_checkpoints, tick)
                         .map_err(SystemError::Checkpoint)?;
                 }
             }
@@ -410,9 +441,6 @@ impl SystemActionExecutor {
                 scheduler_checkpoint.as_deref(),
                 scheduler_checkpoint_bank,
             )?;
-        }
-        if let Some(component) = borrowed_scheduler_component {
-            self.track_borrowed_scheduler_checkpoint_component(component);
         }
         if let Some(memory_checkpoints) = &self.memory_checkpoints {
             memory_checkpoints
@@ -559,10 +587,24 @@ impl SystemActionExecutor {
                 .map_err(SystemError::VirtioPciDeviceConfigCheckpoint)?;
         }
         Ok(AttachedCheckpointCapture {
-            borrowed_scheduler: capture_borrowed_scheduler,
+            borrowed_scheduler_component,
             live_data_handoff,
             restorable,
         })
+    }
+
+    pub(super) fn commit_attached_checkpoint_capture(
+        &mut self,
+        capture: &AttachedCheckpointCapture,
+    ) {
+        if !capture.live_data_handoff {
+            if let Some(riscv_checkpoints) = &self.riscv_checkpoints {
+                riscv_checkpoints.commit_checkpoint_capture();
+            }
+        }
+        if let Some(component) = capture.borrowed_scheduler_component.clone() {
+            self.track_borrowed_scheduler_checkpoint_component(component);
+        }
     }
 
     pub(super) fn owned_scheduler_checkpoint_events(&self) -> Vec<SchedulerCheckpointOwnedEvent> {

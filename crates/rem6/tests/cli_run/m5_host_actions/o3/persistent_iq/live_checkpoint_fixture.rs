@@ -8,10 +8,10 @@ use super::*;
 pub(super) const O3_LIVE_CHECKPOINT_CHUNK: &str = "o3-live-checkpoint";
 pub(super) const O3_RUNTIME_CHUNK: &str = "o3-runtime-state";
 
-const LIVE_COMPUTE_GATE_PC: &str = "0x80000010";
-pub(super) const LIVE_COMPUTE_READY_PC: &str = "0x80000024";
-pub(super) const LIVE_COMPUTE_DEPENDENT_PC: &str = "0x80000028";
-pub(super) const LIVE_COMPUTE_RESULT_ADDRESS: u64 = 0x8000_0080;
+const LIVE_COMPUTE_GATE_PC: &str = "0x80000030";
+pub(super) const LIVE_COMPUTE_READY_PC: &str = "0x80000044";
+pub(super) const LIVE_COMPUTE_DEPENDENT_PC: &str = "0x80000048";
+pub(super) const LIVE_COMPUTE_RESULT_ADDRESS: u64 = 0x8000_0200;
 pub(super) const LIVE_COMPUTE_RESULT_HEX: &str = "0000000009000000";
 
 const LIVE_COMPUTE_MAX_TICK: u64 = 4000;
@@ -20,8 +20,9 @@ const LIVE_COMPUTE_HOST_EVENT_DELAY: u64 = 26;
 const LIVE_COMPUTE_FETCH_COMPLETION_DELAY: u64 = 2;
 const LIVE_COMPUTE_RESTORE_DELAY: u64 = 3;
 const LIVE_COMPUTE_MODE_SWITCH_BEFORE_RESTORE: u64 = 1;
-const LIVE_COMPUTE_STOP_TARGET_OFFSET: usize = 0x40;
+const LIVE_COMPUTE_STOP_TARGET_OFFSET: usize = 0x80;
 const SBI_HSM_EXTENSION: i32 = 0x0048_534d;
+const SBI_HSM_HART_START: i32 = 0;
 const SBI_HSM_HART_STOP: i32 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -63,10 +64,18 @@ pub(super) struct LiveComputeBaseline {
 pub(super) fn live_compute_binary(name: &str) -> PathBuf {
     let data_offset = i32::try_from(LIVE_COMPUTE_RESULT_ADDRESS - 0x8000_0000).unwrap();
     let mut words = vec![
+        i_type(1, 0, 0, 10, 0x13),
+        u_type(0, 11, 0x17),
+        i_type(0, 11, 0, 11, 0x13),
+        i_type(0, 0, 0, 12, 0x13),
+        load_hsm_extension(17)[0],
+        load_hsm_extension(17)[1],
+        i_type(SBI_HSM_HART_START, 0, 0, 16, 0x13),
+        0x0000_0073,
         i_type(84, 0, 0, 1, 0x13),
         i_type(7, 0, 0, 2, 0x13),
         u_type(0, 12, 0x17),
-        i_type(data_offset - 8, 12, 0, 12, 0x13),
+        i_type(data_offset - 0x28, 12, 0, 12, 0x13),
         i_type(4, 12, 0b110, 9, 0x03),
         r_type(0x01, 2, 1, 0b100, 17, 0x33),
         r_type(0x01, 2, 17, 0b000, 18, 0x33),
@@ -74,7 +83,13 @@ pub(super) fn live_compute_binary(name: &str) -> PathBuf {
         i_type(0, 19, 0, 20, 0x13),
         r_type(0, 12, 20, 0, 4, 0x33),
         i_type(7, 4, 0, 5, 0x13),
-        i_type(-0x28c, 4, 0, 0, 0x67),
+        i_type(
+            LIVE_COMPUTE_STOP_TARGET_OFFSET as i32 - data_offset - 0x24c,
+            4,
+            0,
+            0,
+            0x67,
+        ),
     ];
     while words.len() * 4 < LIVE_COMPUTE_STOP_TARGET_OFFSET {
         words.push(i_type(0, 0, 0, 0, 0x13));
@@ -83,6 +98,15 @@ pub(super) fn live_compute_binary(name: &str) -> PathBuf {
     words.push(i_type(SBI_HSM_HART_STOP, 0, 0, 16, 0x13));
     words.push(0x0000_0073);
     words.push(i_type(0, 0, 0, 0, 0x13));
+    let peer_offset = i32::try_from(words.len() * 4).unwrap();
+    for _ in 0..32 {
+        words.push(i_type(1, 6, 0, 6, 0x13));
+    }
+    words.extend(load_hsm_extension(17));
+    words.push(i_type(SBI_HSM_HART_STOP, 0, 0, 16, 0x13));
+    words.push(0x0000_0073);
+    words.push(i_type(0, 0, 0, 0, 0x13));
+    words[2] = i_type(peer_offset - 4, 11, 0, 11, 0x13);
     let mut program = riscv64_program(&words);
     assert!(program.len() <= data_offset as usize);
     while program.len() < data_offset as usize {
@@ -325,6 +349,8 @@ fn live_compute_command(
         "json",
         "--execute",
         "--riscv-sbi",
+        "--cores",
+        "2",
         "--debug-flags",
         match scheduler {
             LiveComputeScheduler::Serial => "O3,HostAction,Fetch",

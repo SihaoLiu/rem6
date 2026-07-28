@@ -28,6 +28,8 @@ mod o3_alias_authority;
 mod o3_fp_load_forwarding_ownership;
 #[path = "source_policy/o3_issue_queue_telemetry_ownership.rs"]
 mod o3_issue_queue_telemetry_ownership;
+#[path = "source_policy/o3_live_checkpoint_ownership.rs"]
+mod o3_live_checkpoint_ownership;
 #[path = "source_policy/o3_live_window_ownership.rs"]
 mod o3_live_window_ownership;
 #[path = "source_policy/o3_memory_issue_width_ownership.rs"]

@@ -27,6 +27,7 @@ use rem6_memory::Address;
 
 use crate::ExecutionModeTarget;
 
+mod capture;
 mod live_hart;
 mod o3_payload;
 mod vector_state;
@@ -326,8 +327,9 @@ impl RiscvCoreCheckpointPort {
         &self,
         registry: &mut CheckpointRegistry,
     ) -> Result<RiscvCoreCheckpointRecord, CheckpointError> {
-        let record = self.capture_checked_record(None)?;
+        let record = self.capture_checked_record(None, true)?;
         self.write_record(registry, &record)?;
+        self.commit_checkpoint_capture();
         Ok(record)
     }
 
@@ -336,20 +338,26 @@ impl RiscvCoreCheckpointPort {
         registry: &mut CheckpointRegistry,
         tick: u64,
     ) -> Result<RiscvCoreCheckpointRecord, CheckpointError> {
-        let record = self.capture_checked_record(Some(tick))?;
+        let record = self.capture_checked_record(Some(tick), true)?;
         self.write_record(registry, &record)?;
+        self.commit_checkpoint_capture();
         Ok(record)
     }
 
     fn capture_checked_record(
         &self,
         tick: Option<u64>,
+        accept_stable_rejection: bool,
     ) -> Result<RiscvCoreCheckpointRecord, CheckpointError> {
-        self.core.finalize_quiescent_o3_writeback_for_checkpoint();
         let projection = self.core.capture_checkpoint_projection(tick.unwrap_or(0));
         let live = match projection.live_capture() {
             RiscvO3LiveCheckpointCapture::Absent => None,
             RiscvO3LiveCheckpointCapture::Captured(live) if tick.is_some() => Some(live.clone()),
+            RiscvO3LiveCheckpointCapture::Rejected
+                if accept_stable_rejection && projection.stable_capture_is_quiescent() =>
+            {
+                None
+            }
             RiscvO3LiveCheckpointCapture::Captured(_) | RiscvO3LiveCheckpointCapture::Rejected => {
                 return Err(CheckpointError::ComponentNotQuiescent {
                     component: self.component.clone(),
@@ -362,13 +370,19 @@ impl RiscvCoreCheckpointPort {
     fn capture_execution_mode_switch_record(
         &self,
     ) -> Result<RiscvCoreCheckpointRecord, CheckpointError> {
-        self.core.finalize_quiescent_o3_writeback_for_checkpoint();
-        if !self.core.data_access_lifecycle_is_quiescent() {
+        if !self
+            .core
+            .checkpoint_projection_data_access_lifecycle_is_quiescent()
+        {
             return Err(CheckpointError::ComponentNotQuiescent {
                 component: self.component.clone(),
             });
         }
         Ok(self.capture_record())
+    }
+
+    fn commit_checkpoint_capture(&self) {
+        self.core.finalize_quiescent_o3_writeback_for_checkpoint();
     }
 
     fn write_record(
@@ -967,74 +981,6 @@ impl RiscvCoreCheckpointBank {
             port.register(registry)?;
         }
         Ok(())
-    }
-
-    pub fn capture_all_into(
-        &self,
-        registry: &mut CheckpointRegistry,
-    ) -> Result<Vec<RiscvCoreCheckpointRecord>, CheckpointError> {
-        self.capture_all_into_impl(registry, None)
-    }
-
-    pub fn capture_all_into_at(
-        &self,
-        registry: &mut CheckpointRegistry,
-        tick: u64,
-    ) -> Result<Vec<RiscvCoreCheckpointRecord>, CheckpointError> {
-        self.capture_all_into_impl(registry, Some(tick))
-    }
-
-    fn capture_all_into_impl(
-        &self,
-        registry: &mut CheckpointRegistry,
-        tick: Option<u64>,
-    ) -> Result<Vec<RiscvCoreCheckpointRecord>, CheckpointError> {
-        let captured = self
-            .ports
-            .values()
-            .map(|port| {
-                port.capture_checked_record(tick)
-                    .map(|record| (port, record))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        for (port, record) in &captured {
-            port.write_record(registry, record)?;
-        }
-        Ok(captured.into_iter().map(|(_, record)| record).collect())
-    }
-
-    pub(crate) fn capture_all_for_execution_mode_switch_into(
-        &self,
-        registry: &mut CheckpointRegistry,
-        tick: u64,
-    ) -> Result<(Vec<RiscvCoreCheckpointRecord>, bool), CheckpointError> {
-        let captured = self
-            .ports
-            .values()
-            .map(|port| match port.capture_checked_record(Some(tick)) {
-                Ok(record) if record.o3_live_checkpoint().is_none() => Ok((port, record, true)),
-                Ok(_) => Err(CheckpointError::ComponentNotQuiescent {
-                    component: port.component.clone(),
-                }),
-                Err(CheckpointError::ComponentNotQuiescent { .. }) => port
-                    .capture_execution_mode_switch_record()
-                    .map(|record| (port, record, false)),
-                Err(error) => Err(error),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        for (port, record, _restorable) in &captured {
-            port.write_record(registry, record)?;
-        }
-        let restorable = captured
-            .iter()
-            .all(|(_port, _record, restorable)| *restorable);
-        Ok((
-            captured
-                .into_iter()
-                .map(|(_port, record, _restorable)| record)
-                .collect(),
-            restorable,
-        ))
     }
 
     /// On success, replaces every RISC-V component in `registry` with the

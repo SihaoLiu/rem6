@@ -39,15 +39,23 @@ fn assert_fp_load_checkpoint_rejected(
 
 #[test]
 fn rem6_run_o3_fp_load_forwarding_handoff_rejects_live_state() {
-    for run in live_fp_load_boundary_runs() {
+    for run in direct_fp_load_boundary_runs()
+        .into_iter()
+        .chain(live_fp_load_boundary_runs())
+    {
         let path = fp_load_forwarding_binary(run);
         let baseline = run_fp_load_path_json(run, &path, MAX_TICK, &[]);
         let boundary = FpConsumerBoundary::discover(&baseline, run);
         let switch = format!("{}:cpu0:timing", boundary.response_live_tick);
-        let label = format!("{} live handoff", run.precision.label());
+        let label = format!(
+            "{} {} live handoff",
+            run.precision.label(),
+            run.memory_system
+        );
         let artifact = temp_output(&format!(
-            "o3-fp-load-forwarding-{}-live-handoff.json",
-            run.precision.label()
+            "o3-fp-load-forwarding-{}-{}-live-handoff.json",
+            run.precision.label(),
+            run.memory_system,
         ));
         let output = run_fp_load_action(run, &path, "--host-switch-cpu-mode", &switch, &artifact);
         assert_non_quiescent_action(output, &artifact, &label);

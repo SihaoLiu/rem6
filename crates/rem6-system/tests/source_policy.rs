@@ -1,5 +1,10 @@
+#[path = "source_policy/live_o3_checkpoint.rs"]
+mod live_o3_checkpoint;
+
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use quote::ToTokens;
 
 const MAX_FACADE_LINES: usize = 1300;
 const MAX_SOURCE_LINES: usize = 1800;
@@ -1059,6 +1064,89 @@ fn rust_function_signature_and_body<'a>(source: &'a str, declaration: &str) -> (
         source[start..open].trim(),
         balanced_delimited_content(source, open, '{', '}', declaration),
     )
+}
+
+fn unconditional_rust_function_definition(source: &str, name: &str) -> Option<String> {
+    fn conditional(attributes: &[syn::Attribute]) -> bool {
+        attributes.iter().any(|attribute| {
+            attribute.path().is_ident("cfg") || attribute.path().is_ident("cfg_attr")
+        })
+    }
+
+    fn collect(items: &[syn::Item], name: &str, definitions: &mut Vec<String>) {
+        for item in items {
+            match item {
+                syn::Item::Fn(function)
+                    if function.sig.ident == name && !conditional(&function.attrs) =>
+                {
+                    definitions.push(function.to_token_stream().to_string());
+                }
+                syn::Item::Impl(item) if !conditional(&item.attrs) => {
+                    definitions.extend(item.items.iter().filter_map(|member| {
+                        let syn::ImplItem::Fn(function) = member else {
+                            return None;
+                        };
+                        (function.sig.ident == name && !conditional(&function.attrs))
+                            .then(|| function.to_token_stream().to_string())
+                    }));
+                }
+                syn::Item::Mod(module) if !conditional(&module.attrs) => {
+                    if let Some((_, items)) = &module.content {
+                        collect(items, name, definitions);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let syntax = syn::parse_file(source).ok()?;
+    if conditional(&syntax.attrs) {
+        return None;
+    }
+    let mut definitions = Vec::new();
+    collect(&syntax.items, name, &mut definitions);
+    (definitions.len() == 1).then(|| definitions.pop().unwrap())
+}
+
+fn unconditional_rust_impl_method_definition(
+    source: &str,
+    owner: &str,
+    name: &str,
+) -> Option<String> {
+    fn conditional(attributes: &[syn::Attribute]) -> bool {
+        attributes.iter().any(|attribute| {
+            attribute.path().is_ident("cfg") || attribute.path().is_ident("cfg_attr")
+        })
+    }
+
+    let syntax = syn::parse_file(source).ok()?;
+    if conditional(&syntax.attrs) {
+        return None;
+    }
+    let mut definitions = syntax
+        .items
+        .iter()
+        .filter_map(|item| {
+            let syn::Item::Impl(item) = item else {
+                return None;
+            };
+            let syn::Type::Path(self_type) = item.self_ty.as_ref() else {
+                return None;
+            };
+            (self_type.path.segments.last()?.ident == owner && !conditional(&item.attrs))
+                .then_some(item)
+        })
+        .flat_map(|item| item.items.iter())
+        .filter_map(|member| {
+            let syn::ImplItem::Fn(function) = member else {
+                return None;
+            };
+            (function.sig.ident == name && !conditional(&function.attrs))
+                .then(|| function.to_token_stream().to_string())
+        });
+    let definition = definitions.next()?;
+    definitions.next().is_none().then_some(definition)
 }
 
 fn rust_call_arguments<'a>(source: &'a str, function: &str) -> &'a str {

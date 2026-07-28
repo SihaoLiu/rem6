@@ -252,29 +252,32 @@ impl RiscvCore {
 
     pub fn finalize_quiescent_o3_writeback_for_checkpoint(&self) {
         let mut state = self.state.lock().expect("riscv core lock");
-        if !state.o3_runtime.live_issue_is_quiescent()
-            || state.o3_runtime.has_live_writeback_owner()
-            || state
-                .o3_runtime
-                .earliest_unpublished_memory_result_writeback_tick()
-                .is_some()
-            || state.o3_writeback_wake.has_desired_tick()
-            || state.o3_writeback_wake.has_scheduled_wake_authority()
-        {
-            return;
-        }
-        state.o3_runtime.seal_live_issue_decision();
-        if let Err(error) = state.o3_runtime.finalize_all_writeback_reservations() {
-            state
-                .pending_callback_error
-                .get_or_insert(RiscvCpuError::O3Runtime(error));
-            return;
-        }
-        state.o3_writeback_wake.finalize_fired_detached_wakes();
+        state.finalize_quiescent_o3_writeback_state_for_checkpoint();
     }
 }
 
 impl RiscvCoreState {
+    pub(crate) fn finalize_quiescent_o3_writeback_state_for_checkpoint(&mut self) {
+        if !self.o3_runtime.live_issue_is_quiescent()
+            || self.o3_runtime.has_live_writeback_owner()
+            || self
+                .o3_runtime
+                .earliest_unpublished_memory_result_writeback_tick()
+                .is_some()
+            || self.o3_writeback_wake.has_desired_tick()
+            || self.o3_writeback_wake.has_scheduled_wake_authority()
+        {
+            return;
+        }
+        self.o3_runtime.seal_live_issue_decision();
+        if let Err(error) = self.o3_runtime.finalize_all_writeback_reservations() {
+            self.pending_callback_error
+                .get_or_insert(RiscvCpuError::O3Runtime(error));
+            return;
+        }
+        self.o3_writeback_wake.finalize_fired_detached_wakes();
+    }
+
     pub(crate) fn refresh_o3_writeback_wake(&mut self, now: Tick) {
         let demand = desired_o3_writeback_wake(self, now, None);
         self.o3_writeback_wake

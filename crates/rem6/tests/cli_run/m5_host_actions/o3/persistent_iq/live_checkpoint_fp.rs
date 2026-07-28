@@ -503,6 +503,16 @@ fn assert_live_fp_final_state(restored: &Value, baseline: &Value, run: FpLoadFor
             "nonzero baseline counter {pointer}",
         );
     }
+    for pointer in [
+        "/cores/0/o3_runtime/issue",
+        "/cores/0/o3_runtime/writeback_port",
+    ] {
+        assert_eq!(
+            restored.pointer(pointer),
+            baseline.pointer(pointer),
+            "complete exactly-once O3 stat object {pointer}",
+        );
+    }
 }
 
 fn data_trace(json: &Value) -> &[Value] {

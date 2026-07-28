@@ -320,11 +320,7 @@ impl RiscvCoreState {
         self.htm_hart_checkpoint = None;
         self.pending_callback_error = None;
         self.producer_forwarded_scalar_continuation = None;
-        self.branch_speculations.clear();
-        self.branch_speculation_kinds.clear();
-        self.return_address_stack_operations.clear();
         self.selected_branch_speculations.clear();
-        self.branch_target_predictions.clear();
         self.o3_writeback_wake.clear();
         self.forget_in_order_pipeline_wakes();
         self.rebound_in_order_execute_waits.clear();

@@ -123,7 +123,7 @@ impl RiscvTrapEventPort {
         )
     }
 
-    fn schedule_source_local_host_control_event_kind(
+    pub(super) fn schedule_source_local_host_control_event_kind(
         &self,
         scheduler: &mut PartitionedScheduler,
         event: GuestEventId,

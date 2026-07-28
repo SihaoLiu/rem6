@@ -205,11 +205,33 @@ fn checkpoint_capture_holds_cpu_then_riscv_state_for_one_projection() {
 }
 
 #[test]
+fn checkpoint_projection_finalizes_consumed_writeback_without_mutating_source() {
+    let core = core();
+    core.reserve_test_fixed_fu_writeback(4, 20).unwrap();
+    let before = sentinel(&core);
+
+    let projection = core.capture_checkpoint_projection(20);
+
+    assert!(matches!(
+        projection.live_capture(),
+        RiscvO3LiveCheckpointCapture::Absent
+    ));
+    assert_eq!(projection.stable().stats().writeback_port_cycles(), 1);
+    assert_eq!(
+        projection.stable().stats().writeback_port_admitted_rows(),
+        1
+    );
+    assert_eq!(sentinel(&core), before);
+}
+
+#[test]
 #[rustfmt::skip]
 fn capture_rejects_pending_fetch_and_in_order_pipeline_authority() {
     let drained = core();
     drained.core.state.lock().expect("cpu core lock").events.push(CpuFetchEvent::issued(CpuFetchRecord::new(0, PartitionId::new(0), MemoryRouteId::new(0), TransportEndpointId::new("cpu0.ifetch").unwrap(), request(0), Address::new(0x8000), AccessSize::new(4).unwrap())));
-    assert!(matches!(drained.capture_checkpoint_projection(0).live_capture(), RiscvO3LiveCheckpointCapture::Rejected));
+    let drained_projection = drained.capture_checkpoint_projection(0);
+    assert!(matches!(drained_projection.live_capture(), RiscvO3LiveCheckpointCapture::Rejected));
+    assert!(drained_projection.stable_capture_is_quiescent());
 
     let fetch = ComputeFixture::new();
     fetch.core.core.state.lock().expect("cpu core lock").events.push(CpuFetchEvent::issued(CpuFetchRecord::new(3, PartitionId::new(0), MemoryRouteId::new(0), TransportEndpointId::new("cpu0.ifetch").unwrap(), request(3), Address::new(0x8008), AccessSize::new(4).unwrap())));

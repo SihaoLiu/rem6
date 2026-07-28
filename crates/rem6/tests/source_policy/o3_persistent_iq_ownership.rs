@@ -298,11 +298,12 @@ fn o3_persistent_iq_ledger_claims_match_executable_evidence() {
         "exact vector-result bridge bytes",
         "typed dependency wakes",
         "vmul.vv -> vmv.x.s",
+        "checkpoint-restorable compute IQ window plus exactly one response-admitted scalar FLW/FLD result",
     ] {
         assert!(cpu.contains(claim), "CPU evidence is missing `{claim}`");
     }
     assert!(cpu.contains(
-        "broader FP load shapes, conversions, comparisons, moves, classification, dynamic-CSR/status-sensitive chains, true vector-register/load/VCSR forwarding, arbitrary dependency graphs, positive system issue rows, a general load/store queue scheduler, dependent stores or arbitrary atomics, checkpoint-restorable live IQ/transport state, and a general O3 engine remain incomplete"
+        "Pre-response transport, general IQ shapes, broader memory/result state, and a general O3 engine remain non-restorable."
     ));
     let normalized_ledger = normalized_policy_text(&ledger);
     for broad_claim in ["persistent vector arithmetic iq", "system issue support"] {

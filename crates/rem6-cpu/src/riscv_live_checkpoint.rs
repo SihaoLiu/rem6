@@ -28,6 +28,7 @@ pub enum RiscvO3LiveCheckpointCapture {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvO3CheckpointProjection {
     stable: crate::O3RuntimeCheckpointPayload,
+    stable_capture_quiescent: bool,
     live: RiscvO3LiveCheckpointCapture,
     replay: crate::RiscvCoreCheckpointRestoreInput,
 }
@@ -39,6 +40,11 @@ impl RiscvO3CheckpointProjection {
 
     pub const fn live_capture(&self) -> &RiscvO3LiveCheckpointCapture {
         &self.live
+    }
+
+    #[doc(hidden)]
+    pub const fn stable_capture_is_quiescent(&self) -> bool {
+        self.stable_capture_quiescent
     }
 
     #[doc(hidden)]
@@ -337,10 +343,12 @@ impl RiscvCore {
         let core_agent = self.agent();
         let cpu_state = self.core.state.lock().expect("cpu core lock");
         let riscv_state = self.state.lock().expect("riscv core lock");
+        let mut projected_state = riscv_state.clone();
+        projected_state.finalize_quiescent_o3_writeback_state_for_checkpoint();
         capture_checkpoint_projection_from_guards(
             self,
             &cpu_state,
-            &riscv_state,
+            &projected_state,
             core_agent,
             captured_tick,
         )
@@ -350,7 +358,47 @@ impl RiscvCore {
     pub fn capture_stable_checkpoint_replay(&self) -> crate::RiscvCoreCheckpointRestoreInput {
         let _cpu_state = self.core.state.lock().expect("cpu core lock");
         let state = self.state.lock().expect("riscv core lock");
-        checkpoint_replay_from_guarded_state(self, &state, stable_projection(&state), None, None)
+        let mut projected_state = state.clone();
+        projected_state.finalize_quiescent_o3_writeback_state_for_checkpoint();
+        checkpoint_replay_from_guarded_state(
+            self,
+            &projected_state,
+            stable_projection(&projected_state),
+            None,
+            None,
+        )
+    }
+
+    #[doc(hidden)]
+    pub fn checkpoint_projection_data_access_lifecycle_is_quiescent(&self) -> bool {
+        let mut projected_state = self.state.lock().expect("riscv core lock").clone();
+        projected_state.finalize_quiescent_o3_writeback_state_for_checkpoint();
+        projected_state.data_access_lifecycle_is_quiescent()
+    }
+}
+
+impl RiscvCoreState {
+    pub(crate) fn data_access_lifecycle_is_quiescent(&self) -> bool {
+        self.pending_callback_error.is_none()
+            && self.o3_runtime.live_data_access_lifecycle_is_quiescent()
+            && self.o3_runtime.live_issue_is_quiescent()
+            && !self.o3_runtime.has_pending_retirement_authority()
+            && !self.o3_writeback_wake.has_pending_checkpoint_authority()
+            && self.outstanding_data.is_empty()
+            && self.buffered_o3_effects.is_empty()
+            && self.pending_data_translations.is_empty()
+            && self.ready_translated_data.is_empty()
+            && self.memory_result_window_authorizations.is_empty()
+            && self
+                .data_translation
+                .as_ref()
+                .is_none_or(|frontend| frontend.is_empty())
+            && self.events.iter().all(|event| {
+                event.execution().memory_access().is_none()
+                    || self
+                        .issued_data_for_fetches
+                        .contains(&event.fetch().request_id())
+            })
     }
 }
 
@@ -380,6 +428,7 @@ fn capture_checkpoint_projection_from_guards(
         checkpoint_replay_from_guarded_state(core, state, stable.clone(), captured, projected_hart);
     RiscvO3CheckpointProjection {
         stable,
+        stable_capture_quiescent: state.data_access_lifecycle_is_quiescent(),
         live,
         replay,
     }
@@ -452,27 +501,7 @@ fn capture_live_from_guards(
     {
         Some(runtime) => runtime,
         None => {
-            let data_quiescent = state.pending_callback_error.is_none()
-                && state.o3_runtime.live_data_access_lifecycle_is_quiescent()
-                && state.o3_runtime.live_issue_is_quiescent()
-                && !state.o3_runtime.has_pending_retirement_authority()
-                && !state.o3_writeback_wake.has_pending_checkpoint_authority()
-                && state.outstanding_data.is_empty()
-                && state.buffered_o3_effects.is_empty()
-                && state.pending_data_translations.is_empty()
-                && state.ready_translated_data.is_empty()
-                && state.memory_result_window_authorizations.is_empty()
-                && state
-                    .data_translation
-                    .as_ref()
-                    .is_none_or(|frontend| frontend.is_empty())
-                && state.events.iter().all(|event| {
-                    event.execution().memory_access().is_none()
-                        || state
-                            .issued_data_for_fetches
-                            .contains(&event.fetch().request_id())
-                });
-            if data_quiescent {
+            if state.data_access_lifecycle_is_quiescent() {
                 return Ok(None);
             }
             return Err(invalid("drained capture retains operational authority"));

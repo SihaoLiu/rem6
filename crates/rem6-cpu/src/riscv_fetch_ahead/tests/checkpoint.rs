@@ -117,6 +117,30 @@ fn checkpoint_payload_restores_live_fetch_ahead_branch_speculation() {
 }
 
 #[test]
+fn prepared_checkpoint_restore_preserves_live_branch_checkpoint_authority() {
+    let call = j_type(12, 1).to_le_bytes().to_vec();
+    let source = core_with_completed_fetch(call);
+    let decision = source.next_fetch_ahead_before_retire().unwrap();
+    record_fetch_ahead_speculation(&source, &decision).unwrap();
+    let expected = source.branch_predictor_checkpoint_payload();
+    {
+        let state = source.state.lock().expect("riscv core lock");
+        assert_eq!(state.branch_speculations.len(), 1);
+        assert_eq!(state.branch_speculation_kinds.len(), 1);
+        assert_eq!(state.branch_target_predictions.len(), 1);
+        assert_eq!(state.return_address_stack_operations.len(), 1);
+    }
+
+    let destination = core_with_completed_fetches([]);
+    let prepared = destination
+        .prepare_checkpoint_restore(source.capture_stable_checkpoint_replay())
+        .unwrap();
+    destination.install_prepared_checkpoint_restore(prepared);
+
+    assert_eq!(destination.branch_predictor_checkpoint_payload(), expected);
+}
+
+#[test]
 fn checkpoint_payload_restores_live_return_address_stack_speculation() {
     let call = j_type(12, 1).to_le_bytes().to_vec();
     let core = core_with_completed_fetch(call);

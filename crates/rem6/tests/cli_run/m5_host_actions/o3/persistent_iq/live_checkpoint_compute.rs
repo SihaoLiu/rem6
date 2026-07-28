@@ -279,10 +279,12 @@ fn assert_o3_live_stats(json: &Value, action: &Value, action_path: &str, rebound
 }
 
 fn assert_exact_architecture(json: &Value) {
+    let computed_address = format!("0x{:x}", LIVE_COMPUTE_RESULT_ADDRESS + 0x24c);
+    let dependent_address = format!("0x{:x}", LIVE_COMPUTE_RESULT_ADDRESS + 0x253);
     for (register, expected) in [
         ("x1", "0x54"),
-        ("x4", "0x800002cc"),
-        ("x5", "0x800002d3"),
+        ("x4", computed_address.as_str()),
+        ("x5", dependent_address.as_str()),
         ("x9", "0x9"),
         ("x18", "0x54"),
         ("x19", "0x24c"),
@@ -366,6 +368,16 @@ fn assert_exactly_once_stats(restored: &Value, baseline: &Value) {
             "restored exactly-once counter {pointer}",
         );
         assert!(baseline_value > 0, "baseline counter {pointer} is empty");
+    }
+    for pointer in [
+        "/cores/0/o3_runtime/issue",
+        "/cores/0/o3_runtime/writeback_port",
+    ] {
+        assert_eq!(
+            restored.pointer(pointer),
+            baseline.pointer(pointer),
+            "restored complete exactly-once stat object {pointer}",
+        );
     }
     let checkpoint = restored
         .pointer("/host_actions/checkpoints/0")
@@ -538,6 +550,12 @@ fn assert_scheduler_worker_limit(json: &Value, expected: u64) {
             .and_then(Value::as_u64),
         Some(expected),
         "requested scheduler worker limit must remain effective: {json}",
+    );
+    assert_eq!(
+        json.pointer("/parallel/scheduler/max_workers")
+            .and_then(Value::as_u64),
+        Some(expected),
+        "live checkpoint proof must exercise every requested scheduler worker: {json}",
     );
 }
 

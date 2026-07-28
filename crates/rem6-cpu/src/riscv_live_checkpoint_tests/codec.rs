@@ -263,6 +263,8 @@ fn assert_bad_completed(change: impl FnOnce(&mut RiscvO3LiveCheckpointPayload)) 
     let mut value = completed_fp_payload(MemoryWidth::Word);
     change(&mut value);
     assert!(matches!(value.encode(), Err(RiscvO3LiveCheckpointError::InvalidProfileShape { .. })));
+    let encoded = value.encode_without_validation_for_test().unwrap();
+    assert!(matches!(RiscvO3LiveCheckpointPayload::decode(&encoded), Err(RiscvO3LiveCheckpointError::InvalidProfileShape { .. })));
 }
 
 #[rustfmt::skip]

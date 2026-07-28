@@ -276,6 +276,7 @@ fn o3_fp_load_forwarding_ledger_claim_is_bounded_and_score_neutral() {
         "bounded scalar FLW/FLD completion feeds supported S/D arithmetic through the persistent live queue",
         "issue widths 1, 2, and 4 across direct and cache/fabric/DRAM routes",
         "exact FLW `00002041` and FLD `0000000000002440` result bytes",
+        "checkpoint-restorable compute IQ window plus exactly one response-admitted scalar FLW/FLD result",
     ] {
         assert!(cpu.contains(claim), "CPU ledger missing `{claim}`");
     }
@@ -287,7 +288,7 @@ fn o3_fp_load_forwarding_ledger_claim_is_bounded_and_score_neutral() {
         assert!(cpu.contains(anchor), "CPU ledger missing `{anchor}`");
     }
     assert!(cpu.contains(
-        "broader FP load shapes, conversions, comparisons, moves, classification, dynamic-CSR/status-sensitive chains, true vector-register/load/VCSR forwarding, arbitrary dependency graphs, positive system issue rows, a general load/store queue scheduler, dependent stores or arbitrary atomics, checkpoint-restorable live IQ/transport state, and a general O3 engine remain incomplete"
+        "Pre-response transport, general IQ shapes, broader memory/result state, and a general O3 engine remain non-restorable."
     ));
     let normalized = normalized_policy_text(cpu);
     for overclaim in [

@@ -14,7 +14,7 @@ impl RiscvTrapEventPort {
         target: ExecutionModeTarget,
         mode: ExecutionMode,
     ) -> Result<PartitionEventId, SystemError> {
-        self.schedule_host_control_event_kind_parallel(
+        self.schedule_source_local_host_control_event_kind(
             scheduler,
             event,
             source,

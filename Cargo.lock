@@ -176,6 +176,7 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "proc-macro2",
+ "quote",
  "rem6-accelerator",
  "rem6-boot",
  "rem6-cache",
@@ -268,6 +269,7 @@ dependencies = [
 name = "rem6-cpu"
 version = "0.1.0"
 dependencies = [
+ "quote",
  "rem6-boot",
  "rem6-cache",
  "rem6-fabric",
@@ -277,6 +279,7 @@ dependencies = [
  "rem6-mmio",
  "rem6-topology",
  "rem6-transport",
+ "syn",
 ]
 
 [[package]]
@@ -458,6 +461,7 @@ dependencies = [
 name = "rem6-system"
 version = "0.1.0"
 dependencies = [
+ "quote",
  "rem6-accelerator",
  "rem6-boot",
  "rem6-cache",
@@ -490,6 +494,7 @@ dependencies = [
  "rem6-uart",
  "rem6-virtio",
  "rem6-workload",
+ "syn",
 ]
 
 [[package]]
