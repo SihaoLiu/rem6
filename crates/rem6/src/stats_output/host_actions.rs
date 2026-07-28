@@ -395,6 +395,17 @@ pub(super) fn emit_run_host_action_stats(
                     value.value(),
                 )?;
             }
+            for (field, value) in chunk_stats.o3_live_checkpoint_numeric {
+                increment_stat(
+                    stats,
+                    &format!(
+                        "sim.host_actions.checkpoint.latest_component.{component_path}.chunk.{chunk_path}.o3_live_checkpoint.{field}"
+                    ),
+                    value.unit(),
+                    StatResetPolicy::Monotonic,
+                    value.value(),
+                )?;
+            }
         }
     }
     if let Some(restore) = summary.checkpoint_restores.last() {
@@ -502,6 +513,17 @@ pub(super) fn emit_run_host_action_stats(
                     stats,
                     &format!(
                         "sim.host_actions.checkpoint_restore.latest_target.{target_path}.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"
+                    ),
+                    value.unit(),
+                    StatResetPolicy::Monotonic,
+                    value.value(),
+                )?;
+            }
+            for (field, value) in chunk_stats.o3_live_checkpoint_numeric {
+                increment_stat(
+                    stats,
+                    &format!(
+                        "sim.host_actions.checkpoint_restore.latest_target.{target_path}.component.{component_path}.chunk.{chunk_path}.o3_live_checkpoint.{field}"
                     ),
                     value.unit(),
                     StatResetPolicy::Monotonic,
@@ -772,6 +794,17 @@ pub(super) fn emit_run_host_action_stats(
                     stats,
                     &format!(
                         "sim.host_actions.execution_mode_switch_state_transfer.latest_target.{latest_transfer_target}.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"
+                    ),
+                    value.unit(),
+                    StatResetPolicy::Monotonic,
+                    value.value(),
+                )?;
+            }
+            for (field, value) in chunk_stats.o3_live_checkpoint_numeric {
+                increment_stat(
+                    stats,
+                    &format!(
+                        "sim.host_actions.execution_mode_switch_state_transfer.latest_target.{latest_transfer_target}.component.{component_path}.chunk.{chunk_path}.o3_live_checkpoint.{field}"
                     ),
                     value.unit(),
                     StatResetPolicy::Monotonic,
@@ -1086,6 +1119,17 @@ pub(super) fn emit_run_host_action_stats(
                 value.value(),
             )?;
         }
+        for (field, value) in chunk_stats.o3_live_checkpoint_numeric {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.host_actions.checkpoint.component.{component_path}.chunk.{chunk_path}.o3_live_checkpoint.{field}"
+                ),
+                value.unit(),
+                StatResetPolicy::Monotonic,
+                value.value(),
+            )?;
+        }
     }
     for (component_path, component_stats) in checkpoint_restore_stats.components {
         increment_stat(
@@ -1145,6 +1189,17 @@ pub(super) fn emit_run_host_action_stats(
                 stats,
                 &format!(
                     "sim.host_actions.checkpoint_restore.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"
+                ),
+                value.unit(),
+                StatResetPolicy::Monotonic,
+                value.value(),
+            )?;
+        }
+        for (field, value) in chunk_stats.o3_live_checkpoint_numeric {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.host_actions.checkpoint_restore.component.{component_path}.chunk.{chunk_path}.o3_live_checkpoint.{field}"
                 ),
                 value.unit(),
                 StatResetPolicy::Monotonic,
@@ -1247,6 +1302,17 @@ pub(super) fn emit_run_host_action_stats(
                 value.value(),
             )?;
         }
+        for (field, value) in chunk_stats.o3_live_checkpoint_numeric {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.host_actions.checkpoint_restore.target.{target_path}.component.{component_path}.chunk.{chunk_path}.o3_live_checkpoint.{field}"
+                ),
+                value.unit(),
+                StatResetPolicy::Monotonic,
+                value.value(),
+            )?;
+        }
     }
     for (component_path, component_stats) in switch_state_transfer_stats.components {
         increment_stat(
@@ -1310,6 +1376,17 @@ pub(super) fn emit_run_host_action_stats(
                 stats,
                 &format!(
                     "sim.host_actions.execution_mode_switch_state_transfer.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"
+                ),
+                value.unit(),
+                StatResetPolicy::Monotonic,
+                value.value(),
+            )?;
+        }
+        for (field, value) in chunk_stats.o3_live_checkpoint_numeric {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.host_actions.execution_mode_switch_state_transfer.component.{component_path}.chunk.{chunk_path}.o3_live_checkpoint.{field}"
                 ),
                 value.unit(),
                 StatResetPolicy::Monotonic,
@@ -1412,6 +1489,17 @@ pub(super) fn emit_run_host_action_stats(
                 stats,
                 &format!(
                     "sim.host_actions.execution_mode_switch_state_transfer.target.{target_path}.component.{component_path}.chunk.{chunk_path}.o3_runtime.{field}"
+                ),
+                value.unit(),
+                StatResetPolicy::Monotonic,
+                value.value(),
+            )?;
+        }
+        for (field, value) in chunk_stats.o3_live_checkpoint_numeric {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.host_actions.execution_mode_switch_state_transfer.target.{target_path}.component.{component_path}.chunk.{chunk_path}.o3_live_checkpoint.{field}"
                 ),
                 value.unit(),
                 StatResetPolicy::Monotonic,

@@ -19,6 +19,7 @@ pub(crate) struct HostActionChunkStats {
     pub(crate) payload_bytes: u64,
     pub(crate) payload_checksum_accumulator: u64,
     pub(crate) o3_runtime_numeric: BTreeMap<String, Rem6HostO3RuntimeCheckpointStatValue>,
+    pub(crate) o3_live_checkpoint_numeric: BTreeMap<String, Rem6HostO3RuntimeCheckpointStatValue>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -167,14 +168,22 @@ fn add_chunk(stats: &mut HostActionChunkStats, chunk: &Rem6HostCheckpointChunkSu
     stats.payload_checksum_accumulator = stats
         .payload_checksum_accumulator
         .wrapping_add(chunk.payload_checksum);
-    let Some(o3_runtime) = &chunk.o3_runtime else {
-        return;
-    };
-    for (field, value) in o3_runtime.numeric_stat_fields() {
-        stats
-            .o3_runtime_numeric
-            .entry(field.to_string())
-            .and_modify(|current| current.merge_restore_value(value))
-            .or_insert(value);
+    if let Some(o3_runtime) = &chunk.o3_runtime {
+        for (field, value) in o3_runtime.numeric_stat_fields() {
+            stats
+                .o3_runtime_numeric
+                .entry(field.to_string())
+                .and_modify(|current| current.merge_restore_value(value))
+                .or_insert(value);
+        }
+    }
+    if let Some(o3_live_checkpoint) = &chunk.o3_live_checkpoint {
+        for (field, value) in o3_live_checkpoint.numeric_stat_fields() {
+            stats
+                .o3_live_checkpoint_numeric
+                .entry(field.to_string())
+                .and_modify(|current| current.merge_restore_value(value))
+                .or_insert(value);
+        }
     }
 }

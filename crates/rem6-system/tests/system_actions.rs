@@ -726,6 +726,7 @@ fn system_action_executor_applies_restored_riscv_core_checkpoint() {
             event: GuestEventId::new(8),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(core.pc(), Address::new(0x8040));
@@ -800,6 +801,7 @@ fn system_action_executor_refreshes_and_restores_live_memory_checkpoint() {
             event: GuestEventId::new(10),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(
@@ -891,6 +893,7 @@ fn system_action_executor_refreshes_and_restores_live_dram_checkpoint() {
             event: GuestEventId::new(14),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     let mut controller = controller.lock().unwrap();
@@ -992,6 +995,7 @@ fn system_action_executor_refreshes_and_restores_live_uart_checkpoint() {
             event: GuestEventId::new(16),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(uart.snapshot().tx_bytes(), &[UartTxByte::new(4, b'O')]);
@@ -1102,6 +1106,7 @@ fn system_action_executor_refreshes_and_restores_live_timer_checkpoint() {
             event: GuestEventId::new(18),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(timer.snapshot(), captured);
@@ -1179,6 +1184,7 @@ fn system_action_executor_refreshes_and_restores_live_clint_checkpoint() {
             event: GuestEventId::new(20),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(clint.snapshot(), captured);
@@ -1288,6 +1294,7 @@ fn system_action_executor_refreshes_and_restores_live_interrupt_controller_check
             event: GuestEventId::new(20),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     let controller = controller.lock().unwrap();
@@ -1341,6 +1348,7 @@ fn system_run_controller_records_and_executes_checkpoint_restore_action() {
             event: GuestEventId::new(7),
             source,
             manifest: manifest.clone(),
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(executor.checkpoints().chunk(&cpu, "pc"), Some(&[0x80][..]));
@@ -1352,6 +1360,7 @@ fn system_run_controller_records_and_executes_checkpoint_restore_action() {
             event: GuestEventId::new(7),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }]
     );
 }
@@ -1418,6 +1427,7 @@ fn system_run_controller_executes_delivered_checkpoint_restore_by_label() {
             event: GuestEventId::new(8),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }]
     );
     assert_eq!(executor.checkpoints().chunk(&cpu, "pc"), Some(&[0x10][..]));
@@ -1759,6 +1769,7 @@ fn execution_mode_switches_are_checkpointed_and_restored() {
             event: GuestEventId::new(23),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(
@@ -1859,6 +1870,7 @@ fn execution_mode_switch_transfer_labels_are_reserved_for_generated_manifests() 
             event: GuestEventId::new(27),
             source,
             manifest: executor.checkpoints().capture(transfer_label, 1).unwrap(),
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(

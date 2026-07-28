@@ -193,6 +193,7 @@ fn system_action_executor_checkpoints_and_restores_msi_bank() {
             event: GuestEventId::new(2),
             source: GuestSourceId::new(7),
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(live.lock().unwrap().snapshot(), expected);

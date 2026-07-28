@@ -16,7 +16,10 @@ use crate::{
 };
 
 #[cfg(test)]
-use crate::{Rem6HostCheckpointChunkSummary, Rem6HostCheckpointComponentSummary};
+use crate::{
+    host_actions::Rem6HostO3LiveCheckpointChunkSummary, Rem6HostCheckpointChunkSummary,
+    Rem6HostCheckpointComponentSummary,
+};
 
 use super::checkpoint_components_json::checkpoint_components_to_json;
 
@@ -178,6 +181,13 @@ fn push_host_action_trace_chunk_stats(
     for (field, value) in chunk_stats.o3_runtime_numeric {
         stats.push(Rem6HostActionTraceStat::new(
             format!("{prefix}.o3_runtime.{field}"),
+            value.unit(),
+            value.value(),
+        ));
+    }
+    for (field, value) in chunk_stats.o3_live_checkpoint_numeric {
+        stats.push(Rem6HostActionTraceStat::new(
+            format!("{prefix}.o3_live_checkpoint.{field}"),
             value.unit(),
             value.value(),
         ));
@@ -1020,6 +1030,36 @@ mod tests {
         }
     }
 
+    #[test]
+    fn checkpoint_and_restore_debug_stats_expose_o3_live_numeric_fields() {
+        let checkpoint = o3_live_checkpoint_summary(0);
+        let restore = o3_live_checkpoint_summary(1);
+        let checkpoint_stats =
+            host_action_trace_checkpoint_stats(&[checkpoint], |segment| segment.to_string());
+        let restore_stats =
+            host_action_trace_checkpoint_restore_stats(&[restore], |segment| segment.to_string());
+
+        for (field, unit, checkpoint_value, restore_value) in [
+            ("version", "Count", 1, 1),
+            ("payload_bytes", "Byte", 91, 91),
+            ("event_count", "Count", 2, 2),
+            ("resident_rows", "Count", 1, 1),
+            ("writeback_reservations", "Count", 0, 0),
+            ("wake_partition", "Count", 0, 0),
+            ("wake_tick", "Tick", 17, 17),
+            ("rebound_wakes", "Count", 0, 1),
+        ] {
+            let checkpoint_path = format!(
+                "checkpoint.component.cpu0.chunk.o3-live-checkpoint.o3_live_checkpoint.{field}"
+            );
+            let restore_path = format!(
+                "checkpoint_restore.component.cpu0.chunk.o3-live-checkpoint.o3_live_checkpoint.{field}"
+            );
+            assert_stat(&checkpoint_stats, &checkpoint_path, unit, checkpoint_value);
+            assert_stat(&restore_stats, &restore_path, unit, restore_value);
+        }
+    }
+
     fn restore_summary(target: &str) -> Rem6HostCheckpointSummary {
         Rem6HostCheckpointSummary {
             tick: 0,
@@ -1041,6 +1081,44 @@ mod tests {
                     payload_bytes: 1,
                     payload_checksum: 1,
                     o3_runtime: None,
+                    o3_live_checkpoint: None,
+                    o3_live_data_handoff: None,
+                }],
+            }],
+        }
+    }
+
+    fn o3_live_checkpoint_summary(rebound_wakes: u64) -> Rem6HostCheckpointSummary {
+        Rem6HostCheckpointSummary {
+            tick: 17,
+            event: 1,
+            source: 0,
+            label: "live".to_string(),
+            manifest_tick: 17,
+            execution_mode_authority_present: false,
+            execution_mode_authority_cleared: false,
+            execution_mode_authority_decode_error: false,
+            execution_modes: Vec::new(),
+            components: vec![Rem6HostCheckpointComponentSummary {
+                component: "cpu0".to_string(),
+                chunks: vec![Rem6HostCheckpointChunkSummary {
+                    name: "o3-live-checkpoint".to_string(),
+                    payload_bytes: 91,
+                    payload_checksum: 7,
+                    o3_runtime: None,
+                    o3_live_checkpoint: Some(Rem6HostO3LiveCheckpointChunkSummary {
+                        decode_error: false,
+                        version: Some(1),
+                        profile: Some("compute_queue"),
+                        payload_bytes: 91,
+                        event_count: Some(2),
+                        resident_rows: Some(1),
+                        writeback_reservations: Some(0),
+                        wake_partition: Some(0),
+                        wake_tick: Some(17),
+                        wake_kind: Some("serial"),
+                        rebound_wakes,
+                    }),
                     o3_live_data_handoff: None,
                 }],
             }],
@@ -1086,6 +1164,7 @@ mod tests {
                         payload_bytes: 1,
                         payload_checksum: 1,
                         o3_runtime: None,
+                        o3_live_checkpoint: None,
                         o3_live_data_handoff: None,
                     }],
                 }],
@@ -1098,5 +1177,14 @@ mod tests {
             .iter()
             .find(|stat| stat.path() == path)
             .map(Rem6HostActionTraceStat::value)
+    }
+
+    fn assert_stat(stats: &[Rem6HostActionTraceStat], path: &str, unit: &'static str, value: u64) {
+        let stat = stats
+            .iter()
+            .find(|stat| stat.path() == path)
+            .unwrap_or_else(|| panic!("missing {path}: {stats:?}"));
+        assert_eq!(stat.unit(), unit);
+        assert_eq!(stat.value(), value);
     }
 }

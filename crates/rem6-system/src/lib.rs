@@ -311,7 +311,7 @@ pub use workload_replay::{
     RiscvWorkloadTrafficTraceReplayOutcome,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct RiscvSystemRunDriver {
     trap_port: RiscvTrapEventPort,
     instruction_stats: Option<RiscvInstructionStats>,

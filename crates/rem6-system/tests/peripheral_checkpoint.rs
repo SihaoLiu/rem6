@@ -1908,6 +1908,7 @@ fn system_action_executor_checkpoints_and_restores_plic_state() {
             event: GuestEventId::new(2),
             source: GuestSourceId::new(9),
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(live.snapshot(), expected);
@@ -1963,6 +1964,7 @@ fn system_action_executor_checkpoints_and_restores_pl031_state() {
             event: GuestEventId::new(6),
             source: GuestSourceId::new(11),
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(live.snapshot(), captured);
@@ -2018,6 +2020,7 @@ fn system_action_executor_checkpoints_and_restores_sp804_state() {
             event: GuestEventId::new(8),
             source: GuestSourceId::new(12),
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(live.snapshot(), captured);
@@ -2073,6 +2076,7 @@ fn system_action_executor_checkpoints_and_restores_sp805_state() {
             event: GuestEventId::new(10),
             source: GuestSourceId::new(13),
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(live.snapshot(), captured);
@@ -2132,6 +2136,7 @@ fn system_action_executor_checkpoints_and_restores_rtc_state() {
             event: GuestEventId::new(4),
             source: GuestSourceId::new(10),
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(live.snapshot(), captured);

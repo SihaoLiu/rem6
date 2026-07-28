@@ -1,5 +1,6 @@
 mod live_data_handoff;
 mod o3_checkpoint_decode;
+mod o3_live_checkpoint;
 mod o3_stats_dump_aliases;
 mod summary_totals;
 pub(crate) mod transfer_stats;
@@ -8,6 +9,9 @@ pub(crate) mod transfer_stats;
 #[path = "host_actions/summary_projection_tests.rs"]
 mod summary_projection_tests;
 
+use std::collections::BTreeSet;
+
+use rem6_checkpoint::CheckpointComponentId;
 use rem6_stats::{StatDumpRecord, StatSample, StatsResetRecord};
 use rem6_system::{
     decode_execution_mode_authority_from_manifest, ExecutionModeSwitchCheckerGate,
@@ -16,10 +20,12 @@ use rem6_system::{
 };
 
 use self::o3_checkpoint_decode::decode_o3_runtime_checkpoint_chunk;
+use self::o3_live_checkpoint::decode_o3_live_checkpoint_chunk;
 use self::o3_stats_dump_aliases::samples_with_gem5_aliases;
 use crate::execution_mode_lanes::execution_mode_name;
 use live_data_handoff::decode_o3_live_data_handoff_chunk;
 pub(crate) use live_data_handoff::Rem6HostO3LiveDataHandoffChunkSummary;
+pub(crate) use o3_live_checkpoint::Rem6HostO3LiveCheckpointChunkSummary;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Rem6HostActionSummary {
@@ -143,6 +149,7 @@ impl Rem6HostActionSummary {
                         source.get(),
                         manifest,
                         false,
+                        &BTreeSet::new(),
                     ));
                 }
                 SystemActionOutcome::CheckpointRestored {
@@ -150,6 +157,7 @@ impl Rem6HostActionSummary {
                     event,
                     source,
                     manifest,
+                    rebound_o3_wake_components,
                 } => {
                     summary
                         .checkpoint_restores
@@ -159,6 +167,7 @@ impl Rem6HostActionSummary {
                             source.get(),
                             manifest,
                             true,
+                            rebound_o3_wake_components,
                         ));
                 }
                 SystemActionOutcome::ExecutionModeSwitched {
@@ -209,13 +218,19 @@ fn checkpoint_summary_from_manifest(
     source: u32,
     manifest: &rem6_checkpoint::CheckpointManifest,
     is_restore: bool,
+    rebound_o3_wake_components: &BTreeSet<CheckpointComponentId>,
 ) -> Rem6HostCheckpointSummary {
     let (execution_mode_authority_present, execution_mode_authority_decode_error, execution_modes) =
         execution_mode_authority_from_manifest(manifest);
     let components = manifest
         .states()
         .iter()
-        .map(Rem6HostCheckpointComponentSummary::from_checkpoint_state)
+        .map(|state| {
+            Rem6HostCheckpointComponentSummary::from_checkpoint_state(
+                state,
+                rebound_o3_wake_components.contains(state.component()),
+            )
+        })
         .collect();
     Rem6HostCheckpointSummary {
         tick,
@@ -467,7 +482,8 @@ mod tests {
             )],
         );
 
-        let summary = checkpoint_summary_from_manifest(23, 29, 0, &manifest, true);
+        let summary =
+            checkpoint_summary_from_manifest(23, 29, 0, &manifest, true, &BTreeSet::new());
 
         assert!(!summary.execution_mode_authority_present);
         assert!(summary.execution_mode_authority_decode_error);
@@ -488,7 +504,8 @@ mod tests {
             )],
         );
 
-        let summary = checkpoint_summary_from_manifest(23, 29, 0, &manifest, false);
+        let summary =
+            checkpoint_summary_from_manifest(23, 29, 0, &manifest, false, &BTreeSet::new());
         let chunk = &summary.components[0].chunks[0];
         let o3_runtime = chunk
             .o3_runtime
@@ -546,7 +563,8 @@ mod tests {
             )],
         );
 
-        let summary = checkpoint_summary_from_manifest(23, 29, 0, &manifest, false);
+        let summary =
+            checkpoint_summary_from_manifest(23, 29, 0, &manifest, false, &BTreeSet::new());
         let handoff = summary.components[0].chunks[0]
             .o3_live_data_handoff
             .as_ref()
@@ -624,7 +642,10 @@ pub(crate) struct Rem6HostCheckpointComponentSummary {
 }
 
 impl Rem6HostCheckpointComponentSummary {
-    fn from_checkpoint_state(state: &rem6_checkpoint::CheckpointState) -> Self {
+    fn from_checkpoint_state(
+        state: &rem6_checkpoint::CheckpointState,
+        o3_wake_rebound: bool,
+    ) -> Self {
         let mut chunks = state
             .chunks()
             .iter()
@@ -633,6 +654,11 @@ impl Rem6HostCheckpointComponentSummary {
                 payload_bytes: chunk.payload().len() as u64,
                 payload_checksum: payload_checksum(chunk.payload()),
                 o3_runtime: decode_o3_runtime_checkpoint_chunk(chunk.name(), chunk.payload()),
+                o3_live_checkpoint: decode_o3_live_checkpoint_chunk(
+                    chunk.name(),
+                    chunk.payload(),
+                    o3_wake_rebound,
+                ),
                 o3_live_data_handoff: decode_o3_live_data_handoff_chunk(
                     chunk.name(),
                     chunk.payload(),
@@ -661,6 +687,7 @@ impl Rem6HostCheckpointComponentSummary {
                     o3_runtime: chunk.o3_runtime_payload().and_then(|payload| {
                         decode_o3_runtime_checkpoint_chunk(chunk.name(), payload)
                     }),
+                    o3_live_checkpoint: None,
                     o3_live_data_handoff: chunk.o3_live_data_handoff_payload().and_then(
                         |payload| decode_o3_live_data_handoff_chunk(chunk.name(), payload),
                     ),
@@ -676,6 +703,7 @@ pub(crate) struct Rem6HostCheckpointChunkSummary {
     pub(crate) payload_bytes: u64,
     pub(crate) payload_checksum: u64,
     pub(crate) o3_runtime: Option<Rem6HostO3RuntimeCheckpointChunkSummary>,
+    pub(crate) o3_live_checkpoint: Option<Rem6HostO3LiveCheckpointChunkSummary>,
     pub(crate) o3_live_data_handoff: Option<Rem6HostO3LiveDataHandoffChunkSummary>,
 }
 
@@ -749,14 +777,14 @@ pub(crate) struct Rem6HostO3RuntimeCheckpointStatValue {
 }
 
 impl Rem6HostO3RuntimeCheckpointStatValue {
-    fn new(
-        name: &str,
+    const fn new(
         aggregation: Rem6HostO3RuntimeCheckpointStatAggregation,
+        unit: &'static str,
         value: u64,
     ) -> Self {
         Self {
             aggregation,
-            unit: o3_runtime_checkpoint_unit(name),
+            unit,
             value,
         }
     }
@@ -1029,7 +1057,11 @@ impl Rem6HostO3RuntimeCheckpointChunkSummary {
                 value.map(|value| {
                     (
                         name,
-                        Rem6HostO3RuntimeCheckpointStatValue::new(name, aggregation, value),
+                        Rem6HostO3RuntimeCheckpointStatValue::new(
+                            aggregation,
+                            o3_runtime_checkpoint_unit(name),
+                            value,
+                        ),
                     )
                 })
             })

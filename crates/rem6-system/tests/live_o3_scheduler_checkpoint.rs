@@ -132,12 +132,14 @@ fn live_o3_capture_rejects_missing_tracked_source_wake_before_publication() {
 #[test]
 #[rustfmt::skip]
 fn live_o3_restore_discards_destination_wake_and_rebinds_once() {
-    let (scheduler, seeded, mut executor, _, scheduler_component, manifest) = live_fixture(ScheduledEventKind::Parallel, "rebind");
+    let (scheduler, seeded, mut executor, cpu, scheduler_component, manifest) = live_fixture(ScheduledEventKind::Parallel, "rebind");
     for offset in FIRST_PARTITION_FRONTIERS {
         let exhausted = rewrite_chunk(&manifest, &scheduler_component, "scheduler", |payload| payload[offset..offset + 8].copy_from_slice(&u64::MAX.to_le_bytes()));
         assert!(executor.apply(&restore_record(exhausted)).is_err());
     }
-    executor.apply(&restore_record(manifest)).unwrap();
+    let outcome = executor.apply(&restore_record(manifest)).unwrap();
+    let SystemActionOutcome::CheckpointRestored { rebound_o3_wake_components, .. } = outcome else { panic!("unexpected restore outcome: {outcome:?}"); };
+    assert_eq!(rebound_o3_wake_components, std::collections::BTreeSet::from([cpu]));
     let snapshot = scheduler.lock().unwrap().snapshot(); let pending = snapshot.partitions()[0].pending_events();
     assert_eq!(pending.len(), 1); assert_ne!(pending[0].id(), seeded.wake.id());
     assert_eq!(pending[0].kind(), ScheduledEventKind::Parallel); assert_eq!(seeded.core.owned_o3_writeback_wakes().len(), 1);

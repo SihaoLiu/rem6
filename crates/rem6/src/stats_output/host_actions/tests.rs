@@ -3,9 +3,10 @@ use rem6_system::RISCV_O3_LIVE_DATA_HANDOFF_CHUNK;
 
 use super::emit_run_host_action_stats;
 use crate::{
-    Rem6ExecutionModeQuiescenceGateSummary, Rem6ExecutionModeStateTransferSummary,
-    Rem6HostActionSummary, Rem6HostCheckpointChunkSummary, Rem6HostCheckpointComponentSummary,
-    Rem6HostCheckpointSummary, Rem6HostExecutionModeSummary, Rem6HostExecutionModeSwitchSummary,
+    host_actions::Rem6HostO3LiveCheckpointChunkSummary, Rem6ExecutionModeQuiescenceGateSummary,
+    Rem6ExecutionModeStateTransferSummary, Rem6HostActionSummary, Rem6HostCheckpointChunkSummary,
+    Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary, Rem6HostExecutionModeSummary,
+    Rem6HostExecutionModeSwitchSummary,
 };
 
 #[test]
@@ -315,6 +316,47 @@ fn host_action_checkpoint_restore_stats_count_authority_decode_errors() {
 }
 
 #[test]
+fn host_action_checkpoint_stats_expose_o3_live_checkpoint_numeric_fields() {
+    let mut stats = StatsRegistry::new();
+    let mut checkpoint = restore_with_component_chunk("cpu0", "o3-live-checkpoint", 73, 17);
+    checkpoint.components[0].chunks[0].o3_live_checkpoint = Some(o3_live_checkpoint_summary(0));
+    let mut restore = checkpoint.clone();
+    restore.components[0].chunks[0].o3_live_checkpoint = Some(o3_live_checkpoint_summary(1));
+    let summary = Rem6HostActionSummary {
+        total_action_count: 2,
+        checkpoints: vec![checkpoint],
+        checkpoint_restores: vec![restore],
+        ..Rem6HostActionSummary::default()
+    };
+
+    emit_run_host_action_stats(&mut stats, &summary).unwrap();
+    let snapshot = stats.snapshot(0);
+    for (action, rebound_wakes) in [("checkpoint", 0), ("checkpoint_restore", 1)] {
+        let prefix = format!(
+            "sim.host_actions.{action}.component.cpu0.chunk.o3_live_checkpoint.o3_live_checkpoint"
+        );
+        for (field, unit, value) in [
+            ("version", "Count", 1),
+            ("payload_bytes", "Byte", 73),
+            ("event_count", "Count", 2),
+            ("resident_rows", "Count", 2),
+            ("writeback_reservations", "Count", 0),
+            ("wake_partition", "Count", 0),
+            ("wake_tick", "Tick", 48),
+            ("rebound_wakes", "Count", rebound_wakes),
+        ] {
+            assert_snapshot_stat(
+                &snapshot,
+                &format!("{prefix}.{field}"),
+                unit,
+                StatResetPolicy::Monotonic,
+                value,
+            );
+        }
+    }
+}
+
+#[test]
 fn host_action_latest_transfer_stats_merge_normalized_path_collisions() {
     let mut stats = StatsRegistry::new();
     let summary = Rem6HostActionSummary {
@@ -480,9 +522,26 @@ fn restore_with_component_chunk(
                 payload_bytes,
                 payload_checksum,
                 o3_runtime: None,
+                o3_live_checkpoint: None,
                 o3_live_data_handoff: None,
             }],
         }],
+    }
+}
+
+fn o3_live_checkpoint_summary(rebound_wakes: u64) -> Rem6HostO3LiveCheckpointChunkSummary {
+    Rem6HostO3LiveCheckpointChunkSummary {
+        decode_error: false,
+        version: Some(1),
+        profile: Some("compute_queue"),
+        payload_bytes: 73,
+        event_count: Some(2),
+        resident_rows: Some(2),
+        writeback_reservations: Some(0),
+        wake_partition: Some(0),
+        wake_tick: Some(48),
+        wake_kind: Some("parallel"),
+        rebound_wakes,
     }
 }
 
@@ -524,6 +583,7 @@ fn switch_with_transfer_component_chunk(
                     payload_bytes,
                     payload_checksum,
                     o3_runtime: None,
+                    o3_live_checkpoint: None,
                     o3_live_data_handoff: None,
                 }],
             }],
@@ -567,6 +627,7 @@ fn switch_with_colliding_latest_transfer() -> Rem6HostExecutionModeSwitchSummary
                             payload_bytes,
                             payload_checksum,
                             o3_runtime: None,
+                            o3_live_checkpoint: None,
                             o3_live_data_handoff: None,
                         }],
                     }

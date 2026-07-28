@@ -2434,7 +2434,7 @@ fn workload_replay_executes_planned_host_actions() {
     )));
     assert!(outcome.host_action_outcomes().iter().any(|event| matches!(
         event,
-        SystemActionOutcome::CheckpointRestored { tick, event, source, manifest }
+        SystemActionOutcome::CheckpointRestored { tick, event, source, manifest, .. }
             if *tick == 1
                 && event.get() == 10_003
                 && source.get() == 51

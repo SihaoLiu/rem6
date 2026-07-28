@@ -695,6 +695,7 @@ fn system_action_executor_checkpoints_and_restores_guest_fd_tables() {
             event: GuestEventId::new(2),
             source: GuestSourceId::new(7),
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(table.lock().unwrap().snapshot(), expected);

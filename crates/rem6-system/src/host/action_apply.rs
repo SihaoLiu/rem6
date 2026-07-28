@@ -1,6 +1,7 @@
 use rem6_checkpoint::CheckpointComponentId;
 use rem6_kernel::SchedulerCheckpointAccess;
 
+use crate::riscv_instruction_stats::PreparedRiscvRetiredInstructionProbeRestore;
 use crate::scheduler_checkpoint::{SchedulerCheckpointBankGuard, SchedulerCheckpointContext};
 
 use super::*;
@@ -162,6 +163,10 @@ impl SystemActionExecutor {
                         prefix: EXECUTION_MODE_SWITCH_STATE_TRANSFER_LABEL_PREFIX.to_string(),
                     });
                 }
+                let instruction_probe_snapshot = self
+                    .riscv_instruction_stats
+                    .as_ref()
+                    .map(|stats| stats.retired_instruction_probe_snapshot());
                 let mut staged_checkpoints = self.checkpoints.clone();
                 self.capture_attached_checkpoint_banks_into_with_scheduler(
                     &mut staged_checkpoints,
@@ -169,6 +174,7 @@ impl SystemActionExecutor {
                     scheduler_checkpoint,
                     scheduler_checkpoint_bank.as_deref(),
                     None,
+                    false,
                 )?;
                 self.capture_execution_modes_into(&mut staged_checkpoints)?;
                 let manifest = staged_checkpoints
@@ -177,6 +183,10 @@ impl SystemActionExecutor {
                 self.checkpoints = staged_checkpoints;
                 self.captured_manifests
                     .insert(manifest.label().to_string(), manifest.clone());
+                if let Some(snapshot) = instruction_probe_snapshot {
+                    self.riscv_instruction_probe_checkpoints
+                        .push((manifest.clone(), snapshot));
+                }
                 Ok(SystemActionOutcome::Checkpoint {
                     tick: record.tick(),
                     event: record.event(),
@@ -190,29 +200,37 @@ impl SystemActionExecutor {
                         label: label.clone(),
                     }
                 })?;
-                self.restore_checkpoint_manifest_with_scheduler(
+                let instruction_probe_restore =
+                    self.prepare_riscv_instruction_probes_for_manifest(&manifest)?;
+                let rebound_o3_wake_components = self.restore_checkpoint_manifest_with_scheduler(
                     &manifest,
                     scheduler_checkpoint,
                     scheduler_checkpoint_bank,
                 )?;
+                self.install_prepared_riscv_instruction_probe_restore(instruction_probe_restore);
                 Ok(SystemActionOutcome::CheckpointRestored {
                     tick: record.tick(),
                     event: record.event(),
                     source: record.source(),
                     manifest,
+                    rebound_o3_wake_components,
                 })
             }
             HostAction::RestoreCheckpoint { manifest } => {
-                self.restore_checkpoint_manifest_with_scheduler(
+                let instruction_probe_restore =
+                    self.prepare_riscv_instruction_probes_for_manifest(manifest)?;
+                let rebound_o3_wake_components = self.restore_checkpoint_manifest_with_scheduler(
                     manifest,
                     scheduler_checkpoint,
                     scheduler_checkpoint_bank,
                 )?;
+                self.install_prepared_riscv_instruction_probe_restore(instruction_probe_restore);
                 Ok(SystemActionOutcome::CheckpointRestored {
                     tick: record.tick(),
                     event: record.event(),
                     source: record.source(),
                     manifest: manifest.clone(),
+                    rebound_o3_wake_components,
                 })
             }
             HostAction::Stop { code } => Ok(SystemActionOutcome::Stop(StopRequest::new(
@@ -221,6 +239,37 @@ impl SystemActionExecutor {
                 record.source(),
                 *code,
             ))),
+        }
+    }
+
+    fn prepare_riscv_instruction_probes_for_manifest(
+        &self,
+        manifest: &rem6_checkpoint::CheckpointManifest,
+    ) -> Result<Option<PreparedRiscvRetiredInstructionProbeRestore>, SystemError> {
+        let (Some(instruction_stats), Some(snapshot)) = (
+            self.riscv_instruction_stats.as_ref(),
+            self.riscv_instruction_probe_checkpoints
+                .iter()
+                .rev()
+                .find(|(captured, _snapshot)| captured == manifest)
+                .map(|(_captured, snapshot)| snapshot),
+        ) else {
+            return Ok(None);
+        };
+        instruction_stats
+            .prepare_retired_instruction_probe_restore(snapshot)
+            .map(Some)
+            .map_err(SystemError::Stats)
+    }
+
+    fn install_prepared_riscv_instruction_probe_restore(
+        &self,
+        prepared: Option<PreparedRiscvRetiredInstructionProbeRestore>,
+    ) {
+        if let (Some(instruction_stats), Some(prepared)) =
+            (self.riscv_instruction_stats.as_ref(), prepared)
+        {
+            instruction_stats.install_prepared_retired_instruction_probe_restore(prepared);
         }
     }
 }
@@ -237,17 +286,22 @@ fn action_uses_scheduler_checkpoint(action: &HostAction) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::sync::{mpsc, Arc, Mutex};
     use std::time::Duration;
 
     use rem6_checkpoint::CheckpointState;
+    use rem6_cpu::CpuId;
     use rem6_isa_riscv::Register;
     use rem6_kernel::{
         PartitionId, PartitionSnapshot, PartitionedScheduler, ScheduledEventKind, SchedulerError,
         SchedulerSnapshot,
     };
     use rem6_memory::PartitionedMemoryStore;
-    use rem6_stats::StatsRegistry;
+    use rem6_stats::{
+        GlobalInstTrackerSnapshot, PcCountPair, ProbePointId, ProbeSnapshot, StatsRegistry,
+    };
+    use rem6_transport::{MemoryRoute, MemoryTrace, MemoryTransport, TargetOutcome};
 
     use crate::scheduler_checkpoint::{
         SchedulerCheckpointBank, SchedulerCheckpointOwnedEvent, SchedulerCheckpointPort,
@@ -255,7 +309,9 @@ mod tests {
     use crate::{
         GuestEventId, GuestSourceId, HostAction, MemoryStoreCheckpointBank,
         MemoryStoreCheckpointPort, RiscvCoreCheckpointBank, RiscvCoreCheckpointPort,
-        SchedulerCheckpointError,
+        RiscvInstructionStats, RiscvO3RuntimeStats, RiscvRetiredInstructionProbeSnapshot,
+        RiscvSystemRunDriver, RiscvTrapEventPort, SchedulerCheckpointError, SystemHostController,
+        SystemHostEventPort,
     };
 
     use super::*;
@@ -282,6 +338,478 @@ mod tests {
                 label: label.to_string(),
             },
         )
+    }
+
+    #[test]
+    fn checkpoint_restore_rewinds_shared_retired_instruction_probes() {
+        let cpu = CpuId::new(0);
+        let instruction_stats = RiscvInstructionStats::for_cpus([cpu])
+            .with_retired_inst_thresholds([2, 3])
+            .with_pc_count_targets([PcCountPair::new(0x8004, 1)]);
+        instruction_stats
+            .record_retired_instruction_probe(cpu, 10, 0x8000)
+            .unwrap();
+        let checkpoint_snapshot = instruction_stats.retired_instruction_probe_snapshot();
+        let mut executor =
+            SystemActionExecutor::with_checkpoint(StatsRegistry::new(), CheckpointRegistry::new());
+        executor.attach_riscv_instruction_stats(&instruction_stats);
+
+        let checkpoint = HostActionRecord::new(
+            10,
+            PartitionId::new(0),
+            PartitionId::new(0),
+            GuestEventId::new(1),
+            GuestSourceId::new(1),
+            HostAction::Checkpoint {
+                label: "instruction-probes".to_string(),
+            },
+        );
+        executor.apply(&checkpoint).unwrap();
+        instruction_stats
+            .record_retired_instruction_probe(cpu, 11, 0x8004)
+            .unwrap();
+        instruction_stats
+            .record_retired_instruction_probe(cpu, 12, 0x8008)
+            .unwrap();
+        let restore = HostActionRecord::new(
+            13,
+            PartitionId::new(0),
+            PartitionId::new(0),
+            GuestEventId::new(2),
+            GuestSourceId::new(1),
+            HostAction::RestoreCheckpointByLabel {
+                label: "instruction-probes".to_string(),
+            },
+        );
+
+        executor.apply(&restore).unwrap();
+
+        assert_eq!(
+            instruction_stats.retired_instruction_probe_snapshot(),
+            checkpoint_snapshot
+        );
+        instruction_stats
+            .record_retired_instruction_probe(cpu, 11, 0x8004)
+            .unwrap();
+        instruction_stats
+            .record_retired_instruction_probe(cpu, 12, 0x8008)
+            .unwrap();
+        assert_eq!(
+            instruction_stats
+                .retired_instruction_probe_snapshot()
+                .probes()
+                .events()
+                .len(),
+            6
+        );
+    }
+
+    #[test]
+    fn retained_same_label_manifest_restores_its_exact_instruction_probe_snapshot() {
+        let cpu = CpuId::new(0);
+        let instruction_stats = RiscvInstructionStats::for_cpus([cpu]);
+        let mut executor =
+            SystemActionExecutor::with_checkpoint(StatsRegistry::new(), CheckpointRegistry::new());
+        executor.attach_riscv_instruction_stats(&instruction_stats);
+        instruction_stats
+            .record_retired_instruction_probe(cpu, 10, 0x8000)
+            .unwrap();
+        let first = HostActionRecord::new(
+            10,
+            PartitionId::new(0),
+            PartitionId::new(0),
+            GuestEventId::new(1),
+            GuestSourceId::new(1),
+            HostAction::Checkpoint {
+                label: "same-label".to_string(),
+            },
+        );
+        let SystemActionOutcome::Checkpoint {
+            manifest: first_manifest,
+            ..
+        } = executor.apply(&first).unwrap()
+        else {
+            unreachable!()
+        };
+
+        instruction_stats
+            .record_retired_instruction_probe(cpu, 11, 0x8004)
+            .unwrap();
+        let second = HostActionRecord::new(
+            11,
+            PartitionId::new(0),
+            PartitionId::new(0),
+            GuestEventId::new(2),
+            GuestSourceId::new(1),
+            HostAction::Checkpoint {
+                label: "same-label".to_string(),
+            },
+        );
+        executor.apply(&second).unwrap();
+        instruction_stats
+            .record_retired_instruction_probe(cpu, 12, 0x8008)
+            .unwrap();
+
+        executor
+            .apply(&HostActionRecord::new(
+                13,
+                PartitionId::new(0),
+                PartitionId::new(0),
+                GuestEventId::new(3),
+                GuestSourceId::new(1),
+                HostAction::RestoreCheckpoint {
+                    manifest: first_manifest,
+                },
+            ))
+            .unwrap();
+
+        assert_eq!(
+            instruction_stats
+                .retired_instruction_probe_snapshot()
+                .probes()
+                .events()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn caller_supplied_same_label_manifest_does_not_restore_instruction_probes() {
+        let cpu = CpuId::new(0);
+        let instruction_stats = RiscvInstructionStats::for_cpus([cpu]);
+        let mut executor =
+            SystemActionExecutor::with_checkpoint(StatsRegistry::new(), CheckpointRegistry::new());
+        executor.attach_riscv_instruction_stats(&instruction_stats);
+        instruction_stats
+            .record_retired_instruction_probe(cpu, 10, 0x8000)
+            .unwrap();
+        executor.apply(&checkpoint_record("foreign-label")).unwrap();
+        instruction_stats
+            .record_retired_instruction_probe(cpu, 11, 0x8004)
+            .unwrap();
+
+        executor
+            .apply(&HostActionRecord::new(
+                12,
+                PartitionId::new(0),
+                PartitionId::new(0),
+                GuestEventId::new(2),
+                GuestSourceId::new(1),
+                HostAction::RestoreCheckpoint {
+                    manifest: CheckpointManifest::new("foreign-label", 99, Vec::new()),
+                },
+            ))
+            .unwrap();
+
+        assert_eq!(
+            instruction_stats
+                .retired_instruction_probe_snapshot()
+                .probes()
+                .events()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn instruction_probe_restore_is_prepared_before_architectural_commit() {
+        let cpu = CpuId::new(0);
+        let core = live_o3_support::core(0);
+        let component = CheckpointComponentId::new("cpu0").unwrap();
+        let instruction_stats = RiscvInstructionStats::for_cpus([cpu]);
+        let mut executor =
+            SystemActionExecutor::with_checkpoint(StatsRegistry::new(), CheckpointRegistry::new());
+        executor
+            .attach_riscv_checkpoint_bank(
+                RiscvCoreCheckpointBank::new([RiscvCoreCheckpointPort::new(
+                    component,
+                    core.clone(),
+                )])
+                .unwrap(),
+            )
+            .unwrap();
+        executor.attach_riscv_instruction_stats(&instruction_stats);
+        executor.apply(&checkpoint_record("atomic-probes")).unwrap();
+        core.write_register(Register::new(7).unwrap(), 0xcafe);
+        let probe_checkpoint = executor
+            .riscv_instruction_probe_checkpoints
+            .iter_mut()
+            .find(|(manifest, _snapshot)| manifest.label() == "atomic-probes")
+            .expect("atomic probe checkpoint");
+        probe_checkpoint.1 = RiscvRetiredInstructionProbeSnapshot::new(
+            ProbeSnapshot::with_cursors(
+                vec![(
+                    "cpu0".to_string(),
+                    "RetiredInsts".to_string(),
+                    ProbePointId::new(5),
+                )],
+                Vec::new(),
+                Vec::new(),
+                0,
+                0,
+                0,
+            ),
+            GlobalInstTrackerSnapshot::new(0, Vec::new()),
+            None,
+            BTreeMap::from([(cpu, ProbePointId::new(5))]),
+            BTreeMap::new(),
+        );
+        let restore = HostActionRecord::new(
+            1,
+            PartitionId::new(0),
+            PartitionId::new(0),
+            GuestEventId::new(2),
+            GuestSourceId::new(1),
+            HostAction::RestoreCheckpointByLabel {
+                label: "atomic-probes".to_string(),
+            },
+        );
+
+        assert!(matches!(
+            executor.apply(&restore),
+            Err(SystemError::Stats(_))
+        ));
+        assert_eq!(core.read_register(Register::new(7).unwrap()), 0xcafe);
+    }
+
+    #[test]
+    fn cloned_driver_and_controller_share_instruction_probe_restore_timeline() {
+        let cpu = CpuId::new(0);
+        let controller = Arc::new(Mutex::new(SystemHostController::new(
+            crate::HostEventPolicy,
+            StatsRegistry::new(),
+        )));
+        let trap_port = RiscvTrapEventPort::new(
+            SystemHostEventPort::with_controller(PartitionId::new(1), 2, Arc::clone(&controller))
+                .unwrap(),
+            GuestSourceId::new(1),
+        );
+        let driver = RiscvSystemRunDriver::with_instruction_stats(
+            trap_port,
+            RiscvInstructionStats::for_cpus([cpu]),
+        );
+        let cloned_driver = driver.clone();
+        let mut cloned_controller = controller.lock().unwrap().clone();
+        cloned_driver
+            .instruction_stats()
+            .unwrap()
+            .record_retired_instruction_probe(cpu, 10, 0x8000)
+            .unwrap();
+        cloned_controller
+            .executor_mut()
+            .apply(&checkpoint_record("cloned-probes"))
+            .unwrap();
+        driver
+            .instruction_stats()
+            .unwrap()
+            .record_retired_instruction_probe(cpu, 11, 0x8004)
+            .unwrap();
+
+        cloned_controller
+            .executor_mut()
+            .apply(&HostActionRecord::new(
+                12,
+                PartitionId::new(0),
+                PartitionId::new(0),
+                GuestEventId::new(2),
+                GuestSourceId::new(1),
+                HostAction::RestoreCheckpointByLabel {
+                    label: "cloned-probes".to_string(),
+                },
+            ))
+            .unwrap();
+
+        let expected = cloned_driver
+            .instruction_stats()
+            .unwrap()
+            .retired_instruction_probe_snapshot();
+        assert_eq!(expected.probes().events().len(), 1);
+        assert_eq!(
+            driver
+                .instruction_stats()
+                .unwrap()
+                .retired_instruction_probe_snapshot(),
+            expected
+        );
+    }
+
+    #[test]
+    fn live_o3_restore_syncs_issue_queue_occupancy_before_replay() {
+        let (_scheduler, seeded, mut executor, manifest) = live_o3_action_fixture();
+        let cpu = seeded.core.id();
+        let o3_stats =
+            RiscvO3RuntimeStats::register_for_cpus(executor.stats_mut(), [cpu], false).unwrap();
+        executor.attach_riscv_o3_runtime_stats(o3_stats);
+
+        executor
+            .apply(&HostActionRecord::new(
+                live_o3_support::LIVE_TICK + 1,
+                PartitionId::new(0),
+                PartitionId::new(0),
+                GuestEventId::new(2),
+                GuestSourceId::new(1),
+                HostAction::RestoreCheckpoint { manifest },
+            ))
+            .unwrap();
+
+        let sample = executor
+            .stats()
+            .snapshot(live_o3_support::LIVE_TICK + 1)
+            .samples()
+            .iter()
+            .find(|sample| {
+                sample.path() == "sim.host_actions.stats_dump.cpu0.o3.issue_queue.current_occupancy"
+            })
+            .cloned()
+            .expect("restored issue queue occupancy stat");
+        assert_eq!(sample.value(), 1);
+    }
+
+    #[test]
+    fn outstanding_fetch_mode_transfer_is_not_restorable_by_label() {
+        let mut scheduler = PartitionedScheduler::new(2).unwrap();
+        let mut transport = MemoryTransport::new();
+        let core = live_o3_support::core(0);
+        let route = transport
+            .add_route(
+                MemoryRoute::new(
+                    core.fetch_endpoint(),
+                    core.partition(),
+                    rem6_transport::TransportEndpointId::new("memory.ifetch").unwrap(),
+                    PartitionId::new(1),
+                    1,
+                    1,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(route, core.fetch_route());
+        core.issue_next_fetch(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            |_delivery, _context| TargetOutcome::NoResponse,
+        )
+        .unwrap();
+        assert!(core.has_pending_fetch());
+        let mut executor =
+            SystemActionExecutor::with_checkpoint(StatsRegistry::new(), CheckpointRegistry::new());
+        executor
+            .attach_riscv_checkpoint_bank(
+                RiscvCoreCheckpointBank::new([RiscvCoreCheckpointPort::new(
+                    CheckpointComponentId::new("cpu0").unwrap(),
+                    core,
+                )])
+                .unwrap(),
+            )
+            .unwrap();
+        let switch = executor
+            .apply(&HostActionRecord::new(
+                1,
+                PartitionId::new(0),
+                PartitionId::new(0),
+                GuestEventId::new(1),
+                GuestSourceId::new(1),
+                HostAction::SwitchExecutionMode {
+                    target: crate::ExecutionModeTarget::new("cpu0"),
+                    mode: crate::ExecutionMode::Timing,
+                },
+            ))
+            .unwrap();
+        let SystemActionOutcome::ExecutionModeSwitched {
+            state_transfer: Some(transfer),
+            ..
+        } = switch
+        else {
+            panic!("missing outstanding-fetch state transfer: {switch:?}")
+        };
+        let label = transfer.manifest_label().to_string();
+        let error = executor
+            .apply(&HostActionRecord::new(
+                2,
+                PartitionId::new(0),
+                PartitionId::new(0),
+                GuestEventId::new(2),
+                GuestSourceId::new(1),
+                HostAction::RestoreCheckpointByLabel {
+                    label: label.clone(),
+                },
+            ))
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            SystemError::MissingCheckpointManifest {
+                label: label.clone()
+            }
+        );
+        assert!(!transfer.restorable());
+        assert!(!transfer.live_data_handoff());
+    }
+
+    #[test]
+    fn restorable_mode_transfer_rewinds_retired_instruction_probes() {
+        let cpu = CpuId::new(0);
+        let core = live_o3_support::core(0);
+        let instruction_stats = RiscvInstructionStats::for_cpus([cpu]);
+        instruction_stats
+            .record_retired_instruction_probe(cpu, 10, 0x8000)
+            .unwrap();
+        let expected = instruction_stats.retired_instruction_probe_snapshot();
+        let mut executor =
+            SystemActionExecutor::with_checkpoint(StatsRegistry::new(), CheckpointRegistry::new());
+        executor
+            .attach_riscv_checkpoint_bank(
+                RiscvCoreCheckpointBank::new([RiscvCoreCheckpointPort::new(
+                    CheckpointComponentId::new("cpu0").unwrap(),
+                    core,
+                )])
+                .unwrap(),
+            )
+            .unwrap();
+        executor.attach_riscv_instruction_stats(&instruction_stats);
+        let switched = executor
+            .apply(&HostActionRecord::new(
+                10,
+                PartitionId::new(0),
+                PartitionId::new(0),
+                GuestEventId::new(1),
+                GuestSourceId::new(1),
+                HostAction::SwitchExecutionMode {
+                    target: crate::ExecutionModeTarget::new("cpu0"),
+                    mode: crate::ExecutionMode::Timing,
+                },
+            ))
+            .unwrap();
+        let SystemActionOutcome::ExecutionModeSwitched {
+            state_transfer: Some(transfer),
+            ..
+        } = switched
+        else {
+            panic!("missing restorable state transfer: {switched:?}")
+        };
+        assert!(transfer.restorable());
+        instruction_stats
+            .record_retired_instruction_probe(cpu, 11, 0x8004)
+            .unwrap();
+
+        executor
+            .apply(&HostActionRecord::new(
+                12,
+                PartitionId::new(0),
+                PartitionId::new(0),
+                GuestEventId::new(2),
+                GuestSourceId::new(1),
+                HostAction::RestoreCheckpointByLabel {
+                    label: transfer.manifest_label().to_string(),
+                },
+            ))
+            .unwrap();
+
+        assert_eq!(
+            instruction_stats.retired_instruction_probe_snapshot(),
+            expected
+        );
     }
 
     fn assert_action_holds_scheduler_while_waiting_on_memory(

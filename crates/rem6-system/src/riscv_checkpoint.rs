@@ -8,12 +8,12 @@ use rem6_cpu::{
     BranchPredictorCheckpointPayload, BranchPredictorError, CpuId,
     GShareBranchPredictorCheckpointPayload, GShareBranchPredictorError,
     InOrderPipelineCheckpointPayload, InOrderPipelineError, InOrderPipelineSnapshot,
-    MultiperspectivePerceptronCheckpointPayload, MultiperspectivePerceptronError, O3PipelineError,
-    O3RuntimeCheckpointPayload, O3RuntimeError, O3RuntimeSnapshot, O3RuntimeStats,
-    PreparedRiscvCoreRestore, RiscvCore, RiscvCoreCheckpointRestoreError,
-    RiscvCoreCheckpointRestoreInput, RiscvHartRunState, RiscvO3LiveCheckpointCapture,
-    RiscvO3LiveCheckpointError, RiscvO3LiveCheckpointPayload, RiscvO3LiveCheckpointWake,
-    RiscvO3LiveDataHandoffCapture, RiscvO3WritebackDebugState,
+    MultiperspectivePerceptronCheckpointPayload, MultiperspectivePerceptronError,
+    O3LiveIssueTelemetry, O3PipelineError, O3RuntimeCheckpointPayload, O3RuntimeError,
+    O3RuntimeSnapshot, O3RuntimeStats, PreparedRiscvCoreRestore, RiscvCore,
+    RiscvCoreCheckpointRestoreError, RiscvCoreCheckpointRestoreInput, RiscvHartRunState,
+    RiscvO3LiveCheckpointCapture, RiscvO3LiveCheckpointError, RiscvO3LiveCheckpointPayload,
+    RiscvO3LiveCheckpointWake, RiscvO3LiveDataHandoffCapture, RiscvO3WritebackDebugState,
     TageScLBranchPredictorCheckpointPayload, TageScLBranchPredictorError,
     TournamentBranchPredictorCheckpointPayload, TournamentBranchPredictorError,
     RISCV_O3_LIVE_CHECKPOINT_CHUNK, RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,
@@ -344,6 +344,18 @@ impl RiscvCoreCheckpointPort {
             }
         };
         Ok(self.capture_record_from_replay(projection.replay(), live))
+    }
+
+    fn capture_execution_mode_switch_record(
+        &self,
+    ) -> Result<RiscvCoreCheckpointRecord, CheckpointError> {
+        self.core.finalize_quiescent_o3_writeback_for_checkpoint();
+        if !self.core.data_access_lifecycle_is_quiescent() {
+            return Err(CheckpointError::ComponentNotQuiescent {
+                component: self.component.clone(),
+            });
+        }
+        Ok(self.capture_record())
     }
 
     fn write_record(
@@ -857,7 +869,13 @@ impl RiscvCoreCheckpointBank {
 
     pub(crate) fn o3_runtime_snapshots(
         &self,
-    ) -> Vec<(CpuId, O3RuntimeStats, O3RuntimeSnapshot, u64)> {
+    ) -> Vec<(
+        CpuId,
+        O3RuntimeStats,
+        O3LiveIssueTelemetry,
+        O3RuntimeSnapshot,
+        u64,
+    )> {
         self.ports
             .values()
             .map(|port| {
@@ -866,6 +884,7 @@ impl RiscvCoreCheckpointBank {
                 (
                     core.id(),
                     runtime_payload.stats(),
+                    core.o3_runtime_live_issue_telemetry(),
                     runtime_payload.snapshot().clone(),
                     core.in_order_pipeline_snapshot().cycle(),
                 )
@@ -969,6 +988,37 @@ impl RiscvCoreCheckpointBank {
             port.write_record(registry, record)?;
         }
         Ok(captured.into_iter().map(|(_, record)| record).collect())
+    }
+
+    pub(crate) fn capture_all_for_execution_mode_switch_into(
+        &self,
+        registry: &mut CheckpointRegistry,
+        tick: u64,
+    ) -> Result<(Vec<RiscvCoreCheckpointRecord>, bool), CheckpointError> {
+        let captured = self
+            .ports
+            .values()
+            .map(|port| match port.capture_checked_record(Some(tick)) {
+                Ok(record) => Ok((port, record, true)),
+                Err(CheckpointError::ComponentNotQuiescent { .. }) => port
+                    .capture_execution_mode_switch_record()
+                    .map(|record| (port, record, false)),
+                Err(error) => Err(error),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for (port, record, _restorable) in &captured {
+            port.write_record(registry, record)?;
+        }
+        let restorable = captured
+            .iter()
+            .all(|(_port, _record, restorable)| *restorable);
+        Ok((
+            captured
+                .into_iter()
+                .map(|(_port, record, _restorable)| record)
+                .collect(),
+            restorable,
+        ))
     }
 
     /// On success, replaces every RISC-V component in `registry` with the

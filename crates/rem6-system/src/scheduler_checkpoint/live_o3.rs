@@ -43,8 +43,8 @@ impl SchedulerCheckpointContext<'_> {
     pub(crate) fn rebind_live_o3_scheduler_restores(
         &mut self,
         restores: &[RiscvO3LiveSchedulerRestore],
-    ) {
-        rebind_live_o3_for_scheduler(&mut self.scheduler, restores);
+    ) -> BTreeSet<CheckpointComponentId> {
+        rebind_live_o3_for_scheduler(&mut self.scheduler, restores)
     }
 }
 
@@ -175,8 +175,9 @@ pub(super) fn validate_live_o3_for_scheduler(
 pub(super) fn rebind_live_o3_for_scheduler(
     scheduler: &mut SchedulerCheckpointAccess<'_>,
     restores: &[RiscvO3LiveSchedulerRestore],
-) {
+) -> BTreeSet<CheckpointComponentId> {
     let scheduler_raw = scheduler.instance_id().checkpoint_raw();
+    let mut rebound = BTreeSet::new();
     for restore in restores
         .iter()
         .filter(|restore| restore.wake().scheduler_instance_raw == scheduler_raw)
@@ -193,5 +194,7 @@ pub(super) fn rebind_live_o3_for_scheduler(
         );
         schedule_o3_writeback_wake(restore.core(), scheduler, wake.tick, wake.kind)
             .expect("validated O3 wake schedule succeeds");
+        rebound.insert(restore.component().clone());
     }
+    rebound
 }

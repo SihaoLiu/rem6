@@ -6,6 +6,7 @@ mod execution_mode_transfer;
 mod stats_sync;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use rem6_checkpoint::{
     CheckpointComponentId, CheckpointError, CheckpointManifest, CheckpointRegistry,
@@ -26,7 +27,8 @@ use crate::{
     MsiBankCheckpointBank, PciHostCheckpointBank, PciHostCheckpointPort,
     PciLegacyInterruptRouterCheckpointBank, PciLegacyInterruptRouterCheckpointPort,
     Pl011UartCheckpointBank, Pl031CheckpointBank, PlicCheckpointBank, ReadfileCheckpointBank,
-    RiscvCoreCheckpointBank, RiscvO3RuntimeStats, RtcCheckpointBank, SchedulerCheckpointBank,
+    RiscvCoreCheckpointBank, RiscvInstructionStats, RiscvO3RuntimeStats,
+    RiscvRetiredInstructionProbeSnapshot, RtcCheckpointBank, SchedulerCheckpointBank,
     SchedulerCheckpointError, SinicFifoCheckpointBank, SinicFifoCheckpointPort,
     SinicRegisterCheckpointBank, SinicRegisterCheckpointPort, Sp804CheckpointBank,
     Sp805CheckpointBank, StopRequest, StorageImageCheckpointBank, StorageImageCheckpointPort,
@@ -285,6 +287,7 @@ pub enum SystemActionOutcome {
         event: GuestEventId,
         source: GuestSourceId,
         manifest: CheckpointManifest,
+        rebound_o3_wake_components: BTreeSet<CheckpointComponentId>,
     },
     ExecutionModeSwitched {
         tick: Tick,
@@ -305,6 +308,9 @@ pub struct SystemActionExecutor {
     stats: StatsRegistry,
     checkpoints: CheckpointRegistry,
     captured_manifests: BTreeMap<String, CheckpointManifest>,
+    riscv_instruction_stats: Option<Arc<RiscvInstructionStats>>,
+    riscv_instruction_probe_checkpoints:
+        Vec<(CheckpointManifest, RiscvRetiredInstructionProbeSnapshot)>,
     riscv_o3_runtime_stats: Option<RiscvO3RuntimeStats>,
     pre_stats_sync: Option<StatsSyncHook>,
     accelerator_checkpoints: Option<AcceleratorCheckpointBank>,
@@ -383,6 +389,8 @@ impl SystemActionExecutor {
             stats,
             checkpoints,
             captured_manifests: BTreeMap::new(),
+            riscv_instruction_stats: None,
+            riscv_instruction_probe_checkpoints: Vec::new(),
             riscv_o3_runtime_stats: None,
             pre_stats_sync: None,
             accelerator_checkpoints: None,
@@ -1079,7 +1087,7 @@ impl SystemActionExecutor {
             &mut crate::scheduler_checkpoint::SchedulerCheckpointContext<'_>,
         >,
         mut scheduler_checkpoint_bank: Option<&mut SchedulerCheckpointBankGuard<'_>>,
-    ) -> Result<(), SystemError> {
+    ) -> Result<BTreeSet<CheckpointComponentId>, SystemError> {
         let mut staged_checkpoints = self.checkpoints.clone();
         if manifest_has_execution_mode_checkpoint(manifest) {
             let component = execution_mode_checkpoint_component();
@@ -1345,7 +1353,7 @@ impl SystemActionExecutor {
             &mut crate::scheduler_checkpoint::SchedulerCheckpointContext<'_>,
         >,
         mut scheduler_checkpoint_bank: Option<&mut SchedulerCheckpointBankGuard<'_>>,
-    ) -> Result<(), SystemError> {
+    ) -> Result<BTreeSet<CheckpointComponentId>, SystemError> {
         let owned_scheduler_events = self.owned_scheduler_checkpoint_events();
         let live_o3_restores = self.live_o3_scheduler_restores(&self.checkpoints)?;
         let borrowed_scheduler_restore_mode = scheduler_checkpoint
@@ -1416,7 +1424,7 @@ impl SystemActionExecutor {
             }
         }
         self.forget_pipeline_wakes_after_scheduler_restore(borrowed_scheduler_restore_mode);
-        Self::rebind_live_o3_scheduler_restores(
+        let rebound_o3_wake_components = Self::rebind_live_o3_scheduler_restores(
             &live_o3_restores,
             borrowed_scheduler_restore_mode,
             scheduler_checkpoint.as_deref_mut(),
@@ -1567,7 +1575,7 @@ impl SystemActionExecutor {
                 .map_err(SystemError::VirtioPciDeviceConfigCheckpoint)?;
         }
         self.sync_riscv_o3_runtime_stats_after_checkpoint_restore()?;
-        Ok(())
+        Ok(rebound_o3_wake_components)
     }
 
     fn sync_riscv_o3_runtime_stats_after_checkpoint_restore(&mut self) -> Result<(), SystemError> {
@@ -1578,7 +1586,7 @@ impl SystemActionExecutor {
             return Ok(());
         };
 
-        for (cpu, snapshot, runtime_snapshot, in_order_pipeline_cycles) in
+        for (cpu, snapshot, live_issue, runtime_snapshot, in_order_pipeline_cycles) in
             riscv_checkpoints.o3_runtime_snapshots()
         {
             o3_runtime_stats
@@ -1586,7 +1594,7 @@ impl SystemActionExecutor {
                     &mut self.stats,
                     cpu,
                     snapshot,
-                    rem6_cpu::O3LiveIssueTelemetry::default(),
+                    live_issue,
                     &runtime_snapshot,
                     in_order_pipeline_cycles,
                 )

@@ -54,6 +54,7 @@ fn chunk(name: &str, payload_bytes: u64) -> Rem6HostCheckpointChunkSummary {
         payload_bytes,
         payload_checksum: payload_bytes,
         o3_runtime: None,
+        o3_live_checkpoint: None,
         o3_live_data_handoff: None,
     }
 }

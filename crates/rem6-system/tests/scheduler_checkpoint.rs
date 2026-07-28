@@ -104,6 +104,7 @@ fn host_checkpoint_refreshes_and_restores_scheduler_state() {
             event: GuestEventId::new(41),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     let mut scheduler = scheduler.lock().unwrap();

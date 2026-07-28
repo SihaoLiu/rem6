@@ -49,6 +49,7 @@ struct Rem6O3CheckpointRestoreChunkTotals {
     payload_bytes: u64,
     payload_checksum_accumulator: u64,
     o3_runtime_numeric: BTreeMap<String, Rem6HostO3RuntimeCheckpointStatValue>,
+    o3_live_checkpoint_numeric: BTreeMap<String, Rem6HostO3RuntimeCheckpointStatValue>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -136,14 +137,21 @@ impl Rem6O3CheckpointRestoreChunkTotals {
         self.payload_checksum_accumulator = self
             .payload_checksum_accumulator
             .wrapping_add(chunk.payload_checksum);
-        let Some(o3_runtime) = &chunk.o3_runtime else {
-            return;
-        };
-        for (field, value) in o3_runtime.numeric_stat_fields() {
-            self.o3_runtime_numeric
-                .entry(field.to_string())
-                .and_modify(|current| current.merge_restore_value(value))
-                .or_insert(value);
+        if let Some(o3_runtime) = &chunk.o3_runtime {
+            for (field, value) in o3_runtime.numeric_stat_fields() {
+                self.o3_runtime_numeric
+                    .entry(field.to_string())
+                    .and_modify(|current| current.merge_restore_value(value))
+                    .or_insert(value);
+            }
+        }
+        if let Some(o3_live_checkpoint) = &chunk.o3_live_checkpoint {
+            for (field, value) in o3_live_checkpoint.numeric_stat_fields() {
+                self.o3_live_checkpoint_numeric
+                    .entry(field.to_string())
+                    .and_modify(|current| current.merge_restore_value(value))
+                    .or_insert(value);
+            }
         }
     }
 
@@ -155,6 +163,12 @@ impl Rem6O3CheckpointRestoreChunkTotals {
             .max(other.payload_checksum_accumulator);
         for (field, value) in other.o3_runtime_numeric {
             self.o3_runtime_numeric
+                .entry(field)
+                .and_modify(|current| current.merge_trace_duplicate(value))
+                .or_insert(value);
+        }
+        for (field, value) in other.o3_live_checkpoint_numeric {
+            self.o3_live_checkpoint_numeric
                 .entry(field)
                 .and_modify(|current| current.merge_trace_duplicate(value))
                 .or_insert(value);
@@ -522,6 +536,13 @@ fn push_chunk_stats(
             value.value(),
         ));
     }
+    for (field, value) in chunk_stats.o3_live_checkpoint_numeric {
+        stats.push(Rem6O3ExecutionModeAuthorityStat::with_unit(
+            format!("{prefix}.o3_live_checkpoint.{field}"),
+            value.unit(),
+            value.value(),
+        ));
+    }
 }
 
 fn execution_mode_authority_to_json(
@@ -654,6 +675,7 @@ mod tests {
                     payload_bytes: 8,
                     payload_checksum: 11,
                     o3_runtime: None,
+                    o3_live_checkpoint: None,
                     o3_live_data_handoff: None,
                 }],
             }],

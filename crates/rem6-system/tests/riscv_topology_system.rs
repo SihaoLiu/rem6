@@ -938,6 +938,7 @@ fn topology_host_controller_checkpoints_attached_uart() {
             event: GuestEventId::new(191),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(uart.snapshot().tx_bytes(), &[UartTxByte::new(10, b'O')]);
@@ -1062,6 +1063,7 @@ fn topology_host_controller_checkpoints_attached_scheduler() {
             event: GuestEventId::new(195),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(system.scheduler().snapshot(), scheduler_snapshot);
@@ -1184,6 +1186,7 @@ fn topology_host_controller_checkpoints_attached_timer() {
             event: GuestEventId::new(193),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(timer.snapshot(), captured);
@@ -1288,6 +1291,7 @@ fn topology_host_controller_checkpoints_attached_clint() {
             event: GuestEventId::new(195),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(clint.snapshot(), captured);
@@ -1405,6 +1409,7 @@ fn topology_host_controller_checkpoints_attached_interrupt_controller() {
             event: GuestEventId::new(195),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(controller.lock().unwrap().snapshot(29), captured);
@@ -1524,6 +1529,7 @@ fn topology_host_controller_checkpoints_attached_plic() {
             event: GuestEventId::new(197),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(plic.snapshot(), captured);
@@ -1779,6 +1785,7 @@ fn topology_host_controller_checkpoints_attached_dram_memory() {
             event: GuestEventId::new(181),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(core.pc(), Address::new(0x8004));

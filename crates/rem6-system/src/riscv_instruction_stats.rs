@@ -134,6 +134,10 @@ pub struct RiscvInstructionStats {
     retired_instruction_probes: Arc<Mutex<RiscvRetiredInstructionProbeRecorder>>,
 }
 
+pub(crate) struct PreparedRiscvRetiredInstructionProbeRestore {
+    recorder: RiscvRetiredInstructionProbeRecorder,
+}
+
 impl Clone for RiscvInstructionStats {
     fn clone(&self) -> Self {
         let cpus = self.cpus.clone();
@@ -167,6 +171,14 @@ impl RiscvInstructionStats {
             retired_instruction_probes: Arc::new(Mutex::new(
                 RiscvRetiredInstructionProbeRecorder::new(cpus, thresholds, pc_targets),
             )),
+        }
+    }
+
+    pub(crate) fn shared(&self) -> Self {
+        Self {
+            cpus: self.cpus.clone(),
+            committed: self.committed.clone(),
+            retired_instruction_probes: Arc::clone(&self.retired_instruction_probes),
         }
     }
 
@@ -258,6 +270,29 @@ impl RiscvInstructionStats {
             .lock()
             .expect("retired instruction probe recorder lock")
             .snapshot()
+    }
+
+    pub(crate) fn prepare_retired_instruction_probe_restore(
+        &self,
+        snapshot: &RiscvRetiredInstructionProbeSnapshot,
+    ) -> Result<PreparedRiscvRetiredInstructionProbeRestore, StatsError> {
+        let mut recorder = self
+            .retired_instruction_probes
+            .lock()
+            .expect("retired instruction probe recorder lock")
+            .clone();
+        recorder.restore(snapshot)?;
+        Ok(PreparedRiscvRetiredInstructionProbeRestore { recorder })
+    }
+
+    pub(crate) fn install_prepared_retired_instruction_probe_restore(
+        &self,
+        prepared: PreparedRiscvRetiredInstructionProbeRestore,
+    ) {
+        *self
+            .retired_instruction_probes
+            .lock()
+            .expect("retired instruction probe recorder lock") = prepared.recorder;
     }
 }
 
@@ -383,11 +418,87 @@ impl RiscvRetiredInstructionProbeRecorder {
         )
     }
 
+    fn restore(
+        &mut self,
+        snapshot: &RiscvRetiredInstructionProbeSnapshot,
+    ) -> Result<(), StatsError> {
+        let probes = ProbeRegistry::from_snapshot(snapshot.probes())?;
+        let global = GlobalInstTracker::from_snapshot(snapshot.tracker())?;
+        let pc_manager = snapshot
+            .pc_count()
+            .map(PcCountTrackerManager::from_snapshot)
+            .transpose()?;
+
+        debug_assert_eq!(
+            self.local.keys().copied().collect::<BTreeSet<_>>(),
+            snapshot.points().keys().copied().collect::<BTreeSet<_>>()
+        );
+        debug_assert_eq!(self.pc_tracker.is_some(), pc_manager.is_some());
+        self.probes = probes;
+        self.global = global;
+        self.pc_manager = pc_manager;
+        self.points = snapshot.points().clone();
+        self.pc_points = snapshot.retired_pc_points().clone();
+        Ok(())
+    }
+
     fn thresholds(&self) -> &[u64] {
         &self.thresholds
     }
 
     fn pc_targets(&self) -> &[PcCountPair] {
         &self.pc_targets
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restoring_retired_instruction_probes_rewinds_post_checkpoint_events() {
+        let cpu = CpuId::new(0);
+        let stats = RiscvInstructionStats::for_cpus([cpu])
+            .with_retired_inst_thresholds([2, 3])
+            .with_pc_count_targets([PcCountPair::new(0x8004, 1)]);
+        stats
+            .record_retired_instruction_probe(cpu, 10, 0x8000)
+            .unwrap();
+        let checkpoint = stats.retired_instruction_probe_snapshot();
+
+        stats
+            .record_retired_instruction_probe(cpu, 11, 0x8004)
+            .unwrap();
+        stats
+            .record_retired_instruction_probe(cpu, 12, 0x8008)
+            .unwrap();
+        let prepared = stats
+            .prepare_retired_instruction_probe_restore(&checkpoint)
+            .unwrap();
+        stats.install_prepared_retired_instruction_probe_restore(prepared);
+        stats
+            .record_retired_instruction_probe(cpu, 11, 0x8004)
+            .unwrap();
+        stats
+            .record_retired_instruction_probe(cpu, 12, 0x8008)
+            .unwrap();
+
+        let expected = RiscvInstructionStats::for_cpus([cpu])
+            .with_retired_inst_thresholds([2, 3])
+            .with_pc_count_targets([PcCountPair::new(0x8004, 1)]);
+        expected
+            .record_retired_instruction_probe(cpu, 10, 0x8000)
+            .unwrap();
+        expected
+            .record_retired_instruction_probe(cpu, 11, 0x8004)
+            .unwrap();
+        expected
+            .record_retired_instruction_probe(cpu, 12, 0x8008)
+            .unwrap();
+
+        assert_eq!(
+            stats.retired_instruction_probe_snapshot(),
+            expected.retired_instruction_probe_snapshot()
+        );
     }
 }

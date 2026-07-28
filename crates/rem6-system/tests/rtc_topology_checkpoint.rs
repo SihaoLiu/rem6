@@ -517,6 +517,7 @@ fn topology_host_controller_checkpoints_attached_rtc() {
             event: GuestEventId::new(199),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(rtc.snapshot(), captured);
@@ -617,6 +618,7 @@ fn topology_host_controller_checkpoints_attached_pl031() {
             event: GuestEventId::new(201),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(rtc.snapshot(), captured);
@@ -718,6 +720,7 @@ fn topology_host_controller_checkpoints_attached_sp804() {
             event: GuestEventId::new(203),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(timer.snapshot(), captured);
@@ -819,6 +822,7 @@ fn topology_host_controller_checkpoints_attached_sp805() {
             event: GuestEventId::new(207),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(watchdog.snapshot(), captured);
@@ -919,6 +923,7 @@ fn topology_host_controller_checkpoints_attached_cpu_local_timer() {
             event: GuestEventId::new(209),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(timer.snapshot(), captured);
@@ -1019,6 +1024,7 @@ fn topology_host_controller_checkpoints_attached_pl011() {
             event: GuestEventId::new(205),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(uart.snapshot(), captured);

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::MutexGuard;
 
 use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
@@ -204,11 +204,13 @@ impl SchedulerCheckpointBankGuard<'_> {
     pub(crate) fn rebind_live_o3_scheduler_restores(
         &mut self,
         restores: &[RiscvO3LiveSchedulerRestore],
-    ) {
+    ) -> BTreeSet<CheckpointComponentId> {
+        let mut rebound = BTreeSet::new();
         for locked in &mut self.ports {
             let mut scheduler = locked.scheduler.checkpoint_access();
-            rebind_live_o3_for_scheduler(&mut scheduler, restores);
+            rebound.extend(rebind_live_o3_for_scheduler(&mut scheduler, restores));
         }
+        rebound
     }
 
     fn snapshots(&self) -> BTreeMap<CheckpointComponentId, SchedulerCheckpointSourceSnapshot> {

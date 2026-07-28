@@ -391,6 +391,7 @@ fn system_action_executor_checkpoints_and_restores_guest_wait_queues() {
             event: GuestEventId::new(2),
             source: GuestSourceId::new(7),
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(queue.lock().unwrap().snapshot(), expected);

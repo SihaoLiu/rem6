@@ -1,4 +1,5 @@
 use rem6_checkpoint::CheckpointComponentId;
+use std::sync::Arc;
 
 use crate::{
     AcceleratorCheckpointBank, ClintCheckpointBank, CpuLocalTimerCheckpointBank,
@@ -7,7 +8,7 @@ use crate::{
     InterruptControllerCheckpointBank, MemoryStoreCheckpointBank, MsiBankCheckpointBank,
     PciHostCheckpointBank, PciLegacyInterruptRouterCheckpointBank, Pl011UartCheckpointBank,
     Pl031CheckpointBank, PlicCheckpointBank, ReadfileCheckpointBank, RiscvCoreCheckpointBank,
-    RtcCheckpointBank, SchedulerCheckpointBank, SinicFifoCheckpointBank,
+    RiscvInstructionStats, RtcCheckpointBank, SchedulerCheckpointBank, SinicFifoCheckpointBank,
     SinicRegisterCheckpointBank, Sp804CheckpointBank, Sp805CheckpointBank,
     StorageImageCheckpointBank, TimerCheckpointBank, UartCheckpointBank,
     VirtioPciCommonCheckpointBank, VirtioPciDeviceConfigCheckpointBank, VirtioPciIsrCheckpointBank,
@@ -35,6 +36,13 @@ impl SystemActionExecutor {
 
     pub const fn scheduler_checkpoint_bank(&self) -> Option<&SchedulerCheckpointBank> {
         self.scheduler_checkpoints.as_ref()
+    }
+
+    pub(crate) fn attach_riscv_instruction_stats(
+        &mut self,
+        instruction_stats: &RiscvInstructionStats,
+    ) {
+        self.riscv_instruction_stats = Some(Arc::new(instruction_stats.shared()));
     }
 
     pub const fn accelerator_checkpoint_bank(&self) -> Option<&AcceleratorCheckpointBank> {

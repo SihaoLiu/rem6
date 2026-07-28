@@ -213,6 +213,7 @@ fn system_action_executor_checkpoints_and_restores_storage_images() {
             event: GuestEventId::new(20),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(raw.snapshot(), expected_raw);
@@ -441,6 +442,7 @@ fn system_action_executor_checkpoints_and_restores_ide_controllers() {
             event: GuestEventId::new(25),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(controller.lock().unwrap().snapshot(), expected);
@@ -732,6 +734,7 @@ fn system_action_executor_checkpoints_and_restores_live_cpu_and_memory_together(
             event: GuestEventId::new(12),
             source,
             manifest,
+            rebound_o3_wake_components: Default::default(),
         }
     );
     assert_eq!(core.pc(), Address::new(0x8040));

@@ -41,12 +41,18 @@ fn chunk_to_json(chunk: &Rem6HostCheckpointChunkSummary) -> String {
         .as_ref()
         .map(|summary| format!(",\"o3_live_data_handoff\":{}", summary.to_json()))
         .unwrap_or_default();
+    let o3_live_checkpoint = chunk
+        .o3_live_checkpoint
+        .as_ref()
+        .map(|summary| format!(",\"o3_live_checkpoint\":{}", summary.to_json()))
+        .unwrap_or_default();
     format!(
-        "{{\"name\":\"{}\",\"payload_bytes\":{},\"payload_checksum\":\"0x{:016x}\"{}{}}}",
+        "{{\"name\":\"{}\",\"payload_bytes\":{},\"payload_checksum\":\"0x{:016x}\"{}{}{}}}",
         json_escape(&chunk.name),
         chunk.payload_bytes,
         chunk.payload_checksum,
         o3_runtime,
+        o3_live_checkpoint,
         o3_live_data_handoff,
     )
 }

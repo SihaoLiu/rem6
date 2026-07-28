@@ -726,6 +726,7 @@ fn host_checkpoint_captures_and_restores_heterogeneous_devices() {
             event: GuestEventId::new(301),
             source,
             manifest: manifest.clone(),
+            rebound_o3_wake_components: Default::default(),
         },
     );
     assert_eq!(accelerator.snapshot(), accelerator_snapshot);
