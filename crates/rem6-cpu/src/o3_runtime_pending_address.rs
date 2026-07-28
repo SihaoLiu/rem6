@@ -27,7 +27,8 @@ pub(super) struct O3PendingDataAddress {
     pub(super) producer_register: Register,
     pub(super) producer_sequence: u64,
     pub(super) root_head: O3PendingDataAddressRootHead,
-    pub(super) destination: O3RenameMapEntry,
+    pub(super) destination: Option<O3RenameMapEntry>,
+    pub(super) lsq_kind: O3LoadStoreQueueKind,
     pub(super) expected_lsq_bytes: u32,
     pub(super) published_producer_ready_tick: Option<u64>,
     pub(super) requested_wake_tick: Option<u64>,
@@ -49,6 +50,12 @@ impl O3PendingDataAddress {
         self.sequence
     }
 
+    pub(super) fn destination_is_distinct_from(&self, other: &Self) -> bool {
+        self.destination
+            .zip(other.destination)
+            .is_none_or(|(older, younger)| older.architectural() != younger.architectural())
+    }
+
     pub(super) fn is_consistent_with(&self, runtime: &O3RuntimeState) -> bool {
         self.root_head.sequence <= self.producer_sequence
             && self.producer_sequence < self.sequence
@@ -58,20 +65,21 @@ impl O3PendingDataAddress {
             && !(self.materialized.is_some() && self.requested_wake_tick.is_some())
             && runtime.snapshot.reorder_buffer.iter().any(|entry| {
                 entry.sequence() == self.sequence
-                    && entry.destination() == Some(self.destination.physical())
+                    && entry.destination() == self.destination.map(O3RenameMapEntry::physical)
                     && entry.rename_destination()
-                        == Some((
-                            self.destination.register_class(),
-                            self.destination.architectural(),
-                        ))
+                        == self.destination.map(|destination| {
+                            (destination.register_class(), destination.architectural())
+                        })
             })
-            && runtime
-                .snapshot_with_live_rename_map()
-                .rename_map()
-                .contains(&self.destination)
+            && self.destination.is_none_or(|destination| {
+                runtime
+                    .snapshot_with_live_rename_map()
+                    .rename_map()
+                    .contains(&destination)
+            })
             && runtime.snapshot.load_store_queue.iter().any(|entry| {
                 entry.sequence() == self.sequence
-                    && entry.kind() == O3LoadStoreQueueKind::Load
+                    && entry.kind() == self.lsq_kind
                     && entry.address().is_none()
                     && entry.bytes() == self.expected_lsq_bytes
             })
@@ -90,23 +98,54 @@ impl O3PendingDataAddress {
         let Some(issue_tick) = self.selected_issue_tick else {
             return false;
         };
-        let RiscvInstruction::Load {
-            rd,
-            rs1,
-            width: MemoryWidth::Doubleword,
-            ..
-        } = self.decoded.instruction()
-        else {
-            return false;
-        };
-        let Some(MemoryAccessKind::Load {
-            rd: access_rd,
-            address,
-            width: MemoryWidth::Doubleword,
-            ..
-        }) = execution.execution().memory_access()
-        else {
-            return false;
+        let (address, shape_matches) = match (
+            self.decoded.instruction(),
+            execution.execution().memory_access(),
+        ) {
+            (
+                RiscvInstruction::Load {
+                    rd,
+                    rs1,
+                    width: MemoryWidth::Doubleword,
+                    ..
+                },
+                Some(MemoryAccessKind::Load {
+                    rd: access_rd,
+                    address,
+                    width: MemoryWidth::Doubleword,
+                    ..
+                }),
+            ) => (
+                *address,
+                self.lsq_kind == O3LoadStoreQueueKind::Load
+                    && self.producer_register == rs1
+                    && self.destination.is_some_and(|destination| {
+                        destination.register_class() == O3RegisterClass::Integer
+                            && destination.architectural() == u32::from(rd.index())
+                    })
+                    && *access_rd == rd,
+            ),
+            (
+                RiscvInstruction::Store {
+                    rs1,
+                    rs2,
+                    width: MemoryWidth::Doubleword,
+                    ..
+                },
+                Some(MemoryAccessKind::Store {
+                    address,
+                    width: MemoryWidth::Doubleword,
+                    ..
+                }),
+            ) => (
+                *address,
+                self.lsq_kind == O3LoadStoreQueueKind::Store
+                    && self.producer_register == rs1
+                    && !rs2.is_zero()
+                    && rs1 != rs2
+                    && self.destination.is_none(),
+            ),
+            _ => return false,
         };
         let Ok(range) = AddressRange::new(physical_address, size) else {
             return false;
@@ -114,12 +153,9 @@ impl O3PendingDataAddress {
         self.fetch.request_id() == fetch_request
             && self.fetch.pc() == execution.fetch().pc()
             && self.decoded.instruction() == execution.instruction()
-            && self.producer_register == rs1
-            && self.destination.register_class() == O3RegisterClass::Integer
-            && self.destination.architectural() == u32::from(rd.index())
-            && *access_rd == rd
+            && shape_matches
             && execution.execution().memory_access() == Some(access)
-            && physical_address.get() == *address
+            && physical_address.get() == address
             && size.bytes() == u64::from(self.expected_lsq_bytes)
             && request_tick >= issue_tick
             && (!self.root_head.atomic_head || !self.root_head.range.overlaps(range))
@@ -236,23 +272,31 @@ impl O3RuntimeState {
         let valid_lsq = pending.expected_lsq_bytes == PENDING_DATA_ADDRESS_LSQ_BYTES
             && self.snapshot.load_store_queue.iter().any(|entry| {
                 entry.sequence() == pending.sequence
-                    && entry.kind() == O3LoadStoreQueueKind::Load
+                    && entry.kind() == pending.lsq_kind
                     && entry.address().is_none()
                     && entry.bytes() == pending.expected_lsq_bytes
             });
-        let expected_destination = u32::from(match execution.memory_access() {
+        let (expected_destination, expected_lsq_kind) = match execution.memory_access() {
             Some(MemoryAccessKind::Load {
                 rd,
                 width: MemoryWidth::Doubleword,
                 ..
-            }) if !rd.is_zero() => rd.index(),
+            }) if !rd.is_zero() => (Some(u32::from(rd.index())), O3LoadStoreQueueKind::Load),
+            Some(MemoryAccessKind::Store {
+                width: MemoryWidth::Doubleword,
+                ..
+            }) => (None, O3LoadStoreQueueKind::Store),
             _ => return Ok(false),
-        });
+        };
         if sequence != pending.sequence
             || candidate.instruction() != pending.decoded.instruction()
-            || candidate.pending_data_address_destination() != Some(pending.destination)
-            || pending.destination.register_class() != O3RegisterClass::Integer
-            || pending.destination.architectural() != expected_destination
+            || candidate.pending_data_address_destination() != pending.destination
+            || pending.lsq_kind != expected_lsq_kind
+            || pending
+                .destination
+                .map(|destination| (destination.register_class(), destination.architectural()))
+                != expected_destination
+                    .map(|architectural| (O3RegisterClass::Integer, architectural))
             || pending.consumed_requests != consumed_requests
             || !valid_producer
             || !valid_lsq
@@ -300,9 +344,11 @@ impl O3RuntimeState {
             .find_sequence(pending.producer_sequence)
             .is_some_and(|producer| {
                 producer.sequence < pending.sequence
-                    && producer.destination.register_class() == O3RegisterClass::Integer
-                    && producer.destination.architectural()
-                        == u32::from(pending.producer_register.index())
+                    && producer.destination.is_some_and(|destination| {
+                        destination.register_class() == O3RegisterClass::Integer
+                            && destination.architectural()
+                                == u32::from(pending.producer_register.index())
+                    })
                     && producer.root_head == pending.root_head
             })
         {

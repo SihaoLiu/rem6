@@ -107,13 +107,14 @@ impl O3PendingDataAddresses {
         self.rows.len() <= O3_PENDING_DATA_ADDRESS_CAPACITY
             && self.iter().all(|row| row.is_consistent_with(runtime))
             && self.iter().enumerate().all(|(index, row)| {
-                self.rows[..index].iter().all(|older| {
-                    older.destination.architectural() != row.destination.architectural()
-                })
+                self.rows[..index]
+                    .iter()
+                    .all(|older| older.destination_is_distinct_from(row))
             })
             && self.rows.windows(2).all(|rows| {
                 let (older, younger) = (&rows[0], &rows[1]);
                 older.sequence < younger.sequence
+                    && older.destination.is_some()
                     && older.root_head == younger.root_head
                     && older.consumed_requests.last().copied()
                         == Some(younger.fetch_predecessor_request)
@@ -276,7 +277,7 @@ impl O3RuntimeState {
         let access = execution
             .execution()
             .memory_access()
-            .expect("pending address execution carries a load");
+            .expect("pending address execution carries a memory access");
         let size = AccessSize::new(u64::from(PENDING_DATA_ADDRESS_LSQ_BYTES))
             .expect("pending data address size");
         assert!(self.pending_data_address_issue_matches(
@@ -300,7 +301,7 @@ impl O3RuntimeState {
             .any(|live| live.data_request == data_request));
         assert!(self.snapshot.reorder_buffer.iter().any(|entry| {
             entry.sequence() == pending.sequence
-                && entry.destination() == Some(pending.destination.physical())
+                && entry.destination() == pending.destination.map(O3RenameMapEntry::physical)
         }));
 
         let sequence = pending.sequence;
@@ -313,7 +314,7 @@ impl O3RuntimeState {
             .iter_mut()
             .find(|entry| entry.sequence() == sequence)
             .expect("pending address LSQ row");
-        assert_eq!(lsq.kind(), O3LoadStoreQueueKind::Load);
+        assert_eq!(lsq.kind(), pending.lsq_kind);
         assert_eq!(lsq.bytes(), PENDING_DATA_ADDRESS_LSQ_BYTES);
         assert!(lsq.resolve_address(physical_address));
 

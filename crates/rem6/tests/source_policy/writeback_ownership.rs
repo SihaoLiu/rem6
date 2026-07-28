@@ -27,6 +27,10 @@ const DEPENDENT_RESULT_ADDRESS: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address.rs";
 const DEPENDENT_RESULT_ADDRESS_BOUNDARIES: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/boundaries.rs";
+const DEPENDENT_STORE_ADDRESS: &str =
+    "tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/dependent_store.rs";
+const DEPENDENT_STORE_ADDRESS_SUPPORT: &str =
+    "tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/dependent_store_support.rs";
 const TWO_PENDING_RESULT_ADDRESS: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/two_pending.rs";
 const TWO_PENDING_RESULT_ADDRESS_BOUNDARIES: &str =
@@ -71,7 +75,7 @@ const YOUNGER_ATOMIC_CHILD_MODULES: [ExpectedModuleDeclaration; 1] = [ExpectedMo
     name: "boundaries",
     path: "younger_atomic_result/boundaries.rs",
 }];
-const DEPENDENT_RESULT_ADDRESS_CHILD_MODULES: [ExpectedModuleDeclaration; 3] = [
+const DEPENDENT_RESULT_ADDRESS_CHILD_MODULES: [ExpectedModuleDeclaration; 5] = [
     ExpectedModuleDeclaration {
         name: "boundaries",
         path: "dependent_result_address/boundaries.rs",
@@ -83,6 +87,14 @@ const DEPENDENT_RESULT_ADDRESS_CHILD_MODULES: [ExpectedModuleDeclaration; 3] = [
     ExpectedModuleDeclaration {
         name: "three_pending",
         path: "dependent_result_address/three_pending.rs",
+    },
+    ExpectedModuleDeclaration {
+        name: "dependent_store",
+        path: "dependent_result_address/dependent_store.rs",
+    },
+    ExpectedModuleDeclaration {
+        name: "dependent_store_support",
+        path: "dependent_result_address/dependent_store_support.rs",
     },
 ];
 const TWO_PENDING_RESULT_ADDRESS_CHILD_MODULES: [ExpectedModuleDeclaration; 1] =
@@ -183,6 +195,12 @@ const DEPENDENT_RESULT_ADDRESS_ANCHORS: [&str; 3] = [
 ];
 const DEPENDENT_RESULT_ADDRESS_BOUNDARY_ANCHORS: [&str; 1] =
     ["rem6_run_o3_dependent_result_address_boundaries_and_live_actions"];
+const DEPENDENT_STORE_ADDRESS_ANCHORS: [&str; 4] = [
+    "rem6_run_o3_dependent_store_address_matrix_direct",
+    "rem6_run_o3_dependent_store_address_matrix_cache_fabric_dram",
+    "rem6_run_timing_suppresses_o3_dependent_store_address",
+    "rem6_run_o3_dependent_store_address_overlap_and_live_actions",
+];
 const TWO_PENDING_RESULT_ADDRESS_ANCHORS: [&str; 5] = [
     "rem6_run_o3_two_pending_result_address_sibling_width_one_direct",
     "rem6_run_o3_two_pending_result_address_chain_width_one_direct",
@@ -263,7 +281,8 @@ const YOUNGER_ATOMIC_BOUNDARIES_MAX_LINES: usize = 350;
 const YOUNGER_ATOMIC_AGGREGATE_MAX_LINES: usize = 750;
 const DEPENDENT_RESULT_ADDRESS_MAX_LINES: usize = 650;
 const DEPENDENT_RESULT_ADDRESS_BOUNDARIES_MAX_LINES: usize = 450;
-const DEPENDENT_RESULT_ADDRESS_AGGREGATE_MAX_LINES: usize = 1000;
+const DEPENDENT_RESULT_ADDRESS_AGGREGATE_MAX_LINES: usize = 1600;
+const DEPENDENT_STORE_ADDRESS_SUPPORT_MAX_LINES: usize = 100;
 const TWO_PENDING_RESULT_ADDRESS_MAX_LINES: usize = 700;
 const TWO_PENDING_RESULT_ADDRESS_BOUNDARIES_MAX_LINES: usize = 500;
 const TWO_PENDING_RESULT_ADDRESS_AGGREGATE_MAX_LINES: usize = 1050;
@@ -303,6 +322,8 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let dependent_result_address_path = crate_dir.join(DEPENDENT_RESULT_ADDRESS);
     let dependent_result_address_boundaries_path =
         crate_dir.join(DEPENDENT_RESULT_ADDRESS_BOUNDARIES);
+    let dependent_store_address_path = crate_dir.join(DEPENDENT_STORE_ADDRESS);
+    let dependent_store_address_support_path = crate_dir.join(DEPENDENT_STORE_ADDRESS_SUPPORT);
     let two_pending_result_address_path = crate_dir.join(TWO_PENDING_RESULT_ADDRESS);
     let two_pending_result_address_boundaries_path =
         crate_dir.join(TWO_PENDING_RESULT_ADDRESS_BOUNDARIES);
@@ -325,6 +346,7 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let dependent_result_address = fs::read_to_string(&dependent_result_address_path);
     let dependent_result_address_boundaries =
         fs::read_to_string(&dependent_result_address_boundaries_path);
+    let dependent_store_address_support = fs::read_to_string(&dependent_store_address_support_path);
     let two_pending_result_address = fs::read_to_string(&two_pending_result_address_path);
     let two_pending_result_address_boundaries =
         fs::read_to_string(&two_pending_result_address_boundaries_path);
@@ -418,6 +440,9 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     }
     if dependent_result_address_boundaries.is_err() {
         boundary_failures.push(format!("{DEPENDENT_RESULT_ADDRESS_BOUNDARIES} must exist"));
+    }
+    if dependent_store_address_support.is_err() {
+        boundary_failures.push(format!("{DEPENDENT_STORE_ADDRESS_SUPPORT} must exist"));
     }
     if two_pending_result_address.is_err() {
         boundary_failures.push(format!("{TWO_PENDING_RESULT_ADDRESS} must exist"));
@@ -592,6 +617,7 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     let younger_atomic_boundaries = younger_atomic_boundaries.unwrap();
     let dependent_result_address = dependent_result_address.unwrap();
     let dependent_result_address_boundaries = dependent_result_address_boundaries.unwrap();
+    let dependent_store_address_support = dependent_store_address_support.unwrap();
     let two_pending_result_address = two_pending_result_address.unwrap();
     let two_pending_result_address_boundaries = two_pending_result_address_boundaries.unwrap();
     let three_pending_result_address = three_pending_result_address.unwrap();
@@ -672,8 +698,23 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
     assert!(
         line_count(&dependent_result_address_path)
             + line_count(&dependent_result_address_boundaries_path)
+            + line_count(&dependent_store_address_path)
+            + line_count(&dependent_store_address_support_path)
             <= DEPENDENT_RESULT_ADDRESS_AGGREGATE_MAX_LINES,
         "dependent result-address evidence must remain at or below {DEPENDENT_RESULT_ADDRESS_AGGREGATE_MAX_LINES} aggregate lines"
+    );
+    assert!(
+        line_count(&dependent_store_address_support_path)
+            <= DEPENDENT_STORE_ADDRESS_SUPPORT_MAX_LINES,
+        "{DEPENDENT_STORE_ADDRESS_SUPPORT} must remain at or below {DEPENDENT_STORE_ADDRESS_SUPPORT_MAX_LINES} lines"
+    );
+    assert!(
+        support_leaf_failures(
+            DEPENDENT_STORE_ADDRESS_SUPPORT,
+            &dependent_store_address_support
+        )
+        .is_empty(),
+        "{DEPENDENT_STORE_ADDRESS_SUPPORT} must remain a leaf support module"
     );
     assert!(
         line_count(&two_pending_result_address_path) <= TWO_PENDING_RESULT_ADDRESS_MAX_LINES,
@@ -1441,7 +1482,11 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         .into_iter()
         .chain(THREE_PENDING_RESULT_ADDRESS_BOUNDARY_ANCHORS)
         .collect::<Vec<_>>();
-    for anchor in two_pending_anchors.iter().chain(&three_pending_anchors) {
+    for anchor in DEPENDENT_STORE_ADDRESS_ANCHORS
+        .iter()
+        .chain(&two_pending_anchors)
+        .chain(&three_pending_anchors)
+    {
         assert_eq!(
             registered_core_anchors
                 .iter()
@@ -1456,7 +1501,17 @@ fn writeback_result_class_cli_evidence_has_focused_ownership() {
         .iter()
         .position(|anchor| *anchor == dependent_result_address_tail)
         .expect("core_test_anchors.txt must retain the dependent-result-address tail anchor");
-    let two_pending_anchor_start = dependent_result_address_tail_index + 1;
+    let dependent_store_anchor_start = dependent_result_address_tail_index + 1;
+    assert_eq!(
+        registered_core_anchors.get(
+            dependent_store_anchor_start
+                ..dependent_store_anchor_start + DEPENDENT_STORE_ADDRESS_ANCHORS.len()
+        ),
+        Some(DEPENDENT_STORE_ADDRESS_ANCHORS.as_slice()),
+        "dependent-store anchors must immediately follow dependent-result-address anchors"
+    );
+    let two_pending_anchor_start =
+        dependent_store_anchor_start + DEPENDENT_STORE_ADDRESS_ANCHORS.len();
     assert_eq!(
         registered_core_anchors
             .get(two_pending_anchor_start..two_pending_anchor_start + two_pending_anchors.len()),
@@ -1671,6 +1726,10 @@ mod boundaries;
 mod two_pending;
 #[path = "dependent_result_address/three_pending.rs"]
 mod three_pending;
+#[path = "dependent_result_address/dependent_store.rs"]
+mod dependent_store;
+#[path = "dependent_result_address/dependent_store_support.rs"]
+mod dependent_store_support;
 "#;
     assert!(module_declaration_failures(
         "synthetic.rs",

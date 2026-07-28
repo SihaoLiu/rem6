@@ -3,6 +3,10 @@ use crate::riscv_live_retire_window::{
     completed_fetch_instruction_starting_with, RiscvCompletedFetchInstruction,
 };
 use rem6_memory::AddressRange;
+
+#[path = "dependent_result_address/dependent_store.rs"]
+mod dependent_store;
+
 fn ld(rd: u8, rs1: u8, offset: i32) -> u32 {
     i_type(offset, rs1, 0b011, rd, 0x03)
 }
@@ -177,7 +181,7 @@ fn dependent_address_fetches_second_scalar_suffix_after_first_dependency() {
 fn dependent_address_fetch_rejects_non_exact_load_shapes() {
     let head_ld = ld(5, 2, 0);
     let cases = [
-        ("younger store", bytes(s_type(0, 6, 5, 0b011))),
+        ("younger store alias", bytes(s_type(0, 5, 5, 0b011))),
         ("younger atomic", bytes(unordered_amo(6, 5, 3))),
         ("younger lr", bytes(lr(6, 5))),
         ("younger sc", bytes(sc(6, 5, 3))),
@@ -201,7 +205,7 @@ fn dependent_address_fetch_rejects_non_exact_load_shapes() {
     let (core, head, younger) = completed_result_pair(head_ld, ld(6, 5, 0));
     let state = core.state.lock().expect("riscv core lock");
     let second_dependent_head = O3MemoryResultWindowAuthorization::dependent(
-        Register::new(5).unwrap(),
+        Some(Register::new(5).unwrap()),
         Register::new(2).unwrap(),
         MemoryWidth::Doubleword,
         Immediate::new(0),
@@ -248,38 +252,6 @@ fn dependent_address_authorization_requires_integer_result_head() {
         None,
         "word load head"
     );
-}
-
-#[test]
-fn dependent_address_atomic_head_rejects_ordering_and_allows_unordered() {
-    let dependent_ld = ld(6, 5, 0);
-    let (core, head, younger) = completed_result_pair(unordered_amo(5, 2, 3), dependent_ld);
-    assert_eq!(
-        dependent_authorization(&core, &head, &younger)
-            .map(O3MemoryResultWindowAuthorization::role),
-        Some(O3MemoryResultWindowRole::YoungerDependentRead)
-    );
-
-    for (label, head_raw) in [
-        ("acquire atomic", atomic_type(0x01, true, false, 3, 2, 5)),
-        ("release atomic", atomic_type(0x01, false, true, 3, 2, 5)),
-        ("load reserved", lr(5, 2)),
-        ("store conditional", sc(5, 2, 3)),
-    ] {
-        let (core, head, younger) = completed_result_pair(head_raw, dependent_ld);
-        let state = core.state.lock().expect("riscv core lock");
-        assert_eq!(
-            detailed_o3::dependent_result_address_authorization(
-                &state,
-                &head,
-                &younger,
-                synthetic_resolved_head_authorization(),
-                state.o3_runtime.scalar_memory_window_limit(),
-            ),
-            None,
-            "{label}"
-        );
-    }
 }
 
 #[test]

@@ -290,11 +290,12 @@ impl O3RuntimeState {
                     && execution.execution().memory_access() == Some(access)
                     && self.snapshot.reorder_buffer.iter().any(|entry| {
                         entry.sequence() == pending.sequence
-                            && entry.destination() == Some(pending.destination.physical())
+                            && entry.destination()
+                                == pending.destination.map(O3RenameMapEntry::physical)
                     })
                     && self.snapshot.load_store_queue.iter().any(|entry| {
                         entry.sequence() == pending.sequence
-                            && entry.kind() == O3LoadStoreQueueKind::Load
+                            && entry.kind() == pending.lsq_kind
                             && entry.address().is_none()
                             && entry.bytes() == pending.expected_lsq_bytes
                     })

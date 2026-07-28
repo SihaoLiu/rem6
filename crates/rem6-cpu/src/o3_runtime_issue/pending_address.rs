@@ -28,7 +28,7 @@ impl O3RuntimeState {
         pc: Address,
         instruction: RiscvInstruction,
         consumed_requests: &[MemoryRequestId],
-    ) -> Option<(O3RenameMapEntry, Register, u64)> {
+    ) -> Option<(Option<O3RenameMapEntry>, Register, u64)> {
         let pending = self.pending_data_addresses.find_sequence(sequence)?;
         (pending.materialized.is_none()
             && pending.sequence == sequence

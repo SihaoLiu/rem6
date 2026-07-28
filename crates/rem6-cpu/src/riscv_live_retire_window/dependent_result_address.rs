@@ -42,14 +42,17 @@ pub(super) fn stage_dependent_result_address_window(
         else {
             break;
         };
-        let Some((producer_register, dependent_rd)) = pending_registers(&dependent, authorization)
+        let Some((producer_register, dependent_destination)) =
+            pending_registers(&dependent, authorization)
         else {
             return false;
         };
         if result_destinations.is_empty() {
             result_destinations.push(producer_register);
         }
-        result_destinations.push(dependent_rd);
+        if let Some(destination) = dependent_destination {
+            result_destinations.push(destination);
+        }
         requests.push(O3PendingDataAddressRequest::new(
             predecessor,
             dependent.fetch().clone(),
@@ -61,6 +64,9 @@ pub(super) fn stage_dependent_result_address_window(
         predecessor = dependent.last_consumed_request();
         next_pc = sequential_pc(&dependent);
         scheduled.push(dependent);
+        if dependent_destination.is_none() {
+            break;
+        }
     }
     if requests.is_empty() {
         return false;
@@ -71,6 +77,7 @@ pub(super) fn stage_dependent_result_address_window(
         predecessor,
         next_pc,
         &result_destinations,
+        1 + requests.len(),
     );
     let expected_staged = suffix.len().saturating_add(requests.len());
     let staged = state.o3_runtime.stage_pending_data_address_window(
@@ -112,31 +119,48 @@ fn dependent_authorization(
         .get(&request)
         .copied()
         .filter(|authorization| {
-            authorization.role() == O3MemoryResultWindowRole::YoungerDependentRead
+            matches!(
+                authorization.role(),
+                O3MemoryResultWindowRole::YoungerDependentRead
+                    | O3MemoryResultWindowRole::YoungerDependentEffect
+            )
         })
 }
 
 fn pending_registers(
     dependent: &RiscvCompletedFetchInstruction,
     authorization: O3MemoryResultWindowAuthorization,
-) -> Option<(rem6_isa_riscv::Register, rem6_isa_riscv::Register)> {
+) -> Option<(rem6_isa_riscv::Register, Option<rem6_isa_riscv::Register>)> {
     let (producer_register, width, immediate) = authorization.dependent_source()?;
-    let RiscvInstruction::Load {
-        rd,
-        rs1,
-        offset,
-        width: MemoryWidth::Doubleword,
-        ..
-    } = dependent.decoded().instruction()
-    else {
-        return None;
+    let (rs1, offset, destination) = match dependent.decoded().instruction() {
+        RiscvInstruction::Load {
+            rd,
+            rs1,
+            offset,
+            width: MemoryWidth::Doubleword,
+            ..
+        } if !rd.is_zero()
+            && authorization.role() == O3MemoryResultWindowRole::YoungerDependentRead
+            && authorization.integer_destination() == Some(rd) =>
+        {
+            (rs1, offset, Some(rd))
+        }
+        RiscvInstruction::Store {
+            rs1,
+            rs2,
+            offset,
+            width: MemoryWidth::Doubleword,
+        } if !rs2.is_zero()
+            && rs1 != rs2
+            && authorization.role() == O3MemoryResultWindowRole::YoungerDependentEffect
+            && authorization.integer_destination().is_none() =>
+        {
+            (rs1, offset, None)
+        }
+        _ => return None,
     };
-    (width == MemoryWidth::Doubleword
-        && offset == immediate
-        && rs1 == producer_register
-        && authorization.integer_destination() == Some(rd)
-        && !rd.is_zero())
-    .then_some((producer_register, rd))
+    (width == MemoryWidth::Doubleword && offset == immediate && rs1 == producer_register)
+        .then_some((producer_register, destination))
 }
 
 fn accepted_suffix(
@@ -145,16 +169,17 @@ fn accepted_suffix(
     mut current_request: MemoryRequestId,
     mut pc: Address,
     result_destinations: &[rem6_isa_riscv::Register],
+    occupied_rows: usize,
 ) -> Vec<RiscvCompletedFetchInstruction> {
     let Some(mut window) = RiscvScalarIntegerLiveWindow::from_memory_results(
         result_destinations.iter().copied(),
-        result_destinations.len(),
+        occupied_rows,
         state.o3_runtime.scalar_memory_window_limit(),
     ) else {
         return Vec::new();
     };
     let mut suffix = Vec::new();
-    for _ in result_destinations.len()..state.o3_runtime.scalar_memory_window_limit() {
+    for _ in occupied_rows..state.o3_runtime.scalar_memory_window_limit() {
         let Some(instruction) =
             completed_fetch_instruction_at(state, fetch_events, current_request, pc)
         else {

@@ -369,6 +369,7 @@ pub(super) fn additional_fetch_candidate(
                             authorization.role(),
                             super::O3MemoryResultWindowRole::YoungerBufferedEffect
                                 | super::O3MemoryResultWindowRole::YoungerDependentRead
+                                | super::O3MemoryResultWindowRole::YoungerDependentEffect
                         )
                     })
             ) {

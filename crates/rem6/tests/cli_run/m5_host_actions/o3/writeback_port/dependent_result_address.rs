@@ -14,6 +14,15 @@ pub(in crate::m5_host_actions::o3) mod two_pending;
 #[path = "dependent_result_address/three_pending.rs"]
 mod three_pending;
 
+#[path = "dependent_result_address/dependent_store.rs"]
+mod dependent_store;
+
+#[path = "dependent_result_address/dependent_store_support.rs"]
+mod dependent_store_support;
+use dependent_store_support::{
+    assert_store_boundary_counts, assert_timing_has_no_o3_surfaces, data_memory_trace_event,
+};
+
 const HEAD_PC: &str = "0x80000030";
 const DEPENDENT_PC: &str = "0x80000034";
 const SCALAR_PC: &str = "0x80000038";

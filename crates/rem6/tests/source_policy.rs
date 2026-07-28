@@ -24,6 +24,8 @@ mod m5_host_action_fixture_ownership;
 mod m5_host_action_o3_runtime_ownership;
 #[path = "source_policy/o3_alias_authority.rs"]
 mod o3_alias_authority;
+#[path = "source_policy/o3_dependent_store_address_ownership.rs"]
+mod o3_dependent_store_address_ownership;
 #[path = "source_policy/o3_fp_load_forwarding_ownership.rs"]
 mod o3_fp_load_forwarding_ownership;
 #[path = "source_policy/o3_issue_queue_telemetry_ownership.rs"]
@@ -1380,10 +1382,7 @@ fn count_checkbox_items(body: &str, marker: &str) -> usize {
 }
 
 fn rounded_percent(completed: usize, total: usize) -> u8 {
-    assert!(
-        total > 0,
-        "migration score calculation needs a nonzero item count"
-    );
+    assert_ne!(total, 0, "migration score calculation needs items");
     (((completed * 100) + (total / 2)) / total) as u8
 }
 

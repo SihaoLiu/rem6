@@ -174,6 +174,59 @@ fn pending_address_rejects_a_second_owner() {
 }
 
 #[test]
+fn pending_address_runtime_rejects_non_swap_atomic_head() {
+    let mut runtime = O3RuntimeState::default();
+    assert!(runtime.set_window_depths(4, 4));
+    let instruction = RiscvInstruction::AtomicMemory {
+        rd: reg(5),
+        rs1: reg(2),
+        rs2: reg(3),
+        width: MemoryWidth::Doubleword,
+        op: AtomicMemoryOp::Add,
+        acquire: false,
+        release: false,
+    };
+    let access = MemoryAccessKind::AtomicMemory {
+        rd: reg(5),
+        address: 0x9000,
+        width: MemoryWidth::Doubleword,
+        op: AtomicMemoryOp::Add,
+        value: 7,
+        acquire: false,
+        release: false,
+    };
+    let head = RiscvCpuExecutionEvent::new(
+        fetch_event_with_raw(HEAD_PC, 10, 0x0031_32af),
+        instruction,
+        RiscvExecutionRecord::new(instruction, HEAD_PC, HEAD_PC + 4, Vec::new(), Some(access)),
+    );
+    assert!(runtime.stage_live_data_access_issue(
+        &head,
+        request(20),
+        31,
+        O3DataAccessWindowPolicy::MemoryResultWindow,
+    ));
+    let before = runtime.clone();
+
+    assert_eq!(
+        runtime.stage_pending_data_address_window(
+            head.fetch().request_id(),
+            [pending_request(
+                request(10),
+                11,
+                PENDING_PC,
+                0x0062_b023,
+                reg(5),
+            )],
+            [],
+            0,
+        ),
+        0
+    );
+    assert_eq!(runtime, before);
+}
+
+#[test]
 fn pending_address_window_stays_four_rows_at_scalar_live_depth_eight() {
     let mut fixture = PendingAddressFixture::new(4, 8);
     fixture

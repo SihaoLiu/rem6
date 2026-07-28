@@ -65,7 +65,7 @@ pub(crate) struct O3LiveSpeculativeIssueCandidate {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum O3LiveSpeculativeIssueKind {
-    PendingDataAddress(O3RenameMapEntry),
+    PendingDataAddress(Option<O3RenameMapEntry>),
     Compute(O3RenameMapEntry),
     Control {
         kind: BranchTargetKind,
@@ -237,8 +237,8 @@ impl O3LiveSpeculativeIssueCandidate {
     #[cfg(test)]
     pub(crate) const fn destination(&self) -> Option<O3RenameMapEntry> {
         match self.scheduling.kind {
-            O3LiveSpeculativeIssueKind::PendingDataAddress(destination)
-            | O3LiveSpeculativeIssueKind::Compute(destination) => Some(destination),
+            O3LiveSpeculativeIssueKind::PendingDataAddress(destination) => destination,
+            O3LiveSpeculativeIssueKind::Compute(destination) => Some(destination),
             O3LiveSpeculativeIssueKind::Control { destination, .. } => destination,
         }
     }
@@ -279,7 +279,7 @@ impl O3LiveSpeculativeIssueCandidate {
 
     pub(crate) const fn pending_data_address_destination(&self) -> Option<O3RenameMapEntry> {
         match self.scheduling.kind {
-            O3LiveSpeculativeIssueKind::PendingDataAddress(destination) => Some(destination),
+            O3LiveSpeculativeIssueKind::PendingDataAddress(destination) => destination,
             _ => None,
         }
     }

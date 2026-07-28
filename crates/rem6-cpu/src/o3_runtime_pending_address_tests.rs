@@ -8,13 +8,15 @@ use crate::{
     CpuCore, CpuFetchConfig, CpuFetchEvent, CpuFetchRecord, CpuId, CpuResetState, RiscvCore,
 };
 use rem6_isa_riscv::{
-    Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvDecodedInstruction,
+    AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvDecodedInstruction,
     RiscvExecutionRecord, RiscvInstruction,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryRequestId};
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
+#[path = "o3_runtime_pending_address_tests/dependent_store.rs"]
+mod dependent_store;
 #[path = "o3_runtime_pending_address_tests/lifecycle.rs"]
 mod lifecycle;
 #[path = "o3_runtime_pending_address_tests/multiple.rs"]

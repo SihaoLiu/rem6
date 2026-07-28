@@ -6,20 +6,22 @@ const MMIO_POINTER: u64 = 0x1000_0000;
 const MMIO_VALUE: u64 = 0x4444;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum BoundaryCase {
+pub(super) enum BoundaryCase {
     OrderedAtomic,
     OverlapAtomic,
-    DependentStore,
+    DependentStoreAlias,
     DependentAtomic,
+    DependentStoreConditional,
     SecondDependentLoad,
     MmioPointer,
 }
 
-const BOUNDARY_CASES: [BoundaryCase; 6] = [
+const BOUNDARY_CASES: [BoundaryCase; 7] = [
     BoundaryCase::OrderedAtomic,
     BoundaryCase::OverlapAtomic,
-    BoundaryCase::DependentStore,
+    BoundaryCase::DependentStoreAlias,
     BoundaryCase::DependentAtomic,
+    BoundaryCase::DependentStoreConditional,
     BoundaryCase::SecondDependentLoad,
     BoundaryCase::MmioPointer,
 ];
@@ -102,7 +104,7 @@ fn assert_boundary(case: BoundaryCase) {
         );
     }
     assert!(event_u64(first_younger, "issue_tick") >= event_u64(head, "writeback_tick"));
-    let sent = data_requests_sent(&completed);
+    let sent = assert_store_boundary_counts(case, &completed);
     if case != BoundaryCase::MmioPointer {
         assert!(event_u64(sent[1], "tick") >= event_u64(head, "writeback_tick"));
     }
@@ -322,13 +324,17 @@ impl BoundaryCase {
             Self::OrderedAtomic | Self::OverlapAtomic | Self::MmioPointer => {
                 vec![i_type(0, 5, 0b011, 6, 0x03), s_type(witness, 6, 9, 0b011)]
             }
-            Self::DependentStore => vec![
-                s_type(0, 11, 5, 0b011),
+            Self::DependentStoreAlias => vec![
+                s_type(0, 5, 5, 0b011),
                 i_type(0, 5, 0b011, 6, 0x03),
                 s_type(witness, 6, 9, 0b011),
             ],
             Self::DependentAtomic => vec![
                 atomic_type(0x01, false, false, 11, 5, 0b011, 6),
+                s_type(witness, 6, 9, 0b011),
+            ],
+            Self::DependentStoreConditional => vec![
+                atomic_type(0x03, false, false, 11, 5, 0b011, 6),
                 s_type(witness, 6, 9, 0b011),
             ],
             Self::SecondDependentLoad => vec![
@@ -343,7 +349,10 @@ impl BoundaryCase {
         match self {
             Self::SecondDependentLoad => 3,
             Self::OverlapAtomic | Self::MmioPointer => 2,
-            Self::OrderedAtomic | Self::DependentStore | Self::DependentAtomic => 1,
+            Self::OrderedAtomic
+            | Self::DependentStoreAlias
+            | Self::DependentAtomic
+            | Self::DependentStoreConditional => 1,
         }
     }
 
@@ -353,7 +362,9 @@ impl BoundaryCase {
             Self::OverlapAtomic => 3,
             Self::SecondDependentLoad => 3,
             Self::MmioPointer => 2,
-            Self::DependentStore | Self::DependentAtomic => 1,
+            Self::DependentStoreAlias | Self::DependentAtomic | Self::DependentStoreConditional => {
+                1
+            }
         }
     }
 
@@ -367,8 +378,10 @@ impl BoundaryCase {
     const fn expected_witness(self) -> u64 {
         match self {
             Self::OrderedAtomic => TARGET_ZERO_VALUE,
-            Self::OverlapAtomic | Self::DependentStore => SWAP_VALUE,
+            Self::OverlapAtomic => SWAP_VALUE,
+            Self::DependentStoreAlias => POINTER,
             Self::DependentAtomic => TARGET_ZERO_VALUE,
+            Self::DependentStoreConditional => 1,
             Self::SecondDependentLoad => SECOND_VALUE,
             Self::MmioPointer => MMIO_VALUE,
         }
@@ -378,8 +391,9 @@ impl BoundaryCase {
         match self {
             Self::OrderedAtomic => "ordered-atomic",
             Self::OverlapAtomic => "overlap-atomic",
-            Self::DependentStore => "dependent-store",
+            Self::DependentStoreAlias => "dependent-store-address-value-alias",
             Self::DependentAtomic => "dependent-atomic",
+            Self::DependentStoreConditional => "dependent-store-conditional",
             Self::SecondDependentLoad => "second-dependent-load",
             Self::MmioPointer => "mmio-pointer",
         }

@@ -118,6 +118,7 @@ const MAX_RISCV_DATA_ACCESS_RESULT_PAIR_POLICY_LINES: usize = 100;
 const MAX_RISCV_DATA_ACCESS_RESULT_EFFECT_POLICY_LINES: usize = 120;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_LINES: usize = 200;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_FETCH_TEST_LINES: usize = 450;
+const MAX_RISCV_DEPENDENT_STORE_ADDRESS_FETCH_TEST_LINES: usize = 100;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_TWO_PENDING_FETCH_TEST_LINES: usize = 350;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_THREE_PENDING_FETCH_TEST_LINES: usize = 450;
 const MAX_RISCV_UNISSUED_DATA_LINES: usize = 110;
@@ -135,11 +136,12 @@ const MAX_O3_RUNTIME_PENDING_ADDRESS_STAGING_LINES: usize = 350;
 const MAX_O3_RUNTIME_ISSUE_PENDING_ADDRESS_LINES: usize = 300;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FACADE_LINES: usize = 300;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_STAGING_TEST_LINES: usize = 450;
+const MAX_O3_RUNTIME_PENDING_ADDRESS_DEPENDENT_STORE_TEST_LINES: usize = 100;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_SCHEDULING_TEST_LINES: usize = 550;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_LIFECYCLE_TEST_LINES: usize = 650;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_MULTIPLE_TEST_LINES: usize = 550;
 const MAX_O3_RUNTIME_PENDING_ADDRESS_THREE_PENDING_TEST_LINES: usize = 450;
-const MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FAMILY_LINES: usize = 2550;
+const MAX_O3_RUNTIME_PENDING_ADDRESS_TEST_FAMILY_LINES: usize = 2700;
 const MAX_RISCV_DEPENDENT_RESULT_ADDRESS_STAGE_LINES: usize = 250;
 const MAX_RISCV_DETAILED_O3_CONTROL_TEST_ROOT_LINES: usize = 450;
 const MAX_RISCV_DETAILED_O3_LINKED_CONTROL_TEST_LINES: usize = 1500;
@@ -1529,6 +1531,8 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let writeback_desired_path = crate_dir.join("src/riscv_o3_writeback_wake/desired.rs");
     let test_root_path = crate_dir.join("src/o3_runtime_pending_address_tests.rs");
     let staging_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/staging.rs");
+    let dependent_store_test_path =
+        crate_dir.join("src/o3_runtime_pending_address_tests/dependent_store.rs");
     let scheduling_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/scheduling.rs");
     let lifecycle_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/lifecycle.rs");
     let multiple_test_path = crate_dir.join("src/o3_runtime_pending_address_tests/multiple.rs");
@@ -1552,6 +1556,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         &writeback_desired_path,
         &test_root_path,
         &staging_test_path,
+        &dependent_store_test_path,
         &scheduling_test_path,
         &lifecycle_test_path,
         &multiple_test_path,
@@ -1582,6 +1587,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     let writeback_desired = fs::read_to_string(&writeback_desired_path).unwrap();
     let test_root = fs::read_to_string(&test_root_path).unwrap();
     let staging_test = fs::read_to_string(&staging_test_path).unwrap();
+    let dependent_store_test = fs::read_to_string(&dependent_store_test_path).unwrap();
     let scheduling_test = fs::read_to_string(&scheduling_test_path).unwrap();
     let lifecycle_test = fs::read_to_string(&lifecycle_test_path).unwrap();
     let multiple_test = fs::read_to_string(&multiple_test_path).unwrap();
@@ -1659,6 +1665,15 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         ),
         1,
         "pending-address tests must use the focused staging child exactly once"
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &test_root,
+            "o3_runtime_pending_address_tests/dependent_store.rs",
+            "dependent_store"
+        ),
+        1,
+        "pending-address tests must use the focused dependent-store child exactly once"
     );
     assert_eq!(
         path_owned_module_declaration_count(
@@ -1770,6 +1785,16 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "o3_runtime_pending_address_tests/staging.rs exceeds {MAX_O3_RUNTIME_PENDING_ADDRESS_STAGING_TEST_LINES} lines"
     );
     assert!(
+        line_count(&dependent_store_test_path)
+            <= MAX_O3_RUNTIME_PENDING_ADDRESS_DEPENDENT_STORE_TEST_LINES,
+        "o3_runtime_pending_address_tests/dependent_store.rs exceeds {MAX_O3_RUNTIME_PENDING_ADDRESS_DEPENDENT_STORE_TEST_LINES} lines"
+    );
+    assert!(
+        external_module_declaration_lines(&dependent_store_test).is_empty()
+            && path_attribute_lines(&dependent_store_test).is_empty(),
+        "dependent-store pending-address tests must remain a leaf child"
+    );
+    assert!(
         line_count(&scheduling_test_path) <= MAX_O3_RUNTIME_PENDING_ADDRESS_SCHEDULING_TEST_LINES,
         "o3_runtime_pending_address_tests/scheduling.rs exceeds {MAX_O3_RUNTIME_PENDING_ADDRESS_SCHEDULING_TEST_LINES} lines"
     );
@@ -1794,6 +1819,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
     assert!(
         line_count(&test_root_path)
             + line_count(&staging_test_path)
+            + line_count(&dependent_store_test_path)
             + line_count(&scheduling_test_path)
             + line_count(&lifecycle_test_path)
             + line_count(&multiple_test_path)
@@ -2400,6 +2426,7 @@ fn task3_pending_data_address_staging_stays_in_focused_owners() {
         "pending_address_stages_addressless_lsq_and_live_rename_once",
         "pending_address_window_stages_two_scalar_suffix_rows",
         "pending_address_rejects_a_second_owner",
+        "pending_address_runtime_rejects_non_swap_atomic_head",
         "pending_address_window_stays_four_rows_at_scalar_live_depth_eight",
         "pending_address_discard_restores_prior_rename_and_removes_lsq",
     ];
@@ -3186,10 +3213,11 @@ fn task8_dependent_result_address_production_ownership_is_final() {
         production_enum_definition(authorization_owner, "O3MemoryResultWindowAddressAuthority")
             .expect("missing O3MemoryResultWindowAddressAuthority authorization enum");
     assert!(enum_has_unit_variant(&role, "YoungerDependentRead"));
+    assert!(enum_has_unit_variant(&role, "YoungerDependentEffect"));
     assert_eq!(
         role.matches("Dependent").count(),
-        1,
-        "YoungerDependentRead must be the only dependent result role"
+        2,
+        "the read and terminal effect must be the only dependent result roles"
     );
     assert!(!role.contains("Pending"));
     assert!(address_authority.contains("DependentSource {"));
@@ -3606,6 +3634,8 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
     let fetch_tests_root_path = crate_dir.join("src/riscv_fetch_ahead/tests.rs");
     let dependent_address_test_path =
         crate_dir.join("src/riscv_fetch_ahead/tests/dependent_result_address.rs");
+    let dependent_store_address_test_path =
+        crate_dir.join("src/riscv_fetch_ahead/tests/dependent_result_address/dependent_store.rs");
     let dependent_address_two_pending_test_path =
         crate_dir.join("src/riscv_fetch_ahead/tests/dependent_result_address_two_pending.rs");
     let dependent_address_three_pending_test_path =
@@ -4019,6 +4049,8 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
     );
     assert!(dependent_address_test_path.is_file());
     let dependent_address_test_source = fs::read_to_string(&dependent_address_test_path).unwrap();
+    let dependent_store_address_test_source =
+        fs::read_to_string(&dependent_store_address_test_path).unwrap();
     assert!(include_macro_lines(&dependent_address_test_source).is_empty());
     assert!(
         line_count(&dependent_address_test_path)
@@ -4027,17 +4059,20 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
     );
     let dependent_address_test =
         rust_code_without_comments_and_literals(&dependent_address_test_source);
-    assert!(
-        external_module_declaration_lines(&dependent_address_test_source).is_empty()
-            && path_attribute_lines(&dependent_address_test_source).is_empty(),
-        "dependent-result address fetch tests must remain a leaf child"
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &dependent_address_test_source,
+            "dependent_result_address/dependent_store.rs",
+            "dependent_store"
+        ),
+        1,
+        "dependent-result address tests must attach the dependent-store child exactly once"
     );
     let expected_tests = [
         "dependent_scalar_ld_authorizes_addressless_younger_read",
         "dependent_address_fetches_second_scalar_suffix_after_first_dependency",
         "dependent_address_fetch_rejects_non_exact_load_shapes",
         "dependent_address_authorization_requires_integer_result_head",
-        "dependent_address_atomic_head_rejects_ordering_and_allows_unordered",
         "dependent_address_authorization_rejects_translation_and_mmio_heads",
         "dependent_address_counts_as_second_result_and_blocks_third_result",
         "dependent_address_window_remains_four_rows_at_scalar_live_depth_eight",
@@ -4053,6 +4088,29 @@ fn riscv_data_access_result_fetch_authority_is_focused() {
             rust_function_definition_count(&dependent_address_test, anchor),
             1,
             "missing or duplicated dependent-result address fetch test `{anchor}`"
+        );
+    }
+    assert!(
+        line_count(&dependent_store_address_test_path)
+            <= MAX_RISCV_DEPENDENT_STORE_ADDRESS_FETCH_TEST_LINES,
+        "dependent_result_address/dependent_store.rs exceeds {MAX_RISCV_DEPENDENT_STORE_ADDRESS_FETCH_TEST_LINES} lines"
+    );
+    assert!(
+        external_module_declaration_lines(&dependent_store_address_test_source).is_empty()
+            && path_attribute_lines(&dependent_store_address_test_source).is_empty(),
+        "dependent-store address fetch tests must remain a leaf child"
+    );
+    let dependent_store_address_test =
+        rust_code_without_comments_and_literals(&dependent_store_address_test_source);
+    for anchor in [
+        "dependent_scalar_sd_authorizes_addressless_terminal_effect",
+        "dependent_address_store_rejects_non_exact_widths",
+        "dependent_address_atomic_head_accepts_only_unordered_amoswap_d",
+    ] {
+        assert_eq!(
+            rust_function_definition_count(&dependent_store_address_test, anchor),
+            1,
+            "missing or duplicated dependent-store address fetch test `{anchor}`"
         );
     }
     assert!(dependent_address_two_pending_test_path.is_file());
@@ -4205,6 +4263,7 @@ fn riscv_memory_result_authorization_has_focused_ownership() {
         "Translated,",
         "enum O3MemoryResultWindowRole",
         "YoungerDependentRead",
+        "YoungerDependentEffect",
         "enum O3MemoryResultWindowAddressAuthority",
         "ResolvedRange(AddressRange)",
         "TranslatedRange {",
@@ -4214,8 +4273,8 @@ fn riscv_memory_result_authorization_has_focused_ownership() {
         "struct O3MemoryResultWindowAuthorization",
         "address_authority: O3MemoryResultWindowAddressAuthority",
         "const fn resolved(",
-        "const fn dependent(\n        integer_destination: Register,",
-        "integer_destination: Some(integer_destination)",
+        "const fn dependent(\n        integer_destination: Option<Register>,",
+        "role: if integer_destination.is_some()",
         "const fn is_younger(self)",
         "const fn is_buffered_effect(self)",
         "const fn resolved_range(self)",

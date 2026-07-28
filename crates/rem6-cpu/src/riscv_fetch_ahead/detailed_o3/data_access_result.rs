@@ -366,8 +366,7 @@ fn data_access_result_window_candidate_with_prefix(
                                 younger_authorization,
                             )
                         }
-                        O3MemoryResultWindowRole::Head
-                        | O3MemoryResultWindowRole::YoungerDependentRead => false,
+                        _ => false,
                     };
                     if !allowed {
                         return DetailedFetchAheadCandidate::Blocked;

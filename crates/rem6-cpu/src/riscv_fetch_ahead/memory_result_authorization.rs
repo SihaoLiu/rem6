@@ -16,15 +16,13 @@ pub(crate) enum O3MemoryResultWindowRole {
     Head,
     YoungerRead,
     YoungerDependentRead,
+    YoungerDependentEffect,
     YoungerBufferedEffect,
 }
 
 impl O3MemoryResultWindowRole {
     pub(crate) const fn is_younger(self) -> bool {
-        matches!(
-            self,
-            Self::YoungerRead | Self::YoungerDependentRead | Self::YoungerBufferedEffect
-        )
+        !matches!(self, Self::Head)
     }
 
     pub(crate) const fn is_buffered_effect(self) -> bool {
@@ -80,20 +78,24 @@ impl O3MemoryResultWindowAuthorization {
     }
 
     pub(in crate::riscv_fetch_ahead) const fn dependent(
-        integer_destination: Register,
+        integer_destination: Option<Register>,
         register: Register,
         width: MemoryWidth,
         immediate: Immediate,
     ) -> Self {
         Self {
-            integer_destination: Some(integer_destination),
+            integer_destination,
             route: O3MemoryResultWindowRoute::Memory,
             address_authority: O3MemoryResultWindowAddressAuthority::DependentSource {
                 register,
                 width,
                 immediate,
             },
-            role: O3MemoryResultWindowRole::YoungerDependentRead,
+            role: if integer_destination.is_some() {
+                O3MemoryResultWindowRole::YoungerDependentRead
+            } else {
+                O3MemoryResultWindowRole::YoungerDependentEffect
+            },
         }
     }
 

@@ -1,4 +1,4 @@
-use rem6_isa_riscv::{MemoryWidth, Register, RiscvInstruction};
+use rem6_isa_riscv::{AtomicMemoryOp, MemoryWidth, Register, RiscvInstruction};
 
 use crate::{
     riscv_fetch_ahead::{
@@ -14,6 +14,7 @@ pub(in crate::riscv_fetch_ahead) struct DependentResultAddressAuthorizer {
     previous_pending_destination: Option<Register>,
     result_destinations: Vec<Register>,
     dependent_rows: usize,
+    terminal_effect: bool,
 }
 
 impl DependentResultAddressAuthorizer {
@@ -40,6 +41,8 @@ impl DependentResultAddressAuthorizer {
             } if !rd.is_zero() => rd,
             RiscvInstruction::AtomicMemory {
                 rd,
+                width: MemoryWidth::Doubleword,
+                op: AtomicMemoryOp::Swap,
                 acquire: false,
                 release: false,
                 ..
@@ -57,6 +60,7 @@ impl DependentResultAddressAuthorizer {
             previous_pending_destination: None,
             result_destinations,
             dependent_rows: 0,
+            terminal_effect: false,
         })
     }
 
@@ -64,24 +68,37 @@ impl DependentResultAddressAuthorizer {
         &mut self,
         younger: &RiscvCompletedFetchInstruction,
     ) -> Option<O3MemoryResultWindowAuthorization> {
-        if self.dependent_rows >= 3 || (self.dependent_rows >= 1 && self.row_limit < 4) {
+        if self.terminal_effect
+            || self.dependent_rows >= 3
+            || (self.dependent_rows >= 1 && self.row_limit < 4)
+        {
             return None;
         }
-        let RiscvInstruction::Load {
-            rd,
-            rs1,
-            offset,
-            width: MemoryWidth::Doubleword,
-            ..
-        } = younger.decoded().instruction()
-        else {
-            return None;
+        let (destination, rs1, offset, terminal_effect) = match younger.decoded().instruction() {
+            RiscvInstruction::Load {
+                rd,
+                rs1,
+                offset,
+                width: MemoryWidth::Doubleword,
+                ..
+            } if !rd.is_zero() && rd != rs1 && !self.result_destinations.contains(&rd) => {
+                (Some(rd), rs1, offset, false)
+            }
+            RiscvInstruction::Store {
+                rs1,
+                rs2,
+                offset,
+                width: MemoryWidth::Doubleword,
+            } if self.dependent_rows == 0
+                && !rs2.is_zero()
+                && rs1 != rs2
+                && !self.result_destinations.contains(&rs2) =>
+            {
+                (None, rs1, offset, true)
+            }
+            _ => return None,
         };
-        if younger.decoded().bytes() != 4
-            || rd.is_zero()
-            || rd == rs1
-            || self.result_destinations.contains(&rd)
-        {
+        if younger.decoded().bytes() != 4 {
             return None;
         }
         let allowed_source = if self.dependent_rows == 0 {
@@ -92,11 +109,14 @@ impl DependentResultAddressAuthorizer {
         if !allowed_source {
             return None;
         }
-        self.previous_pending_destination = Some(rd);
-        self.result_destinations.push(rd);
+        self.previous_pending_destination = destination;
+        if let Some(destination) = destination {
+            self.result_destinations.push(destination);
+        }
         self.dependent_rows += 1;
+        self.terminal_effect = terminal_effect;
         Some(O3MemoryResultWindowAuthorization::dependent(
-            rd,
+            destination,
             rs1,
             MemoryWidth::Doubleword,
             offset,
@@ -125,9 +145,8 @@ pub(in crate::riscv_fetch_ahead) fn dependent_result_address_authorization(
     let dependent_rows = authorizer.dependent_rows();
     let result_destinations = authorizer.result_destinations();
     debug_assert_eq!(dependent_rows, 1);
-    debug_assert_eq!(
-        result_destinations.last().copied(),
-        authorization.integer_destination()
-    );
+    debug_assert!(authorization
+        .integer_destination()
+        .is_none_or(|destination| { result_destinations.last().copied() == Some(destination) }));
     Some(authorization)
 }
