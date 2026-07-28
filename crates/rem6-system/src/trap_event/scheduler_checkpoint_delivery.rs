@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use rem6_checkpoint::CheckpointComponentId;
 use rem6_kernel::{SchedulerContext, Tick};
 
-use crate::{GuestEventDelivery, SystemHostController};
+use crate::{GuestEventDelivery, GuestEventKind, SystemHostController};
 
 pub(super) fn handle_host_delivery_with_scheduler_checkpoint(
     context: &mut SchedulerContext<'_>,
@@ -14,6 +14,7 @@ pub(super) fn handle_host_delivery_with_scheduler_checkpoint(
 ) {
     let source_partition = delivery.source_partition();
     let host_partition = delivery.host_partition();
+    let delivery_tick = delivery.tick();
     let event = delivery.event().clone();
     controller
         .lock()
@@ -23,6 +24,16 @@ pub(super) fn handle_host_delivery_with_scheduler_checkpoint(
             component.clone(),
             context.checkpoint_access(),
         );
+    if matches!(
+        event.kind(),
+        GuestEventKind::Checkpoint { .. } | GuestEventKind::RestoreCheckpoint { .. }
+    ) {
+        controller
+            .lock()
+            .expect("system host controller lock")
+            .executor()
+            .release_source_local_checkpoint_capture(delivery_tick);
+    }
 
     if period == 0 || context.now().checked_add(period).is_none() {
         return;

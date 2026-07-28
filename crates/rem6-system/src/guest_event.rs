@@ -320,6 +320,26 @@ impl GuestEventChannel {
             .map_err(SystemError::Scheduler)
     }
 
+    pub(crate) fn emit_with_scheduler_checkpoint_on_source<F>(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        event: GuestEvent,
+        handler: F,
+    ) -> Result<PartitionEventId, SystemError>
+    where
+        F: FnOnce(GuestEventDelivery, &mut SchedulerContext<'_>) + Send + 'static,
+    {
+        let source_partition = context.partition();
+        let host_partition = self.host_partition;
+        context
+            .schedule_local_after(self.host_latency, move |context| {
+                let delivery =
+                    GuestEventDelivery::new(context.now(), source_partition, host_partition, event);
+                handler(delivery, context);
+            })
+            .map_err(SystemError::Scheduler)
+    }
+
     pub fn emit_parallel<F>(
         &self,
         context: &mut ParallelSchedulerContext<'_>,
@@ -341,6 +361,68 @@ impl GuestEventChannel {
                 ));
             })
             .map_err(SystemError::Scheduler)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use rem6_kernel::PartitionedScheduler;
+
+    use super::*;
+
+    #[test]
+    fn source_local_checkpoint_delivery_preserves_same_partition_insertion_order() {
+        let channel = GuestEventChannel::new(PartitionId::new(1), 1).unwrap();
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let mut scheduler = PartitionedScheduler::new(2).unwrap();
+
+        let before = Arc::clone(&observed);
+        scheduler
+            .schedule_at(PartitionId::new(0), 1, move |_| {
+                before.lock().unwrap().push("before");
+            })
+            .unwrap();
+        let delivery = Arc::clone(&observed);
+        scheduler
+            .schedule_at(PartitionId::new(0), 0, move |context| {
+                channel
+                    .emit_with_scheduler_checkpoint_on_source(
+                        context,
+                        GuestEvent::new(
+                            GuestEventId::new(7),
+                            GuestSourceId::new(8),
+                            GuestEventKind::Checkpoint {
+                                label: "local".to_string(),
+                            },
+                        ),
+                        move |event, context| {
+                            assert_eq!(context.partition(), PartitionId::new(0));
+                            assert_eq!(event.source_partition(), PartitionId::new(0));
+                            assert_eq!(event.host_partition(), PartitionId::new(1));
+                            delivery.lock().unwrap().push("delivery");
+                        },
+                    )
+                    .unwrap();
+            })
+            .unwrap();
+        let after = Arc::clone(&observed);
+        scheduler
+            .schedule_at(PartitionId::new(0), 0, move |context| {
+                context
+                    .schedule_local_after(1, move |_| {
+                        after.lock().unwrap().push("after");
+                    })
+                    .unwrap();
+            })
+            .unwrap();
+
+        while !scheduler.is_idle() {
+            scheduler.run_next_epoch();
+        }
+
+        assert_eq!(*observed.lock().unwrap(), ["before", "delivery", "after"]);
     }
 }
 

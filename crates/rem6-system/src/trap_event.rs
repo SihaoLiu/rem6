@@ -1,5 +1,6 @@
 mod host_control_schedule;
 mod scheduler_checkpoint_delivery;
+mod source_local_checkpoint;
 
 use std::sync::{Arc, Mutex};
 

@@ -814,6 +814,20 @@ impl RiscvCoreCheckpointBank {
         self.ports.keys().cloned().collect()
     }
 
+    pub(crate) fn prepare_source_local_checkpoint_capture(&self, deadline: u64) {
+        for port in self.ports.values() {
+            port.core()
+                .prepare_source_local_checkpoint_capture(deadline);
+        }
+    }
+
+    pub(crate) fn release_source_local_checkpoint_capture(&self, deadline: u64) {
+        for port in self.ports.values() {
+            port.core()
+                .release_source_local_checkpoint_capture(deadline);
+        }
+    }
+
     pub(crate) fn checker_summary_for_target(
         &self,
         target: &ExecutionModeTarget,

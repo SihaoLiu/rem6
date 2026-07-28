@@ -371,13 +371,15 @@ fn schedule_cli_riscv_host_checkpoint_event(
     index: u64,
     event: &TraceReplayHostEventSpec,
 ) -> Result<(), rem6_system::SystemError> {
-    driver.trap_port().schedule_host_checkpoint_event_parallel(
-        scheduler,
-        run_host_control_event_id(index),
-        source,
-        event.tick(),
-        event.label().to_string(),
-    )?;
+    driver
+        .trap_port()
+        .schedule_host_checkpoint_event_on_source_parallel(
+            scheduler,
+            run_host_control_event_id(index),
+            source,
+            event.tick(),
+            event.label().to_string(),
+        )?;
     Ok(())
 }
 
@@ -390,7 +392,7 @@ fn schedule_cli_riscv_host_checkpoint_restore_event(
 ) -> Result<(), rem6_system::SystemError> {
     driver
         .trap_port()
-        .schedule_host_checkpoint_restore_event_parallel(
+        .schedule_host_checkpoint_restore_event_on_source_parallel(
             scheduler,
             run_host_control_event_id(index),
             source,
