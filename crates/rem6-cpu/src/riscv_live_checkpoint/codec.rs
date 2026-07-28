@@ -660,7 +660,7 @@ fn validate(value: &RiscvO3LiveCheckpointPayload) -> Result<(), Error> {
                 || !value.issued_fetch_requests.is_empty()
                 || !value.writeback_counted_sequences.is_empty()
                 || !value.writeback_published_sequences.is_empty()
-                || executed_requests != event_requests
+                || !executed_requests.is_subset(&event_requests)
                 || !value
                     .finalized_writeback
                     .is_valid_without_live_calendar_at(value.captured_tick)

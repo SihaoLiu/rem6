@@ -3,7 +3,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use rem6_isa_riscv::{FloatRegister, MemoryWidth};
+use rem6_isa_riscv::{FloatRegister, MemoryWidth, RiscvInstruction};
 use rem6_kernel::{PartitionId, ScheduledEventKind, Tick};
 use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
@@ -335,15 +335,13 @@ fn capture_checkpoint_projection_from_guards(
     captured_tick: Tick,
 ) -> RiscvO3CheckpointProjection {
     let stable = stable_projection(state);
-    let live = capture_live_from_guards(&cpu, state, captured_tick).map_or(
-        RiscvO3LiveCheckpointCapture::Rejected,
-        |capture| {
-            capture.map_or(
-                RiscvO3LiveCheckpointCapture::Absent,
-                RiscvO3LiveCheckpointCapture::Captured,
-            )
-        },
-    );
+    let live = match capture_live_from_guards(&cpu, state, captured_tick) {
+        Ok(capture) => capture.map_or(
+            RiscvO3LiveCheckpointCapture::Absent,
+            RiscvO3LiveCheckpointCapture::Captured,
+        ),
+        Err(_) => RiscvO3LiveCheckpointCapture::Rejected,
+    };
     let captured = match &live {
         RiscvO3LiveCheckpointCapture::Captured(live) => Some(live.clone()),
         _ => None,
@@ -394,7 +392,20 @@ fn capture_live_from_guards(
     state: &RiscvCoreState,
     captured_tick: Tick,
 ) -> Result<Option<RiscvO3LiveCheckpointPayload>, RiscvO3LiveCheckpointError> {
-    let runtime = match state.o3_runtime.compute_checkpoint_projection()? {
+    let pending_issued = cpu.events().iter().any(|issued| {
+        issued.kind() == crate::CpuFetchEventKind::Issued
+            && !cpu.events().iter().any(|event| {
+                event.request_id() == issued.request_id()
+                    && event.kind() != crate::CpuFetchEventKind::Issued
+            })
+    });
+    if cpu.has_outstanding_fetch() || pending_issued || state.pending_fetch_prefix.is_some() {
+        return Err(invalid("unsupported instruction fetch authority"));
+    }
+    let runtime = match state
+        .o3_runtime
+        .compute_checkpoint_projection(captured_tick)?
+    {
         Some(runtime) => runtime,
         None => {
             let data_quiescent = state.pending_callback_error.is_none()
@@ -417,22 +428,13 @@ fn capture_live_from_guards(
                             .issued_data_for_fetches
                             .contains(&event.fetch().request_id())
                 });
-            let pending_issued = cpu.events().iter().any(|issued| {
-                issued.kind() == crate::CpuFetchEventKind::Issued
-                    && !cpu.events().iter().any(|event| {
-                        event.request_id() == issued.request_id()
-                            && event.kind() != crate::CpuFetchEventKind::Issued
-                    })
-            });
-            if !cpu.has_outstanding_fetch() && !pending_issued && data_quiescent {
+            if data_quiescent {
                 return Ok(None);
             }
             return Err(invalid("drained capture retains operational authority"));
         }
     };
-    if cpu.has_outstanding_fetch()
-        || state.pending_fetch_prefix.is_some()
-        || state.pending_terminal_memory_result.is_some()
+    if state.pending_terminal_memory_result.is_some()
         || !state.pending_data_translations.is_empty()
         || !state.ready_translated_data.is_empty()
         || state
@@ -464,39 +466,23 @@ fn capture_live_from_guards(
     {
         return Err(invalid("unsupported RISC-V core authority"));
     }
-    let wake = state
-        .o3_writeback_wake
-        .checkpoint_scheduled_wake()
-        .ok_or(invalid("live queue does not own exactly one attached wake"))?;
-    if wake.tick() != runtime.service.requested_tick
-        || wake.event().partition()
-            != cpu
-                .events()
-                .first()
-                .map_or(wake.event().partition(), |event| event.partition())
-    {
-        return Err(invalid("scheduled wake does not match queue service"));
-    }
     let expected_requests = runtime
         .issue_rows
         .iter()
         .map(|row| row.fetch_request)
         .collect::<Vec<_>>();
-    if cpu.events().len() != expected_requests.len()
-        || cpu
-            .events()
+    let completed_fetches =
+        select_live_completed_fetches(cpu.events(), &state.executed_fetches, &expected_requests)?;
+    let wake = state
+        .o3_writeback_wake
+        .checkpoint_scheduled_wake()
+        .ok_or(invalid("live queue does not own exactly one attached wake"))?;
+    if wake.tick() != runtime.service.requested_tick
+        || completed_fetches
             .iter()
-            .map(|event| event.request_id())
-            .ne(expected_requests.iter().copied())
-        || cpu.events().iter().any(|event| {
-            event.kind() != crate::CpuFetchEventKind::Completed
-                || !matches!(event.data().map(<[u8]>::len), Some(2 | 4))
-                || event.data().map(|bytes| bytes.len() as u64) != Some(event.size().bytes())
-        })
+            .any(|event| event.partition() != wake.event().partition())
     {
-        return Err(invalid(
-            "operational fetch stream is not exact completed instructions",
-        ));
+        return Err(invalid("scheduled wake does not match queue service"));
     }
     if expected_requests
         .iter()
@@ -506,34 +492,85 @@ fn capture_live_from_guards(
             "next fetch sequence does not follow restored requests",
         ));
     }
-    let by_request = state
-        .events
-        .iter()
-        .map(|event| (event.fetch().request_id(), event))
-        .collect::<BTreeMap<_, _>>();
     let mut events = Vec::with_capacity(expected_requests.len());
-    for request in &expected_requests {
-        let event = by_request
-            .get(request)
-            .ok_or(invalid("issue fetch has no execution event"))?;
-        let projected = project_event(event);
+    let mut replay_hart = state.hart.clone();
+    for (row, completed_fetch) in runtime.issue_rows.iter().zip(completed_fetches) {
+        let raw_bytes = completed_fetch
+            .data()
+            .ok_or(invalid("live issue fetch has no instruction bytes"))?;
+        let mut padded = [0_u8; 4];
+        padded[..raw_bytes.len()].copy_from_slice(raw_bytes);
+        let decoded = RiscvInstruction::decode_with_length(u32::from_le_bytes(padded))
+            .map_err(|_| invalid("live issue instruction does not decode"))?;
+        if usize::from(decoded.bytes()) != raw_bytes.len()
+            || !state
+                .o3_runtime
+                .checkpoint_live_instruction_matches(row.sequence, decoded.instruction())
+        {
+            return Err(invalid("live issue instruction disagrees with O3 owner"));
+        }
+        let source_events = state
+            .events
+            .iter()
+            .filter(|event| event.fetch().request_id() == row.fetch_request)
+            .collect::<Vec<_>>();
+        let event = if state.executed_fetches.contains(&row.fetch_request) {
+            let [source_event] = source_events.as_slice() else {
+                return Err(invalid(
+                    "executed live issue row lacks one canonical execution event",
+                ));
+            };
+            if source_event.fetch() != completed_fetch
+                || source_event.instruction() != decoded.instruction()
+            {
+                return Err(invalid("live issue source event disagrees with fetch"));
+            }
+            (*source_event).clone()
+        } else {
+            if !source_events.is_empty() {
+                return Err(invalid(
+                    "pending live issue row retains an execution history event",
+                ));
+            }
+            replay_hart.set_pc(completed_fetch.pc().get());
+            let execution = replay_hart
+                .execute_decoded(decoded)
+                .map_err(|_| invalid("live issue instruction does not replay"))?;
+            crate::RiscvCpuExecutionEvent::new(
+                completed_fetch.clone(),
+                decoded.instruction(),
+                execution,
+            )
+        };
+        let projected = project_event(&event);
         if projected.memory_access.is_some()
             || projected.data_access_event_kind.is_some()
-            || projected.rebuild().as_ref() != Ok(*event)
+            || projected.rebuild().as_ref() != Ok(&event)
         {
             return Err(invalid(
                 "execution event contains unsupported transient state",
             ));
         }
+        for write in &projected.register_writes {
+            replay_hart.write(write.register(), write.value());
+        }
+        for write in &projected.float_register_writes {
+            replay_hart.write_float(write.register(), write.value());
+        }
+        replay_hart.set_pc(projected.next_pc);
         events.push(projected);
     }
-    let event_requests = expected_requests.iter().copied().collect::<BTreeSet<_>>();
+    let executed_fetch_requests = expected_requests
+        .iter()
+        .filter(|request| state.executed_fetches.contains(request))
+        .copied()
+        .collect::<Vec<_>>();
     let live_issued_requests = expected_requests
         .iter()
         .filter(|request| state.issued_data_for_fetches.contains(request))
         .copied()
         .collect::<Vec<_>>();
-    if !event_requests.is_subset(&state.executed_fetches) || !live_issued_requests.is_empty() {
+    if !live_issued_requests.is_empty() {
         return Err(invalid(
             "live replay execution is incomplete or carries data issue state",
         ));
@@ -547,7 +584,7 @@ fn capture_live_from_guards(
         issue_rows: runtime.issue_rows,
         rename_rows: runtime.rename_rows,
         resident_sequences: runtime.resident_sequences,
-        executed_fetch_requests: event_requests.iter().copied().collect(),
+        executed_fetch_requests,
         issued_fetch_requests: live_issued_requests,
         service: runtime.service,
         finalized_writeback: runtime.finalized_writeback,
@@ -563,6 +600,66 @@ fn capture_live_from_guards(
             kind: wake.event().kind(),
         },
     }))
+}
+
+fn select_live_completed_fetches<'a>(
+    cpu_events: &'a [crate::CpuFetchEvent],
+    executed_fetches: &BTreeSet<MemoryRequestId>,
+    expected_requests: &[MemoryRequestId],
+) -> Result<Vec<&'a crate::CpuFetchEvent>, RiscvO3LiveCheckpointError> {
+    let expected = expected_requests.iter().copied().collect::<BTreeSet<_>>();
+    if expected.len() != expected_requests.len() {
+        return Err(invalid("live issue rows repeat a fetch request"));
+    }
+
+    let mut issued = BTreeSet::new();
+    let mut completed = BTreeMap::new();
+    for event in cpu_events {
+        let request = event.request_id();
+        if !expected.contains(&request) && !executed_fetches.contains(&request) {
+            return Err(invalid(
+                "operational fetch stream contains an unexecuted fetch",
+            ));
+        }
+        match event.kind() {
+            crate::CpuFetchEventKind::Issued => {
+                if !issued.insert(request) {
+                    return Err(invalid("operational fetch stream repeats an issued fetch"));
+                }
+            }
+            crate::CpuFetchEventKind::Completed => {
+                if !matches!(event.data().map(<[u8]>::len), Some(2 | 4))
+                    || event.data().map(|bytes| bytes.len() as u64) != Some(event.size().bytes())
+                    || completed.insert(request, event).is_some()
+                {
+                    return Err(invalid(
+                        "operational fetch stream contains an invalid completed instruction",
+                    ));
+                }
+            }
+            crate::CpuFetchEventKind::Retry | crate::CpuFetchEventKind::Failed => {
+                return Err(invalid(
+                    "operational fetch stream contains an unsuccessful fetch",
+                ));
+            }
+        }
+    }
+    if issued
+        .iter()
+        .any(|request| !completed.contains_key(request))
+    {
+        return Err(invalid("operational fetch stream retains a pending fetch"));
+    }
+
+    expected_requests
+        .iter()
+        .map(|request| {
+            completed
+                .get(request)
+                .copied()
+                .ok_or(invalid("live issue row has no completed fetch"))
+        })
+        .collect()
 }
 
 fn project_event(event: &crate::RiscvCpuExecutionEvent) -> RiscvO3LiveCheckpointEvent {

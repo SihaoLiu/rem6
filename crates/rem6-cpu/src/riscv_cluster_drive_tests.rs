@@ -89,7 +89,7 @@ fn restored_live_gate_awaiting_rebind_admits_only_the_head_replay() {
     }
 
     assert!(core.o3_retirement_suppresses_normal_pipeline());
-    assert!(fetch_before_pipeline_is_admitted(&core));
+    assert!(fetch_before_pipeline_is_admitted(&core, 0));
 
     {
         let mut state = core.state.lock().expect("riscv core lock");
@@ -105,7 +105,25 @@ fn restored_live_gate_awaiting_rebind_admits_only_the_head_replay() {
         );
     }
 
-    assert!(!fetch_before_pipeline_is_admitted(&core));
+    assert!(!fetch_before_pipeline_is_admitted(&core, 0));
+}
+
+#[test]
+fn source_local_checkpoint_prepare_is_counted_released_and_expires() {
+    let core = core_with_completed_fetch();
+
+    core.prepare_source_local_checkpoint_capture(5);
+    core.prepare_source_local_checkpoint_capture(5);
+    assert!(!fetch_before_pipeline_is_admitted(&core, 5));
+
+    core.release_source_local_checkpoint_capture(5);
+    assert!(!fetch_before_pipeline_is_admitted(&core, 5));
+    core.release_source_local_checkpoint_capture(5);
+    assert!(fetch_before_pipeline_is_admitted(&core, 5));
+
+    core.prepare_source_local_checkpoint_capture(7);
+    assert!(!fetch_before_pipeline_is_admitted(&core, 7));
+    assert!(fetch_before_pipeline_is_admitted(&core, 8));
 }
 
 #[test]

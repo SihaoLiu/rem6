@@ -536,6 +536,62 @@ fn riscv_core_translated_driver_fetches_cold_younger_window_before_data_issue() 
 }
 
 #[test]
+fn riscv_core_translated_checkpoint_fence_allows_data_progress_without_younger_fetch() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core_with_latency(fetch_route, data_route, 0x8000, 1);
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(2);
+    core.write_register(reg(2), 0x4000);
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = loaded_program_store(
+        0x8000,
+        &[i_type(8, 2, 0x3, 5, 0x03), i_type(1, 0, 0x0, 6, 0x13)],
+        &[(0x9008, vec![0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe])],
+    );
+
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    core.prepare_source_local_checkpoint_capture(100);
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+    assert_eq!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        None
+    );
+    scheduler
+        .schedule_after(core.partition(), 1, |_context| {})
+        .unwrap();
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::DataAccessIssued { .. })
+    ));
+    assert!(!core.has_pending_fetch());
+    scheduler.run_until_idle_conservative();
+    assert_eq!(
+        core.data_access_events()
+            .iter()
+            .map(|event| event.kind())
+            .collect::<Vec<_>>(),
+        vec![
+            RiscvDataAccessEventKind::Issued,
+            RiscvDataAccessEventKind::Completed,
+        ]
+    );
+    assert!(!matches!(
+        drive_one_translated_action(&core, store, &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert!(!core.has_pending_fetch());
+}
+
+#[test]
 fn riscv_core_redirect_discards_pending_data_translation_frontend_entry() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = translated_data_core_with_latency(fetch_route, data_route, 0x8000, 1);

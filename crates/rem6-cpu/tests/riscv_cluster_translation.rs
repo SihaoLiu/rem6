@@ -4,7 +4,7 @@ use rem6_boot::BootImage;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, CpuTranslationFrontend,
     InOrderPipelineConfig, InOrderPipelineStage, InOrderPipelineStageWidth, RiscvCluster,
-    RiscvClusterDriveEvent, RiscvCore, RiscvCoreDriveAction,
+    RiscvClusterDriveEvent, RiscvCore, RiscvCoreDriveAction, RiscvDataAccessEventKind,
 };
 use rem6_isa_riscv::{Register, RiscvPrivilegeMode, RiscvTrapKind};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
@@ -490,6 +490,126 @@ fn riscv_cluster_parallel_turns_issue_translated_data_accesses() {
             ),
         ]
     );
+}
+
+#[test]
+fn riscv_cluster_translated_checkpoint_fence_allows_data_progress_without_younger_fetch() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = translated_riscv_core_with_latency(
+        CoreSpec {
+            cpu: 0,
+            partition: 0,
+            agent: 7,
+            entry: 0x8000,
+            fetch_endpoint: "cpu0.ifetch",
+            fetch_route,
+            data_endpoint: "cpu0.dmem",
+            data_route,
+        },
+        1,
+    );
+    core.set_detailed_live_retire_gate_enabled(true);
+    core.set_o3_scalar_memory_depth(2);
+    core.write_register(reg(2), 0x4000);
+    let cluster = RiscvCluster::new([core]).unwrap();
+    let core = cluster.core(CpuId::new(0)).unwrap();
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = store_with_programs_and_data(
+        &[
+            (0x8000, i_type(8, 2, 0x3, 5, 0x03)),
+            (0x8004, i_type(1, 0, 0x0, 6, 0x13)),
+        ],
+        &[(0x9008, vec![0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe])],
+    );
+    let drive = |scheduler: &mut PartitionedScheduler| {
+        cluster
+            .drive_ready_cores_parallel_with_data_translation(
+                scheduler,
+                &transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                &page_map,
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+            )
+            .unwrap()
+    };
+
+    let first = drive(&mut scheduler);
+    assert!(matches!(
+        first[0].action(),
+        RiscvCoreDriveAction::FetchIssued { .. }
+    ));
+    scheduler.run_until_idle_parallel().unwrap();
+    core.prepare_source_local_checkpoint_capture(100);
+    let executed = drive_translated_until_non_pipeline_action(
+        &cluster,
+        &mut scheduler,
+        &transport,
+        &page_map,
+        store.clone(),
+    );
+    assert!(matches!(
+        executed[0].action(),
+        RiscvCoreDriveAction::InstructionExecuted(_)
+    ));
+    assert!(drive(&mut scheduler).is_empty());
+    scheduler.run_until_idle_parallel().unwrap();
+
+    let data = drive(&mut scheduler);
+    assert!(matches!(
+        data[0].action(),
+        RiscvCoreDriveAction::DataAccessIssued { .. }
+    ));
+    assert!(!core.has_pending_fetch());
+    scheduler.run_until_idle_parallel().unwrap();
+    assert_eq!(
+        core.data_access_events()
+            .iter()
+            .map(|event| event.kind())
+            .collect::<Vec<_>>(),
+        vec![
+            RiscvDataAccessEventKind::Issued,
+            RiscvDataAccessEventKind::Completed,
+        ]
+    );
+    assert!(drive(&mut scheduler)
+        .iter()
+        .all(|event| !matches!(event.action(), RiscvCoreDriveAction::FetchIssued { .. })));
+    assert!(!core.has_pending_fetch());
 }
 
 #[test]

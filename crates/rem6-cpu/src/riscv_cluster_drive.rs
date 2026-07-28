@@ -498,7 +498,10 @@ pub(crate) fn prepare_fetch_ahead_speculation(
         .map_err(|error| RiscvClusterError::Core { cpu, error })
 }
 
-pub(crate) fn fetch_before_pipeline_is_admitted(core: &RiscvCore) -> bool {
+pub(crate) fn fetch_before_pipeline_is_admitted(core: &RiscvCore, now: u64) -> bool {
+    if core.source_local_checkpoint_capture_blocks_fetch(now) {
+        return false;
+    }
     if inherited_o3_retirement_suppresses_pipeline(core) {
         return false;
     }

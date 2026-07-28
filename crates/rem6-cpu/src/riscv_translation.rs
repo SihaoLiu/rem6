@@ -1072,6 +1072,7 @@ impl RiscvCore {
         if self.has_pending_trap() {
             return Ok(None);
         }
+        let fetch_blocked = self.source_local_checkpoint_capture_blocks_fetch(scheduler.now());
         let translated_result_pair_ready = match self
             .translated_result_pair_progress(scheduler.now())
         {
@@ -1100,7 +1101,7 @@ impl RiscvCore {
             {
                 return Ok(None);
             }
-            if !translated_result_pair_ready {
+            if !translated_result_pair_ready && !fetch_blocked {
                 if let Some(fetch_request) = self
                     .ready_translated_scalar_load_window_fetch_request(scheduler.now(), transport)?
                 {
@@ -1171,7 +1172,7 @@ impl RiscvCore {
             self.in_order_fetch_admission()
         };
 
-        if fetch_admission.allows_fetch() {
+        if !fetch_blocked && fetch_admission.allows_fetch() {
             if let Some(decision) = self.next_cached_translated_memory_fetch_ahead_before_retire() {
                 let fetch_ahead = self.prepare_fetch_ahead_speculation(&decision)?;
                 self.set_fetch_ahead_pc(decision.pc());
@@ -1212,6 +1213,9 @@ impl RiscvCore {
             return Ok(None);
         }
         if inherited_o3_retirement {
+            return Ok(None);
+        }
+        if fetch_blocked {
             return Ok(None);
         }
         if !fetch_admission.allows_fetch() {

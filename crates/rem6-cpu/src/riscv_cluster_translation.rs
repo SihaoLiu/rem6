@@ -106,6 +106,9 @@ where
         + Send
         + 'static,
 {
+    if core.source_local_checkpoint_capture_blocks_fetch(scheduler.now()) {
+        return Ok(false);
+    }
     let Some(fetch_request) = core
         .ready_translated_scalar_load_window_fetch_request(scheduler.now(), transport)
         .map_err(|error| RiscvClusterError::Core { cpu, error })?

@@ -29,8 +29,138 @@ fn capture_o3_live_checkpoint_returns_compute_profile() {
     assert_eq!(live.wake.tick, 100);
     assert_eq!(live.wake.scheduler_instance_raw, fixture.scheduler_instance_raw);
     assert_eq!(captured_live(&fixture.core.capture_checkpoint_projection(100)), live);
-    fixture.core.state.lock().expect("riscv core lock").executed_fetches.remove(&request(2));
-    assert!(matches!(fixture.core.capture_checkpoint_projection(100).live_capture(), RiscvO3LiveCheckpointCapture::Rejected));
+    let mut state = fixture.core.state.lock().expect("riscv core lock");
+    state.events.retain(|event| event.fetch().request_id() == request(0));
+    state.executed_fetches.retain(|request_id| *request_id == request(0));
+    drop(state);
+    let mut pending = live.clone();
+    pending.executed_fetch_requests.clear();
+    assert_eq!(captured_live(&fixture.core.capture_checkpoint_projection(100)), &pending);
+}
+
+#[test]
+fn compute_capture_accepts_real_fetch_stream_with_retired_history() {
+    let fixture = ComputeFixture::new();
+    let resident_completions = fixture.core.inner().fetch_events();
+    fixture
+        .core
+        .core
+        .state
+        .lock()
+        .expect("cpu core lock")
+        .events = real_fetch_stream(&fixture);
+
+    let projection = fixture.core.capture_checkpoint_projection(100);
+    let live = captured_live(&projection);
+    assert_eq!(
+        live.events
+            .iter()
+            .map(|event| event.fetch.clone())
+            .collect::<Vec<_>>(),
+        resident_completions,
+    );
+}
+
+#[test]
+fn compute_capture_preserves_pending_execution_membership() {
+    let fixture = ComputeFixture::new();
+    {
+        let mut state = fixture.core.state.lock().expect("riscv core lock");
+        state
+            .events
+            .retain(|event| event.fetch().request_id() == request(0));
+        state
+            .executed_fetches
+            .retain(|request_id| *request_id == request(0));
+    }
+
+    let projection = fixture.core.capture_checkpoint_projection(100);
+    let live = captured_live(&projection);
+    assert_eq!(live.events.len(), 2);
+    assert!(live.executed_fetch_requests.is_empty());
+
+    let destination = core();
+    install_projection(&destination, &fixture.core, &projection);
+    assert!(destination.execution_events().is_empty());
+    let state = destination.state.lock().expect("riscv core lock");
+    assert!(!state.executed_fetches.contains(&request(1)));
+    assert!(!state.executed_fetches.contains(&request(2)));
+}
+
+#[test]
+fn compute_capture_rejects_nonresident_unexecuted_fetch_records() {
+    let fixture = ComputeFixture::new();
+    let unexecuted = compute_event(
+        0x8008,
+        3,
+        i_type(0, 0, 0, 0, 0x13),
+        Vec::new(),
+        Vec::new(),
+        None,
+        None,
+    )
+    .fetch;
+    let mut events = real_fetch_stream(&fixture);
+    events.extend(fetch_pair(&unexecuted));
+    fixture
+        .core
+        .core
+        .state
+        .lock()
+        .expect("cpu core lock")
+        .events = events;
+    fixture.core.inner().advance_sequence_past(request(3));
+
+    assert!(matches!(
+        fixture
+            .core
+            .capture_checkpoint_projection(100)
+            .live_capture(),
+        RiscvO3LiveCheckpointCapture::Rejected
+    ));
+}
+
+#[test]
+fn compute_capture_requires_one_valid_completion_per_resident_fetch() {
+    let fixture = ComputeFixture::new();
+    let valid = real_fetch_stream(&fixture);
+
+    let mut missing = valid.clone();
+    missing.retain(|event| {
+        event.request_id() != request(2) || event.kind() != CpuFetchEventKind::Completed
+    });
+    assert_compute_fetch_stream_rejected(&fixture, missing);
+
+    let mut duplicate = valid.clone();
+    let completion = duplicate
+        .iter()
+        .find(|event| {
+            event.request_id() == request(1) && event.kind() == CpuFetchEventKind::Completed
+        })
+        .unwrap()
+        .clone();
+    duplicate.push(completion);
+    assert_compute_fetch_stream_rejected(&fixture, duplicate);
+
+    let resident = fixture
+        .core
+        .inner()
+        .fetch_events()
+        .into_iter()
+        .find(|event| event.request_id() == request(1))
+        .unwrap();
+    for terminal in [
+        CpuFetchEvent::completed(fetch_record(&resident), vec![0; 3]),
+        CpuFetchEvent::retry(fetch_record(&resident)),
+        CpuFetchEvent::failed(fetch_record(&resident)),
+    ] {
+        let mut invalid = valid.clone();
+        invalid.retain(|event| {
+            event.request_id() != request(1) || event.kind() == CpuFetchEventKind::Issued
+        });
+        invalid.push(terminal);
+        assert_compute_fetch_stream_rejected(&fixture, invalid);
+    }
 }
 
 #[test]
@@ -75,9 +205,13 @@ fn checkpoint_capture_holds_cpu_then_riscv_state_for_one_projection() {
 #[test]
 #[rustfmt::skip]
 fn capture_rejects_pending_fetch_and_in_order_pipeline_authority() {
-    let fetch_core = core();
-    fetch_core.core.state.lock().expect("cpu core lock").events.push(CpuFetchEvent::issued(CpuFetchRecord::new(0, PartitionId::new(0), MemoryRouteId::new(0), TransportEndpointId::new("cpu0.ifetch").unwrap(), request(0), Address::new(0x8000), AccessSize::new(4).unwrap())));
-    assert!(matches!(fetch_core.capture_checkpoint_projection(0).live_capture(), RiscvO3LiveCheckpointCapture::Rejected));
+    let drained = core();
+    drained.core.state.lock().expect("cpu core lock").events.push(CpuFetchEvent::issued(CpuFetchRecord::new(0, PartitionId::new(0), MemoryRouteId::new(0), TransportEndpointId::new("cpu0.ifetch").unwrap(), request(0), Address::new(0x8000), AccessSize::new(4).unwrap())));
+    assert!(matches!(drained.capture_checkpoint_projection(0).live_capture(), RiscvO3LiveCheckpointCapture::Rejected));
+
+    let fetch = ComputeFixture::new();
+    fetch.core.core.state.lock().expect("cpu core lock").events.push(CpuFetchEvent::issued(CpuFetchRecord::new(3, PartitionId::new(0), MemoryRouteId::new(0), TransportEndpointId::new("cpu0.ifetch").unwrap(), request(3), Address::new(0x8008), AccessSize::new(4).unwrap())));
+    assert!(matches!(fetch.core.capture_checkpoint_projection(100).live_capture(), RiscvO3LiveCheckpointCapture::Rejected));
 
     let wake = ComputeFixture::new();
     wake.core.core.state.lock().expect("cpu core lock").events.push(compute_event(0x8000, 3, i_type(0, 0, 0, 0, 0x13), Vec::new(), Vec::new(), None, None).fetch);
@@ -113,6 +247,69 @@ fn compute_capture_normalizes_projected_issue_decision_once() {
     let state = fixture.core.state.lock().expect("riscv core lock");
     assert!(state.o3_runtime.has_active_live_issue_decision_for_test());
     assert_eq!(state.o3_runtime.stats(), first.stable().stats());
+}
+
+#[test]
+fn compute_capture_normalizes_finalized_writeback_and_retired_data_provenance() {
+    let fixture = ComputeFixture::new();
+    let source_stats = {
+        let mut state = fixture.core.state.lock().expect("riscv core lock");
+        state
+            .o3_runtime
+            .checkpoint_publish_fixed_writeback_for_test(0, 99);
+        state
+            .o3_runtime
+            .checkpoint_mark_data_younger_for_test(fixture.sequences.iter().copied());
+        state
+            .o3_runtime
+            .checkpoint_complete_service_and_request_for_test(99, 100);
+        state.o3_runtime.stats()
+    };
+
+    let projection = fixture.core.capture_checkpoint_projection(100);
+    let live = captured_live(&projection);
+    assert_eq!(projection.stable().stats(), source_stats);
+    assert!(live.writeback_published_sequences.is_empty());
+    assert!(live.writeback_counted_sequences.is_empty());
+
+    let destination = core();
+    install_projection(&destination, &fixture.core, &projection);
+    assert_eq!(destination.o3_runtime_stats(), source_stats);
+}
+
+#[test]
+fn compute_capture_rejects_current_writeback_or_unrelated_data_provenance() {
+    let current = ComputeFixture::new();
+    current
+        .core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .o3_runtime
+        .checkpoint_publish_fixed_writeback_for_test(0, 100);
+    assert!(matches!(
+        current
+            .core
+            .capture_checkpoint_projection(100)
+            .live_capture(),
+        RiscvO3LiveCheckpointCapture::Rejected
+    ));
+
+    let unrelated = ComputeFixture::new();
+    unrelated
+        .core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .o3_runtime
+        .checkpoint_mark_data_younger_for_test([999]);
+    assert!(matches!(
+        unrelated
+            .core
+            .capture_checkpoint_projection(100)
+            .live_capture(),
+        RiscvO3LiveCheckpointCapture::Rejected
+    ));
 }
 
 #[test]
@@ -212,10 +409,11 @@ fn compute_restore_recomposes_finalized_and_live_writeback_stats() {
     let expected_finalized = captured_live(&projection).finalized_writeback.clone();
     assert_eq!(expected.writeback_port_cycles(), 1);
     assert_eq!(expected.writeback_port_admitted_rows(), 1);
-    assert_eq!(expected_finalized.cycles, 0);
+    assert_eq!(expected_finalized.cycles, 1);
     assert_eq!(expected_finalized.admitted_rows, 1);
-    assert_eq!(expected_finalized.partial_cycle_ticks, BTreeSet::from([90]));
-    assert_eq!(expected_finalized.partial_ready_rows_by_tick.get(&90), Some(&1));
+    assert!(expected_finalized.partial_cycle_ticks.is_empty());
+    assert!(expected_finalized.partial_ready_rows_by_tick.is_empty());
+    assert_eq!(expected_finalized.closed_before_tick, 100);
     let destination = core();
     install_projection(&destination, &fixture.core, &projection);
     assert_eq!(destination.o3_runtime_stats(), expected);
@@ -266,7 +464,7 @@ corruption_tests! {
     compute_prepare_rejects_nonempty_stable_lsq => NonemptyStableLsq,
     compute_prepare_rejects_incomplete_live_rob_closure => IncompleteRobClosure,
     compute_prepare_rejects_self_suppressing_service_identity => SelfSuppressingService,
-    compute_prepare_rejects_missing_executed_replay_membership => MissingExecutedMembership,
+    compute_prepare_rejects_foreign_executed_replay_membership => ForeignExecutedMembership,
     compute_prepare_rejects_stable_live_retire_gate => StableRetireGate,
     compute_prepare_rejects_ready_resident_row => ReadyResident,
     compute_prepare_rejects_future_finalized_writeback_ownership => FutureFinalizedTick,
@@ -461,7 +659,7 @@ enum ComputeCorruption {
     NonemptyStableLsq,
     IncompleteRobClosure,
     SelfSuppressingService,
-    MissingExecutedMembership,
+    ForeignExecutedMembership,
     StableRetireGate,
     ReadyResident,
     FutureFinalizedTick,
@@ -505,8 +703,8 @@ fn corrupt_compute_projection(
             live.service.mutation_generation = 7;
             live.service.last_service_generation = Some((100, 7));
         }
-        ComputeCorruption::MissingExecutedMembership => {
-            live.executed_fetch_requests.clear();
+        ComputeCorruption::ForeignExecutedMembership => {
+            live.executed_fetch_requests.push(request(99));
         }
         ComputeCorruption::StableRetireGate => {
             stable = stable.with_live_retire_gate(Some(O3LiveRetireGateCheckpointPayload::new(
@@ -521,10 +719,8 @@ fn corrupt_compute_projection(
         }
         ComputeCorruption::FutureFinalizedTick => {
             let finalized = &mut live.finalized_writeback;
-            finalized.partial_cycle_ticks.remove(&90);
             finalized.partial_cycle_ticks.insert(101);
-            let ready = finalized.partial_ready_rows_by_tick.remove(&90).unwrap();
-            finalized.partial_ready_rows_by_tick.insert(101, ready);
+            finalized.partial_ready_rows_by_tick.insert(101, 1);
         }
         ComputeCorruption::FutureClosedBefore => {
             let finalized = &mut live.finalized_writeback;
@@ -582,6 +778,57 @@ fn compute_event(
         register_writes, float_register_writes, memory_access, data_access_event_kind,
         counts_as_retired_instruction: true,
     }
+}
+
+fn real_fetch_stream(fixture: &ComputeFixture) -> Vec<CpuFetchEvent> {
+    let retired = fixture
+        .core
+        .execution_events()
+        .into_iter()
+        .find(|event| event.fetch().request_id() == request(0))
+        .unwrap()
+        .fetch()
+        .clone();
+    std::iter::once(retired)
+        .chain(fixture.core.inner().fetch_events())
+        .flat_map(|completed| fetch_pair(&completed))
+        .collect()
+}
+
+fn fetch_pair(completed: &CpuFetchEvent) -> [CpuFetchEvent; 2] {
+    [
+        CpuFetchEvent::issued(fetch_record(completed)),
+        completed.clone(),
+    ]
+}
+
+fn fetch_record(event: &CpuFetchEvent) -> CpuFetchRecord {
+    CpuFetchRecord::new(
+        event.tick().saturating_sub(1),
+        event.partition(),
+        event.route(),
+        event.endpoint().clone(),
+        event.request_id(),
+        event.pc(),
+        event.size(),
+    )
+}
+
+fn assert_compute_fetch_stream_rejected(fixture: &ComputeFixture, events: Vec<CpuFetchEvent>) {
+    fixture
+        .core
+        .core
+        .state
+        .lock()
+        .expect("cpu core lock")
+        .events = events;
+    assert!(matches!(
+        fixture
+            .core
+            .capture_checkpoint_projection(100)
+            .live_capture(),
+        RiscvO3LiveCheckpointCapture::Rejected
+    ));
 }
 
 #[rustfmt::skip]

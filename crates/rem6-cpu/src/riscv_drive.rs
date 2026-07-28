@@ -54,6 +54,7 @@ impl RiscvCore {
             }
         }
 
+        let fetch_blocked = self.source_local_checkpoint_capture_blocks_fetch(scheduler.now());
         let detailed_o3_fetch = self.detailed_o3_window_prefers_fetch_ahead();
         let inherited_o3_retirement = !detailed_o3_fetch
             && self.o3_retirement_suppresses_normal_pipeline()
@@ -69,7 +70,7 @@ impl RiscvCore {
             self.in_order_fetch_admission()
         };
 
-        if fetch_admission.allows_fetch() {
+        if !fetch_blocked && fetch_admission.allows_fetch() {
             if let Some(decision) = self.next_pending_data_fetch_ahead(pending_data_blocks) {
                 let fetch_ahead = self.prepare_fetch_ahead_speculation(&decision)?;
                 self.set_fetch_ahead_pc(decision.pc());
@@ -113,6 +114,9 @@ impl RiscvCore {
             return Ok(None);
         }
         if inherited_o3_retirement {
+            return Ok(None);
+        }
+        if fetch_blocked {
             return Ok(None);
         }
         if !fetch_admission.allows_fetch() {

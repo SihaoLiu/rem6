@@ -47,6 +47,7 @@ mod riscv_bimode_checkpoint;
 mod riscv_branch_kind;
 mod riscv_branch_speculation;
 mod riscv_checker;
+mod riscv_checkpoint_prepare;
 mod riscv_cluster;
 mod riscv_cluster_drive;
 mod riscv_cluster_error;
@@ -924,6 +925,7 @@ struct RiscvCoreState {
     data_translation: Option<CpuTranslationFrontend>,
     executed_fetches: BTreeSet<MemoryRequestId>,
     pending_fetch_prefix: Option<riscv_execute::RiscvPendingFetchPrefix>,
+    source_local_checkpoint_capture_deadlines: BTreeMap<u64, u64>,
     pending_terminal_memory_result:
         Option<riscv_live_retire_window::RiscvPendingTerminalMemoryResult>,
     next_terminal_memory_result_issue_wake_generation: u64,
@@ -991,6 +993,7 @@ impl RiscvCoreState {
             data_translation: None,
             executed_fetches: BTreeSet::new(),
             pending_fetch_prefix: None,
+            source_local_checkpoint_capture_deadlines: BTreeMap::new(),
             pending_terminal_memory_result: None,
             next_terminal_memory_result_issue_wake_generation: 0,
             issued_data_for_fetches: BTreeSet::new(),

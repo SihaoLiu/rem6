@@ -34,6 +34,14 @@ impl PreparedRiscvO3LiveRestore {
 }
 
 impl O3RuntimeState {
+    pub(crate) fn checkpoint_live_instruction_matches(
+        &self,
+        sequence: u64,
+        instruction: RiscvInstruction,
+    ) -> bool {
+        self.live_staged_instruction_matches(sequence, instruction)
+    }
+
     #[cfg(test)]
     pub(crate) fn live_issue_resident_sequences_for_checkpoint(&self) -> Vec<u64> {
         self.live_issue.resident_sequences().to_vec()
@@ -79,15 +87,17 @@ impl O3RuntimeState {
 
     pub(crate) fn compute_checkpoint_projection(
         &self,
+        captured_tick: u64,
     ) -> Result<Option<O3ComputeCheckpointProjection>, Error> {
+        let resident_sequences = self.live_issue.resident_sequences().to_vec();
+        let normalized_data_provenance = self.live_data_access_younger_sequences.is_empty()
+            || self.live_data_access_younger_sequences
+                == resident_sequences.iter().copied().collect::<BTreeSet<_>>();
         if self.live_issue.transaction_active()
             || !self.pending_data_accesses.is_empty()
             || self.store_forwarding_window != Default::default()
             || !self.live_retired_instructions.is_empty()
             || !self.live_speculative_executions.is_empty()
-            || !self.writeback_calendar.by_tick.is_empty()
-            || !self.published_writeback_sequences.is_empty()
-            || !self.live_writeback_counted_sequences.is_empty()
             || !self.live_control_lineages.is_empty()
             || !self.live_serializing_control_sequences.is_empty()
             || !self.invalidated_live_staged_fetch_identities.is_empty()
@@ -95,16 +105,25 @@ impl O3RuntimeState {
             || self.deferred_live_data_access_execution.is_some()
             || !self.live_data_accesses.is_empty()
             || self.has_pending_data_address()
-            || !self.live_data_access_younger_sequences.is_empty()
+            || !normalized_data_provenance
         {
             return Err(invalid("unsupported transient O3 authority"));
+        }
+        let mut finalized_writeback = self.clone();
+        finalized_writeback.prune_writeback_calendar_before(captured_tick);
+        if !finalized_writeback.writeback_calendar.by_tick.is_empty()
+            || !finalized_writeback.published_writeback_sequences.is_empty()
+            || !finalized_writeback
+                .live_writeback_counted_sequences
+                .is_empty()
+        {
+            return Err(invalid("unsupported live writeback ownership"));
         }
         if self.live_issue.resident_sequences().is_empty()
             && self.live_issue.requested_service_tick().is_none()
         {
             return Ok(None);
         }
-        let resident_sequences = self.live_issue.resident_sequences().to_vec();
         if resident_sequences.windows(2).any(|rows| rows[0] >= rows[1]) {
             return Err(invalid(
                 "resident issue sequences are not unique and ordered",
@@ -138,7 +157,7 @@ impl O3RuntimeState {
                 last_service_generation: self.live_issue.last_service_generation(),
                 telemetry: checkpoint_telemetry(telemetry),
             },
-            finalized_writeback: self.checkpoint_finalized_writeback(),
+            finalized_writeback: finalized_writeback.checkpoint_finalized_writeback(),
         }))
     }
 
@@ -223,7 +242,7 @@ impl O3RuntimeState {
             .iter()
             .copied()
             .collect::<BTreeSet<_>>();
-        if executed_requests != event_requests || !live.issued_fetch_requests.is_empty() {
+        if !executed_requests.is_subset(&event_requests) || !live.issued_fetch_requests.is_empty() {
             return Err(invalid("execution membership differs from replay events"));
         }
         validate_unique_values(
@@ -351,6 +370,7 @@ impl O3RuntimeState {
         runtime
             .restore_compute_checkpoint_writeback(&live.finalized_writeback, stable_stats)
             .map_err(|_| invalid("writeback ownership does not recompose O3RT stats"))?;
+        rebuilt_events.retain(|event| executed_requests.contains(&event.fetch().request_id()));
         Ok(PreparedRiscvO3LiveRestore {
             runtime,
             events: rebuilt_events,
@@ -378,6 +398,21 @@ impl O3RuntimeState {
         finalized.partial_ready_rows_by_tick.insert(tick, 1);
         self.finalized_writeback_port_stats =
             O3FinalizedWritebackPortStats::from_checkpoint_projection(&finalized);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn checkpoint_publish_fixed_writeback_for_test(&mut self, sequence: u64, tick: u64) {
+        self.reserve_writeback_completions([O3LiveWritebackReady::fixed_fu(sequence, tick)])
+            .unwrap();
+        self.finalize_writeback_publication(sequence);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn checkpoint_mark_data_younger_for_test(
+        &mut self,
+        sequences: impl IntoIterator<Item = u64>,
+    ) {
+        self.live_data_access_younger_sequences.extend(sequences);
     }
 }
 
