@@ -5,6 +5,9 @@ use serde_json::Value;
 
 use super::*;
 
+pub(super) const O3_LIVE_CHECKPOINT_CHUNK: &str = "o3-live-checkpoint";
+pub(super) const O3_RUNTIME_CHUNK: &str = "o3-runtime-state";
+
 const LIVE_COMPUTE_GATE_PC: &str = "0x80000010";
 pub(super) const LIVE_COMPUTE_READY_PC: &str = "0x80000024";
 pub(super) const LIVE_COMPUTE_DEPENDENT_PC: &str = "0x80000028";
@@ -372,5 +375,25 @@ fn exact_o3_event<'a>(json: &'a Value, pc: &str) -> &'a Value {
         1,
         "live compute O3 event at {pc}: {matches:#?}"
     );
+    matches[0]
+}
+
+pub(super) fn decoded_cpu_checkpoint_chunk<'a>(
+    action: &'a Value,
+    name: &str,
+    decoded: &str,
+) -> &'a Value {
+    cpu_checkpoint_chunk(action, name)
+        .get(decoded)
+        .unwrap_or_else(|| panic!("missing decoded {name}/{decoded} evidence: {action}"))
+}
+
+pub(super) fn cpu_checkpoint_chunk<'a>(action: &'a Value, name: &str) -> &'a Value {
+    let chunks = checkpoint_component_chunks(checkpoint_component(action, "cpu0"));
+    let matches = chunks
+        .iter()
+        .filter(|chunk| chunk.pointer("/name").and_then(Value::as_str) == Some(name))
+        .collect::<Vec<_>>();
+    assert_eq!(matches.len(), 1, "exact {name} chunk: {chunks:#?}");
     matches[0]
 }

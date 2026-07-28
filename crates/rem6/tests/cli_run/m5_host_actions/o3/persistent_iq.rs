@@ -23,6 +23,8 @@ mod fp_load_forwarding_runtime_boundaries;
 mod live_checkpoint_compute;
 #[path = "persistent_iq/live_checkpoint_fixture.rs"]
 mod live_checkpoint_fixture;
+#[path = "persistent_iq/live_checkpoint_fp.rs"]
+mod live_checkpoint_fp;
 #[path = "persistent_iq/mixed_compute.rs"]
 mod mixed_compute;
 #[path = "persistent_iq/mixed_compute_boundaries.rs"]

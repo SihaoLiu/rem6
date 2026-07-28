@@ -70,7 +70,7 @@ fn live_fp_load_boundary_runs() -> [FpLoadForwardingRun; 2] {
     ]
 }
 
-fn direct_fp_load_boundary_runs() -> [FpLoadForwardingRun; 2] {
+pub(super) fn direct_fp_load_boundary_runs() -> [FpLoadForwardingRun; 2] {
     [
         FpLoadForwardingRun::width_one_flw_direct(),
         FpLoadForwardingRun::width_two_fld_direct(),
@@ -78,15 +78,15 @@ fn direct_fp_load_boundary_runs() -> [FpLoadForwardingRun; 2] {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct FpConsumerBoundary {
-    queued_tick: u64,
-    response_tick: u64,
-    response_live_tick: u64,
-    selected_tick: u64,
+pub(super) struct FpConsumerBoundary {
+    pub(super) queued_tick: u64,
+    pub(super) response_tick: u64,
+    pub(super) response_live_tick: u64,
+    pub(super) selected_tick: u64,
 }
 
 impl FpConsumerBoundary {
-    fn discover(json: &Value, run: FpLoadForwardingRun) -> Self {
+    pub(super) fn discover(json: &Value, run: FpLoadForwardingRun) -> Self {
         let load = super::mixed_compute::o3_event_at_pc(json, run.load_pc());
         let response_tick = event_u64(load, "lsq_data_response_tick");
         let selected_tick = event_u64(
@@ -609,7 +609,7 @@ fn assert_non_quiescent_action(
     assert!(!artifact.exists(), "{label} emitted {}", artifact.display());
 }
 
-fn run_fp_load_path_json(
+pub(super) fn run_fp_load_path_json(
     run: FpLoadForwardingRun,
     path: &std::path::Path,
     max_tick: u64,
@@ -632,7 +632,7 @@ fn run_fp_load_path_json(
         .unwrap_or_else(|error| panic!("invalid FP load boundary JSON: {error}"))
 }
 
-fn assert_fp_load_architecture(precision: FpLoadPrecision, json: &Value) {
+pub(super) fn assert_fp_load_architecture(precision: FpLoadPrecision, json: &Value) {
     assert_eq!(
         json.pointer("/simulation/status").and_then(Value::as_str),
         Some("stopped_by_host"),
