@@ -40,7 +40,9 @@ completed-result state remain the value authority. At publication, the value
 is written to architectural state, the pending row records the producer-ready
 tick, and the core requests O3 service. A later service turn executes the
 store against the speculative hart, resolves the LSQ address, and transfers
-the row to normal data transport ownership.
+the row to normal data transport ownership. Publication and that service turn
+share the same numeric tick in the bounded fixture, but they are distinct
+scheduler callbacks with a deterministic callback boundary between them.
 
 `O3LC` version 1 currently supports `ComputeQueue` and `CompletedFpLoad`. Its
 runtime capture rejects any pending-address owner. Its generic replay event is
@@ -90,6 +92,16 @@ a deterministic boundary after producer publication and commit but before the
 pending store materializes. The test must use the normal producer completion,
 retirement, wake refresh, and scheduler callback path; a test-only state
 setter is not acceptable evidence.
+
+The bounded direct `LD -> SD` fixture exposes an intra-tick boundary rather
+than a whole idle tick. The producer response is already pending at tick `N`.
+A CLI checkpoint source callback at `N - 1` queues its one-tick-latency local
+delivery at `N`, after that response. The response publishes and commits the
+producer during the scheduler epoch; the run driver schedules the requested
+O3 wake only after the epoch returns. FIFO event order therefore delivers the
+checkpoint after publication and before the newly inserted wake, even though
+the producer writeback, producer commit, and eventual store issue all report
+tick `N`.
 
 At that boundary the RED assertion must observe all of the following before
 any schema work is added:

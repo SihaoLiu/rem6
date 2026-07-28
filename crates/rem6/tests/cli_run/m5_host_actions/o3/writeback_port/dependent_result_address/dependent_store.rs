@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "dependent_store/live_checkpoint.rs"]
+mod live_checkpoint;
+
 const STORE_PC: &str = "0x80000034";
 const STORE_VALUE: u64 = 0x66;
 

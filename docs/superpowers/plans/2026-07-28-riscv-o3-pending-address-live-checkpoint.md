@@ -185,7 +185,7 @@ failure is a regression.
 - Modify: `crates/rem6/src/host_actions/o3_live_checkpoint.rs`
 - Modify: `crates/rem6/src/stats_output/host_actions/tests.rs`
 
-- [ ] **Step 1: Add a production-path feasibility test**
+- [x] **Step 1: Add a production-path feasibility test**
 
 Attach the new CLI child from `dependent_store.rs`. Add
 `rem6_run_o3_dependent_store_live_checkpoint_window_is_natural`, using the
@@ -196,25 +196,32 @@ timing from an uninterrupted run, then calculate:
 let head = memory_result_event_at_pc(&baseline, HEAD_PC);
 let store = memory_result_event_at_pc(&baseline, STORE_PC);
 let store_issue_tick = event_u64(store, "issue_tick");
-let capture_tick = store_issue_tick.checked_sub(1).unwrap();
-assert!(event_u64(head, "writeback_tick") <= capture_tick);
-assert!(event_u64(head, "commit_tick") <= capture_tick);
+let checkpoint_source_tick = store_issue_tick.checked_sub(1).unwrap();
+assert_eq!(event_u64(head, "writeback_tick"), store_issue_tick);
+assert_eq!(event_u64(head, "commit_tick"), store_issue_tick);
 ```
 
-Run only through `capture_tick` and require one destinationless store ROB row,
-one addressless eight-byte store LSQ row, exactly the producer data request,
-unchanged target bytes, and no store data trace. This test does not schedule a
-checkpoint yet; it permanently locks the natural production boundary.
+Run only through `checkpoint_source_tick` and require one destinationless
+store ROB row, one addressless eight-byte store LSQ row, exactly the producer
+data request, unchanged target bytes, and no store data trace. Then schedule a
+real CLI checkpoint source callback at that tick. With one-tick host latency,
+its delivery is inserted at `store_issue_tick` after the already-pending
+producer response; the O3 wake is inserted only after the scheduler epoch
+returns. Require current capture to reject the pending-address authority with
+the exact quiescence error and no output artifact. This permanently locks the
+natural intra-tick production boundary without changing runtime scheduling.
 
-- [ ] **Step 2: Run the feasibility gate**
+- [x] **Step 2: Run the feasibility gate**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run rem6_run_o3_dependent_store_live_checkpoint_window_is_natural -- --nocapture
 ```
 
-Expected: PASS on the current code. If producer commit is not before the store
-issue boundary, or the store is already materialized, stop and revise the
-design before editing the schema.
+Expected: PASS on the current code. If producer writeback/commit and the
+eventual store issue do not share the delivery tick, if same-partition FIFO
+ordering changes, or if the host checkpoint no longer reaches the current
+pending-authority rejection, stop and revise the design before editing the
+schema.
 
 - [ ] **Step 3: Freeze one real version-1 payload before changing the codec**
 
@@ -416,8 +423,8 @@ snapshot is passed to capture.
 Extend the CLI support child with a schedule discovered from baseline timing:
 
 ```rust
-let capture_tick = event_u64(store, "issue_tick").checked_sub(1).unwrap();
-let checkpoint_source_tick = capture_tick.checked_sub(1).unwrap();
+let checkpoint_delivery_tick = event_u64(store, "issue_tick");
+let checkpoint_source_tick = checkpoint_delivery_tick.checked_sub(1).unwrap();
 let restore_source_tick = event_u64(store, "commit_tick").checked_add(1).unwrap();
 let checkpoint = format!("{checkpoint_source_tick}:pending-store-live");
 let restore = format!("{restore_source_tick}:pending-store-live");
