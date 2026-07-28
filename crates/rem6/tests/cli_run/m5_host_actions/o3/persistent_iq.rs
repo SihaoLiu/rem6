@@ -19,6 +19,10 @@ mod fp_load_forwarding_compatibility;
 mod fp_load_forwarding_fixture;
 #[path = "persistent_iq/fp_load_forwarding_runtime_boundaries.rs"]
 mod fp_load_forwarding_runtime_boundaries;
+#[path = "persistent_iq/live_checkpoint_compute.rs"]
+mod live_checkpoint_compute;
+#[path = "persistent_iq/live_checkpoint_fixture.rs"]
+mod live_checkpoint_fixture;
 #[path = "persistent_iq/mixed_compute.rs"]
 mod mixed_compute;
 #[path = "persistent_iq/mixed_compute_boundaries.rs"]
@@ -708,7 +712,7 @@ fn rem6_run_o3_persistent_iq_checkpoint_boundary() {
         artifact.display(),
     );
 
-    let checkpoint_tick = event_u64(event_at_pc(&baseline, ADD_PC), "commit_tick") + 1;
+    let checkpoint_tick = event_u64(event_at_pc(&baseline, ADD_PC), "commit_tick");
     let restore_tick = checkpoint_tick + 1;
     let checkpoint_arg = format!("{checkpoint_tick}:persistent-iq-drained");
     let restore_arg = format!("{restore_tick}:persistent-iq-drained");

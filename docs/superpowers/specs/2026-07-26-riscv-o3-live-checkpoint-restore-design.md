@@ -125,6 +125,39 @@ first and the already-validated overlay second. The overlay never acts as an
 alternative authority for ROB, LSQ, aggregate stats, committed architectural
 registers, PMP, vector state, or branch predictors.
 
+### Source-Local Checkpoint Preparation
+
+A scheduled source-local `Checkpoint` or `RestoreCheckpoint` may establish a
+bounded prepare interval from its source event through its delivery tick. Each
+attached RISC-V core owns a reference-counted prepare deadline. While a
+deadline is active, the core continues data responses, instruction responses,
+O3 service, writeback, and retirement, but does not issue a new instruction
+transport request. Preparation never cancels an issued request, drops a
+completed fetch, changes the queue wake, or makes otherwise unsupported
+authority capturable.
+
+Checkpoint delivery still rejects capture unless instruction transport is
+fully drained and every normal live-profile guard passes. Restore preparation
+never relaxes prepared-image validation, scheduler-snapshot requirements, or
+unsupported-authority rejection. The exact delivery deadline is the only
+prepare authority allowed during either operation.
+
+Every delivery releases its own reference after success or failure. A failed
+delivery must not clear overlapping preparation owned by another event.
+Expired references cannot block later fetches. Successful restore replaces
+the destination timeline and clears all destination-timeline preparation;
+the delivery's final release is therefore idempotent after that scrub.
+Immediate and non-source-local checkpoint/restore callers keep their existing
+behavior.
+
+The prepare reference is orchestration state, not simulated architectural or
+O3 state, so it is never serialized in `O3RT` or `O3LC`. Serial and parallel
+schedulers use the same source-event-before-delivery ordering and must produce
+the same manifest payload length/checksum evidence and restored queue timing.
+Tests cover successful cleanup, expiry, overlapping failed restore, successful restore scrub,
+captured-row retirement during the restore interval, suppression of younger
+fetch issue, and outstanding-at-delivery rejection without cancellation.
+
 ### Supported Live Profiles
 
 Version 1 supports exactly two profiles.

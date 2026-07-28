@@ -168,8 +168,7 @@ fn assert_drained_mixed_compute_restore(path: &std::path::Path, baseline: &Value
         .into_iter()
         .map(|pc| event_u64(event_at_pc(baseline, pc), "commit_tick"))
         .max()
-        .unwrap()
-        + 1;
+        .unwrap();
     let checkpoint = format!("{checkpoint_tick}:mixed-compute-drained");
     let restore = format!("{}:mixed-compute-drained", checkpoint_tick + 1);
     let restored = run_mixed_compute_path_json(

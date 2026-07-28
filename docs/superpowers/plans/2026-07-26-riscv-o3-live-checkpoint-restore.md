@@ -545,11 +545,66 @@ git push
 ### Task 4: Prove Compute-Queue Restore Through The Real CLI
 
 **Files:**
+- Create: `crates/rem6-cpu/src/riscv_checkpoint_prepare.rs`
+- Create: `crates/rem6-system/src/trap_event/source_local_checkpoint.rs`
+- Create: `crates/rem6/src/host_actions/o3_live_checkpoint.rs`
 - Create: `crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/live_checkpoint_fixture.rs`
 - Create: `crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/live_checkpoint_compute.rs`
+- Modify: `crates/rem6-cpu/src/o3_runtime_live_checkpoint.rs`
 - Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq.rs`
+- Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/mixed_compute_boundaries.rs`
 - Modify: `crates/rem6/src/host_actions.rs`
+- Modify: `crates/rem6/src/host_actions/transfer_stats.rs`
 - Modify: `crates/rem6/src/debug_output/o3_checkpoint_restore_json.rs`
+- Modify: `crates/rem6/src/stats_output/host_actions.rs`
+- Modify: `crates/rem6/src/stats_output/host_actions/tests.rs`
+- Modify: `crates/rem6-cpu/src/lib.rs`
+- Modify: `crates/rem6-cpu/src/riscv_drive.rs`
+- Modify: `crates/rem6-cpu/src/riscv_cluster.rs`
+- Modify: `crates/rem6-cpu/src/riscv_cluster_translation.rs`
+- Modify: `crates/rem6-cpu/src/riscv_cluster_drive.rs`
+- Modify: `crates/rem6-cpu/src/riscv_cluster_drive_tests.rs`
+- Modify: `crates/rem6-cpu/src/riscv_core_checkpoint_restore.rs`
+- Modify: `crates/rem6-cpu/src/riscv_live_checkpoint.rs`
+- Modify: `crates/rem6-cpu/src/riscv_live_checkpoint/codec.rs`
+- Modify: `crates/rem6-cpu/src/riscv_live_checkpoint_tests/compute.rs`
+- Modify: `crates/rem6-cpu/src/riscv_translation.rs`
+- Modify: `crates/rem6-cpu/tests/riscv_cluster_translation.rs`
+- Modify: `crates/rem6-cpu/tests/riscv_translation_frontend.rs`
+- Modify: `crates/rem6-system/src/riscv_checkpoint.rs`
+- Modify: `crates/rem6-system/src/guest_event.rs`
+- Modify: `crates/rem6-system/src/host.rs`
+- Modify: `crates/rem6-system/src/host/action_apply.rs`
+- Modify: `crates/rem6-system/src/host/checkpoint_accessors.rs`
+- Modify: `crates/rem6-system/src/host/execution_mode_transfer.rs`
+- Modify: `crates/rem6-system/src/lib.rs`
+- Modify: `crates/rem6-system/src/riscv_instruction_stats.rs`
+- Modify: `crates/rem6-system/src/riscv_run_driver.rs`
+- Modify: `crates/rem6-system/src/scheduler_checkpoint/live_o3.rs`
+- Modify: `crates/rem6-system/src/scheduler_checkpoint/locked_bank.rs`
+- Modify: `crates/rem6-system/src/trap_event.rs`
+- Modify: `crates/rem6-system/src/trap_event/scheduler_checkpoint_delivery.rs`
+- Modify: `crates/rem6-system/tests/live_o3_scheduler_checkpoint.rs`
+- Modify: `crates/rem6-system/tests/coherence_checkpoint.rs`
+- Modify: `crates/rem6-system/tests/guest_fd_checkpoint.rs`
+- Modify: `crates/rem6-system/tests/guest_futex_checkpoint.rs`
+- Modify: `crates/rem6-system/tests/guest_wait_checkpoint.rs`
+- Modify: `crates/rem6-system/tests/heterogeneous_checkpoint.rs`
+- Modify: `crates/rem6-system/tests/peripheral_checkpoint.rs`
+- Modify: `crates/rem6-system/tests/riscv_topology_system.rs`
+- Modify: `crates/rem6-system/tests/rtc_topology_checkpoint.rs`
+- Modify: `crates/rem6-system/tests/scheduler_checkpoint.rs`
+- Modify: `crates/rem6-system/tests/system_actions.rs`
+- Modify: `crates/rem6-system/tests/system_checkpoint_actions.rs`
+- Modify: `crates/rem6-system/tests/virtio_checkpoint.rs`
+- Modify: `crates/rem6-system/tests/workload_replay.rs`
+- Modify: `crates/rem6/src/artifact_json/checkpoint.rs`
+- Modify: `crates/rem6/src/debug_output/checkpoint_components_json.rs`
+- Modify: `crates/rem6/src/debug_output/host_action.rs`
+- Modify: `crates/rem6/src/host_actions/summary_projection_tests.rs`
+- Modify: `crates/rem6/src/riscv_run_driver.rs`
+- Modify: `docs/superpowers/specs/2026-07-26-riscv-o3-live-checkpoint-restore-design.md`
+- Modify: `docs/superpowers/plans/2026-07-26-riscv-o3-live-checkpoint-restore.md`
 
 - [ ] **Step 1: Write real CLI compute RED**
 
@@ -567,8 +622,9 @@ rem6_run_o3_live_checkpoint_compute_restore_replays_after_source_progress
 ```
 
 Assert O3LC profile/version/counts, O3RT v23, checkpoint/restore manifest tick,
-queue order, one rebound wake, exact select/writeback/commit ticks, final
-registers/bytes, and exactly-once issue/writeback/commit stats.
+queue order, payload length/checksum identity across serial and parallel, one
+rebound wake, exact select/writeback/commit ticks, final registers/bytes, and
+exactly-once issue/writeback/commit stats.
 
 - [ ] **Step 2: Run RED**
 
@@ -579,7 +635,20 @@ TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run rem6_run_o3_live_checkp
 Expected: current CLI capture rejects the live queue or lacks decoded O3LC
 evidence.
 
-- [ ] **Step 3: Expose bounded O3LC host evidence**
+- [ ] **Step 3: Prepare a bounded source-local fetch boundary**
+
+At each source-local checkpoint or restore source event, reference-count an
+exact delivery deadline on every attached RISC-V core. Continue processing
+existing fetch/data responses and O3 service while suppressing only new
+instruction request issue. Every delivery releases only its own reference;
+failed restore preserves overlapping preparation, successful restore clears
+all destination-timeline preparation, and the final release is idempotent.
+Make expired references non-blocking and keep immediate/non-source-local
+callers unchanged. Preparation never relaxes normal capture/restore preflight.
+Cover serial and parallel driving, successful cleanup, expiry, overlap,
+restore scrub, and outstanding-at-delivery rejection without cancellation.
+
+- [ ] **Step 4: Expose bounded O3LC host evidence**
 
 Decode O3LC only when the chunk name matches exactly. Add summary fields for:
 
@@ -589,11 +658,14 @@ event_count, resident_rows, writeback_reservations,
 wake_partition, wake_tick, wake_kind, rebound_wakes
 ```
 
-Keep unknown/corrupt payload output non-panicking. Wire numeric fields into the
-existing checkpoint-restore debug/stat aggregation without duplicating O3RT
-stats.
+Keep unknown/corrupt payload output non-panicking. Derive `rebound_wakes` from
+the scheduler components actually rebound, not from restore action type. Wire
+numeric fields into both the debug aggregation and normal host-action stats
+registry without duplicating O3RT stats. Rewind shared retired-instruction
+probe state on successful in-process restore so observer ticks follow the
+restored timeline.
 
-- [ ] **Step 4: Run GREEN and existing persistent-IQ boundaries**
+- [ ] **Step 5: Run GREEN and existing persistent-IQ boundaries**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run rem6_run_o3_live_checkpoint_compute -- --nocapture
@@ -604,17 +676,143 @@ TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run rem6_run_o3_fp_load_for
 The existing FP response-admitted row still rejects in this task; only
 compute-profile live restore turns green.
 
-- [ ] **Step 5: Commit and push**
+- [ ] **Step 6: Commit and push in four coherent size-bounded slices**
+
+For every slice, validate the staged index rather than the complete working
+tree. The helper below materializes exactly `HEAD` plus the index in a detached
+temporary worktree and compiles all `rem6` targets there. Keep later-slice
+working-tree changes outside that proof.
 
 ```bash
-TMPDIR=$PWD/target/tmp cargo fmt --all
+verify_staged_tree() {
+  local root="$PWD"
+  local target="$root/target/task4-staged-tree"
+  local tree commit worktree result
+  tree="$(git write-tree)" || return
+  commit="$(printf 'verify Task 4 staged slice\n' | git commit-tree "$tree" -p HEAD)" || return
+  worktree="/tmp/rem6-task4-${commit}"
+  git worktree add --detach "$worktree" "$commit" || return
+  (
+    cd "$worktree" &&
+      mkdir -p target/tmp &&
+      TMPDIR=$PWD/target/tmp CARGO_TARGET_DIR="$target" \
+        cargo check -p rem6 --all-targets
+  )
+  result=$?
+  git worktree remove "$worktree"
+  return "$result"
+}
+
+TMPDIR=$PWD/target/tmp cargo fmt --all -- --check
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib source_local_checkpoint_prepare_is_counted_released_and_expires
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib riscv_live_checkpoint
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --test riscv_translation_frontend riscv_core_translated_checkpoint_fence_allows_data_progress_without_younger_fetch -- --exact
+TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --test riscv_cluster_translation riscv_cluster_translated_checkpoint_fence_allows_data_progress_without_younger_fetch -- --exact
 git diff --check
-git add crates/rem6/src/host_actions.rs \
+git status --short
+git add crates/rem6-cpu/src/lib.rs \
+  crates/rem6-cpu/src/o3_runtime_live_checkpoint.rs \
+  crates/rem6-cpu/src/riscv_checkpoint_prepare.rs \
+  crates/rem6-cpu/src/riscv_cluster.rs \
+  crates/rem6-cpu/src/riscv_cluster_translation.rs \
+  crates/rem6-cpu/src/riscv_cluster_drive.rs \
+  crates/rem6-cpu/src/riscv_cluster_drive_tests.rs \
+  crates/rem6-cpu/src/riscv_core_checkpoint_restore.rs \
+  crates/rem6-cpu/src/riscv_drive.rs \
+  crates/rem6-cpu/src/riscv_live_checkpoint.rs \
+  crates/rem6-cpu/src/riscv_live_checkpoint/codec.rs \
+  crates/rem6-cpu/src/riscv_live_checkpoint_tests/compute.rs \
+  crates/rem6-cpu/src/riscv_translation.rs \
+  crates/rem6-cpu/tests/riscv_cluster_translation.rs \
+  crates/rem6-cpu/tests/riscv_translation_frontend.rs
+git diff --cached --check
+verify_staged_tree
+git commit -m "feat: bound live O3 checkpoint capture"
+git push
+
+TMPDIR=$PWD/target/tmp cargo fmt --all -- --check
+TMPDIR=$PWD/target/tmp cargo test -p rem6-system --lib source_local
+git diff --check
+git status --short
+git add crates/rem6-system/src/guest_event.rs \
+  crates/rem6-system/src/trap_event.rs \
+  crates/rem6-system/src/trap_event/scheduler_checkpoint_delivery.rs \
+  crates/rem6-system/src/trap_event/source_local_checkpoint.rs \
+  crates/rem6/src/riscv_run_driver.rs
+# In each mixed file, stage only the two prepare/release source-local methods.
+# Leave instruction-stat attachment, O3 telemetry, and execution-mode capture unstaged.
+git add -p crates/rem6-system/src/host/checkpoint_accessors.rs \
+  crates/rem6-system/src/riscv_checkpoint.rs
+git diff --cached --check
+verify_staged_tree
+git commit -m "feat: route source-local live O3 checkpoints"
+git push
+
+TMPDIR=$PWD/target/tmp cargo fmt --all -- --check
+TMPDIR=$PWD/target/tmp cargo test -p rem6-system --test live_o3_scheduler_checkpoint
+TMPDIR=$PWD/target/tmp cargo test -p rem6-system --lib
+TMPDIR=$PWD/target/tmp cargo test -p rem6-system --test source_policy
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --lib
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy
+git diff --check
+git status --short
+git add crates/rem6-system/src/host.rs \
+  crates/rem6-system/src/host/action_apply.rs \
+  crates/rem6-system/src/host/checkpoint_accessors.rs \
+  crates/rem6-system/src/host/execution_mode_transfer.rs \
+  crates/rem6-system/src/lib.rs \
+  crates/rem6-system/src/riscv_checkpoint.rs \
+  crates/rem6-system/src/riscv_instruction_stats.rs \
+  crates/rem6-system/src/riscv_run_driver.rs \
+  crates/rem6-system/src/scheduler_checkpoint/live_o3.rs \
+  crates/rem6-system/src/scheduler_checkpoint/locked_bank.rs \
+  crates/rem6-system/tests/coherence_checkpoint.rs \
+  crates/rem6-system/tests/guest_fd_checkpoint.rs \
+  crates/rem6-system/tests/guest_futex_checkpoint.rs \
+  crates/rem6-system/tests/guest_wait_checkpoint.rs \
+  crates/rem6-system/tests/heterogeneous_checkpoint.rs \
+  crates/rem6-system/tests/live_o3_scheduler_checkpoint.rs \
+  crates/rem6-system/tests/peripheral_checkpoint.rs \
+  crates/rem6-system/tests/riscv_topology_system.rs \
+  crates/rem6-system/tests/rtc_topology_checkpoint.rs \
+  crates/rem6-system/tests/scheduler_checkpoint.rs \
+  crates/rem6-system/tests/system_actions.rs \
+  crates/rem6-system/tests/system_checkpoint_actions.rs \
+  crates/rem6-system/tests/virtio_checkpoint.rs \
+  crates/rem6-system/tests/workload_replay.rs \
+  crates/rem6/src/artifact_json/checkpoint.rs \
+  crates/rem6/src/debug_output/checkpoint_components_json.rs \
+  crates/rem6/src/debug_output/host_action.rs \
   crates/rem6/src/debug_output/o3_checkpoint_restore_json.rs \
+  crates/rem6/src/host_actions.rs \
+  crates/rem6/src/host_actions/o3_live_checkpoint.rs \
+  crates/rem6/src/host_actions/summary_projection_tests.rs \
+  crates/rem6/src/host_actions/transfer_stats.rs \
+  crates/rem6/src/stats_output/host_actions.rs \
+  crates/rem6/src/stats_output/host_actions/tests.rs
+git diff --cached --check
+verify_staged_tree
+git commit -m "feat: restore and report live O3 compute state"
+git push
+
+TMPDIR=$PWD/target/tmp cargo fmt --all -- --check
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run rem6_run_o3_live_checkpoint_compute -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run rem6_run_o3_persistent_iq -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run rem6_run_o3_fp_load_forwarding_checkpoint_boundaries -- --nocapture
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --lib
+TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy
+git diff --check
+git status --short
+git add \
   crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq.rs \
+  crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/mixed_compute_boundaries.rs \
   crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/live_checkpoint_fixture.rs \
-  crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/live_checkpoint_compute.rs
-git commit -m "test: prove live O3 compute restore"
+  crates/rem6/tests/cli_run/m5_host_actions/o3/persistent_iq/live_checkpoint_compute.rs \
+  docs/superpowers/specs/2026-07-26-riscv-o3-live-checkpoint-restore-design.md \
+  docs/superpowers/plans/2026-07-26-riscv-o3-live-checkpoint-restore.md
+git diff --cached --check
+verify_staged_tree
+git commit -m "feat: expose and prove live O3 compute restore"
 git push
 ```
 
