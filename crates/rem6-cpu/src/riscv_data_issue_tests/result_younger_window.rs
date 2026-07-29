@@ -104,15 +104,6 @@ fn vector_mvv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
         | 0x57
 }
 
-fn vector_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
-    (funct6 << 26)
-        | (1 << 25)
-        | (u32::from(vs2) << 20)
-        | (u32::from(vs1) << 15)
-        | (u32::from(vd) << 7)
-        | 0x57
-}
-
 fn vector_unit_stride_load_type(vm_unmasked: bool, width: u32, rs1: u8, vd: u8) -> u32 {
     (u32::from(vm_unmasked) << 25)
         | (u32::from(rs1) << 15)
@@ -784,10 +775,9 @@ fn terminal_issue_wake_overflow_rolls_back_provisional_owner() {
     );
     core.set_detailed_live_retire_gate_enabled(true);
     core.set_o3_scalar_memory_depth(4);
-    core.set_vector_config(rem6_isa_riscv::RiscvVectorConfig::new(2, 0xc8));
     core.write_register(reg(10), 0x9000);
 
-    let vector_shift = vector_vv_type(0b101010, 2, 1, 4);
+    let float_add = 0x0020_8253; // fadd.s f4, f1, f2
     let load = i_type(0, 10, 0b011, 5, 0x03);
     core.core
         .state
@@ -795,7 +785,7 @@ fn terminal_issue_wake_overflow_rolls_back_provisional_owner() {
         .expect("cpu core lock")
         .events
         .extend([
-            completed_fetch_with_raw(1, 0x8000, vector_shift),
+            completed_fetch_with_raw(1, 0x8000, float_add),
             completed_fetch_with_raw(2, 0x8004, load),
         ]);
 
