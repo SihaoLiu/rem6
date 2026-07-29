@@ -21,6 +21,7 @@ mod pending_address;
 pub use event::RiscvO3LiveCheckpointEvent;
 use fetch::project_live_fetches;
 pub use pending_address::RiscvO3LiveCheckpointPendingDataAddress;
+pub(crate) use pending_address::MAX_PENDING_ADDRESSES;
 
 pub const RISCV_O3_LIVE_CHECKPOINT_CHUNK: &str = "o3-live-checkpoint";
 

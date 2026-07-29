@@ -193,8 +193,8 @@ pub(super) fn decode_versioned(
     let completed_result = read_completed_result(&mut reader)?;
     let pending_addresses = match version {
         VERSION_LEGACY => Vec::new(),
-        VERSION_PENDING_SINGLE => pending_address::read_v2(&mut reader)?,
-        VERSION_CURRENT => pending_address::read_v3(&mut reader)?,
+        VERSION_PENDING_SINGLE => pending_address::read_v2_single(&mut reader)?,
+        VERSION_CURRENT => pending_address::read_v3_rows(&mut reader)?,
         _ => unreachable!("validated O3LC version"),
     };
     let wake = read_wake(&mut reader)?;

@@ -5,13 +5,13 @@ use rem6_isa_riscv::{MemoryWidth, Register, RiscvInstruction};
 use crate::{CpuFetchEventKind, O3LoadStoreQueueKind, O3RegisterClass, O3RenameMapEntry};
 
 use super::super::{invalid, RiscvO3LiveCheckpointError, RiscvO3LiveCheckpointPayload};
-use super::RiscvO3LiveCheckpointPendingDataAddress;
+use super::{RiscvO3LiveCheckpointPendingDataAddress, MAX_PENDING_ADDRESSES};
 
 pub(super) fn validate(
     value: &RiscvO3LiveCheckpointPayload,
     rows: &[RiscvO3LiveCheckpointPendingDataAddress],
 ) -> Result<(), RiscvO3LiveCheckpointError> {
-    if rows.len() > 3 {
+    if rows.len() > MAX_PENDING_ADDRESSES {
         return Err(invalid("pending load graph has too many rows"));
     }
     if rows.windows(2).any(|window| {
@@ -29,24 +29,41 @@ pub(super) fn validate(
     {
         return Err(invalid("pending load root is inconsistent"));
     }
+    if rows
+        .iter()
+        .any(|pending| pending.root_sequence >= pending.sequence)
+    {
+        return Err(invalid("pending load root is not older than every row"));
+    }
 
     let mut consumed = BTreeSet::new();
-    let mut destinations = BTreeSet::new();
+    let mut destination_architectural = BTreeSet::new();
+    let mut destination_physical = BTreeSet::new();
     let mut requested_wakes = Vec::new();
     for (index, pending) in rows.iter().enumerate() {
         let destination = pending
             .destination
             .ok_or(invalid("pending load lacks a destination"))?;
         let destination_register = row_destination_register(destination)?;
+        let destination_architectural_register = destination.architectural();
+        if destination_architectural_register == u32::from(root.producer_register.index())
+            || !destination_architectural.insert(destination_architectural_register)
+        {
+            return Err(invalid(
+                "pending load destinations repeat an architectural register",
+            ));
+        }
+        if !destination_physical.insert(destination.physical().get()) {
+            return Err(invalid(
+                "pending load destinations repeat a physical register",
+            ));
+        }
         for request in &pending.consumed_requests {
             if !consumed.insert(*request) {
                 return Err(invalid(
                     "pending-address consumed requests repeat an identity",
                 ));
             }
-        }
-        if !destinations.insert(destination_key(destination)) {
-            return Err(invalid("pending load destinations repeat an identity"));
         }
 
         let fetch_request = pending.fetch.request_id();
@@ -176,15 +193,4 @@ fn row_destination_register(
     }
     Register::new(value.architectural() as u8)
         .map_err(|_| invalid("pending load destination is not a scalar register"))
-}
-
-fn destination_key(value: O3RenameMapEntry) -> (u8, u32, u32) {
-    let class = match value.register_class() {
-        O3RegisterClass::Integer => 0,
-        O3RegisterClass::FloatingPoint => 1,
-        O3RegisterClass::Vector => 2,
-        O3RegisterClass::ConditionCode => 3,
-        O3RegisterClass::Misc => 4,
-    };
-    (class, value.architectural(), value.physical().get())
 }

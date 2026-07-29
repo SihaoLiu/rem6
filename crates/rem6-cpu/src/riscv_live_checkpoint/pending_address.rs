@@ -14,6 +14,8 @@ mod graph;
 #[path = "pending_address/store.rs"]
 mod store;
 
+pub(crate) const MAX_PENDING_ADDRESSES: usize = 3;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvO3LiveCheckpointPendingDataAddress {
     pub sequence: u64,

@@ -8,16 +8,12 @@ use super::{
     write_register, write_request, Error, Reader, WireTag, MAX_ENDPOINT_BYTES, MAX_FETCH_BYTES,
     MAX_ROWS,
 };
-use crate::riscv_live_checkpoint::RiscvO3LiveCheckpointPendingDataAddress;
-
-const MAX_PENDING_ADDRESS_ROWS: usize = 3;
+use crate::riscv_live_checkpoint::{
+    RiscvO3LiveCheckpointPendingDataAddress, MAX_PENDING_ADDRESSES,
+};
 
 pub(super) fn preflight(values: &[RiscvO3LiveCheckpointPendingDataAddress]) -> Result<(), Error> {
-    checked_count(
-        "pending address rows",
-        values.len(),
-        MAX_PENDING_ADDRESS_ROWS,
-    )?;
+    checked_count("pending address rows", values.len(), MAX_PENDING_ADDRESSES)?;
     for value in values {
         checked_count(
             "pending consumed requests",
@@ -46,7 +42,7 @@ pub(super) fn write(
         out,
         "pending address rows",
         values.len(),
-        MAX_PENDING_ADDRESS_ROWS,
+        MAX_PENDING_ADDRESSES,
     )?;
     for value in values {
         write_row(out, value)?;
@@ -54,7 +50,7 @@ pub(super) fn write(
     Ok(())
 }
 
-pub(super) fn read_v2(
+pub(super) fn read_v2_single(
     reader: &mut Reader<'_>,
 ) -> Result<Vec<RiscvO3LiveCheckpointPendingDataAddress>, Error> {
     if !reader.bool("pending address present")? {
@@ -63,10 +59,10 @@ pub(super) fn read_v2(
     Ok(vec![read_row(reader, RowVersion::V2)?])
 }
 
-pub(super) fn read_v3(
+pub(super) fn read_v3_rows(
     reader: &mut Reader<'_>,
 ) -> Result<Vec<RiscvO3LiveCheckpointPendingDataAddress>, Error> {
-    reader.vec("pending address rows", MAX_PENDING_ADDRESS_ROWS, |reader| {
+    reader.vec("pending address rows", MAX_PENDING_ADDRESSES, |reader| {
         read_row(reader, RowVersion::V3)
     })
 }

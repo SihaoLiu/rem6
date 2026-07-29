@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn o3_live_checkpoint_v2_round_trips_pending_store_and_decodes_v1() {
+fn o3_live_checkpoint_v3_round_trips_pending_store_and_decodes_v1() {
     let expected = pending_store_payload();
     let encoded = expected.encode().unwrap();
     assert_eq!(encoded[4], 3);
