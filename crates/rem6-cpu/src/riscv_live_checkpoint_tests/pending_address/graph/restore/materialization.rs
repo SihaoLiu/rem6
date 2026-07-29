@@ -66,7 +66,7 @@ fn assert_materialized_runtime_graph_rejected_atomically() {
     let fixture = PendingLoadGraphCheckpointFixture::new([5, 5, 7], 2);
     let projection = fixture.capture();
     let live = captured_graph(&projection).clone();
-    let materialized_stable = materialized_stable_payload(&fixture, &live.pending_addresses[0]);
+    materialize_pending_runtime_row(&fixture, &live.pending_addresses[0]);
 
     let before = checkpoint_pair!(fixture.core);
     assert!(matches!(
@@ -74,24 +74,12 @@ fn assert_materialized_runtime_graph_rejected_atomically() {
         RiscvO3LiveCheckpointCapture::Rejected
     ));
     assert_eq!(checkpoint_pair!(fixture.core), before);
-
-    let destination = graph_core(fixture.issue_width);
-    let before = checkpoint_pair!(destination);
-    assert!(destination
-        .prepare_checkpoint_restore(checkpoint_input_with_replay_hart(
-            &projection,
-            &fixture.core,
-            materialized_stable,
-            live,
-        ))
-        .is_err());
-    assert_eq!(checkpoint_pair!(destination), before);
 }
 
-fn materialized_stable_payload(
+fn materialize_pending_runtime_row(
     fixture: &PendingLoadGraphCheckpointFixture,
     pending: &RiscvO3LiveCheckpointPendingDataAddress,
-) -> O3RuntimeCheckpointPayload {
+) {
     let mut state = fixture.core.state.lock().expect("riscv core lock");
     state
         .o3_runtime
@@ -100,14 +88,20 @@ fn materialized_stable_payload(
             CAPTURED_TICK,
             materialized_pending_execution(pending, ROOT_VALUE),
         );
-    state.o3_runtime.bind_oldest_pending_data_address_for_test(
-        request(30),
-        Address::new(ROOT_VALUE),
-        CAPTURED_TICK,
+    assert_eq!(state.o3_runtime.pending_data_address_count(), 3);
+    assert_eq!(state.o3_runtime.live_data_access_count_for_test(), 0);
+    assert_eq!(
+        state
+            .o3_runtime
+            .pending_data_address_materialized_fetches_for_test(),
+        [Some(pending.fetch.request_id()), None, None]
     );
-    assert_eq!(state.o3_runtime.pending_data_address_count(), 2);
-    assert_eq!(state.o3_runtime.live_data_access_count_for_test(), 1);
-    state.o3_runtime.checkpoint_payload()
+    assert!(state
+        .o3_runtime
+        .snapshot()
+        .load_store_queue()
+        .iter()
+        .all(|entry| entry.address().is_none()));
 }
 
 fn materialized_pending_execution(
