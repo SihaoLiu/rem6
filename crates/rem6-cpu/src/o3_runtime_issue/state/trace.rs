@@ -5,6 +5,54 @@ use crate::o3_dependency::O3RegisterClass;
 pub(super) const O3_LIVE_ISSUE_TRACE_DATA_PRODUCER_SLOTS: usize = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum O3LiveIssueTraceClass {
+    ScalarInteger,
+    IntegerMulDiv,
+    MemoryAgu,
+    Control,
+    ScalarFloat,
+    VectorToScalar,
+}
+
+impl O3LiveIssueTraceClass {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::ScalarInteger => "scalar_integer",
+            Self::IntegerMulDiv => "integer_mul_div",
+            Self::MemoryAgu => "memory_agu",
+            Self::Control => "control",
+            Self::ScalarFloat => "scalar_float",
+            Self::VectorToScalar => "vector_to_scalar",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum O3LiveIssueTraceAction {
+    Queued,
+    Selected,
+    RetainedResource,
+    RetainedDependency,
+    Replayed,
+    Squashed,
+    Retired,
+}
+
+impl O3LiveIssueTraceAction {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Selected => "selected",
+            Self::RetainedResource => "retained_resource",
+            Self::RetainedDependency => "retained_dependency",
+            Self::Replayed => "replayed",
+            Self::Squashed => "squashed",
+            Self::Retired => "retired",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct O3LiveIssueTraceDataProducer {
     sequence: u64,
     register_class: O3RegisterClass,
@@ -34,6 +82,60 @@ impl O3LiveIssueTraceDataProducer {
 
     pub const fn architectural(self) -> u32 {
         self.architectural
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct O3LiveIssueTraceRecord {
+    sequence: u64,
+    pc: Address,
+    action: O3LiveIssueTraceAction,
+    issue_class: O3LiveIssueTraceClass,
+    data_producers: [Option<O3LiveIssueTraceDataProducer>; O3_LIVE_ISSUE_TRACE_DATA_PRODUCER_SLOTS],
+    service_tick: u64,
+    next_wake_tick: Option<u64>,
+    raw_writeback_tick: Option<u64>,
+    admitted_writeback_tick: Option<u64>,
+    cleanup_boundary: Option<u64>,
+}
+
+impl O3LiveIssueTraceRecord {
+    copy_getters!(sequence -> u64, pc -> Address);
+    copy_getters!(action -> O3LiveIssueTraceAction, issue_class -> O3LiveIssueTraceClass);
+    copy_getters!(service_tick -> u64, next_wake_tick -> Option<u64>);
+    copy_getters!(raw_writeback_tick -> Option<u64>);
+    copy_getters!(admitted_writeback_tick -> Option<u64>, cleanup_boundary -> Option<u64>);
+
+    pub fn data_producers(&self) -> impl Iterator<Item = O3LiveIssueTraceDataProducer> + '_ {
+        self.data_producers.iter().copied().flatten()
+    }
+
+    pub(super) const fn without_data_producers(
+        sequence: u64,
+        pc: Address,
+        action: O3LiveIssueTraceAction,
+        issue_class: O3LiveIssueTraceClass,
+        service_tick: u64,
+        next_wake_tick: Option<u64>,
+        cleanup_boundary: Option<u64>,
+    ) -> Self {
+        Self {
+            sequence,
+            pc,
+            action,
+            issue_class,
+            data_producers: [None; O3_LIVE_ISSUE_TRACE_DATA_PRODUCER_SLOTS],
+            service_tick,
+            next_wake_tick,
+            raw_writeback_tick: None,
+            admitted_writeback_tick: None,
+            cleanup_boundary,
+        }
+    }
+
+    pub(super) fn set_writeback_ticks(&mut self, raw: u64, admitted: u64) {
+        self.raw_writeback_tick = Some(raw);
+        self.admitted_writeback_tick = Some(admitted);
     }
 }
 

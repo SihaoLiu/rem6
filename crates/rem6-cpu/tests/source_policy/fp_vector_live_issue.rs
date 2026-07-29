@@ -382,6 +382,7 @@ fn fp_vector_live_issue_locks_task4_queue_compute_authority() {
     let mixed_tests_path = root.join("src/o3_runtime_issue/queue_tests/mixed_compute.rs");
     let issue_path = root.join("src/o3_runtime_issue.rs");
     let state_path = root.join("src/o3_runtime_issue/state.rs");
+    let trace_path = root.join("src/o3_runtime_issue/state/trace.rs");
     let state_tests_path = root.join("src/o3_runtime_issue/state_tests.rs");
 
     assert!(compute_path.exists());
@@ -389,6 +390,7 @@ fn fp_vector_live_issue_locks_task4_queue_compute_authority() {
     assert!(line_count(&compute_path) <= MAX_LIVE_COMPUTE_QUEUE_LINES);
     assert!(line_count(&queue_path) <= MAX_O3_RUNTIME_ISSUE_QUEUE_LINES);
     assert!(line_count(&mixed_tests_path) <= MAX_O3_RUNTIME_ISSUE_QUEUE_MIXED_COMPUTE_TEST_LINES);
+    assert!(line_count(&trace_path) <= MAX_O3_RUNTIME_ISSUE_STATE_TRACE_LINES);
 
     let queue = fs::read_to_string(&queue_path).unwrap();
     let compute = fs::read_to_string(&compute_path).unwrap();
@@ -396,6 +398,7 @@ fn fp_vector_live_issue_locks_task4_queue_compute_authority() {
     let mixed_tests = fs::read_to_string(&mixed_tests_path).unwrap();
     let issue = fs::read_to_string(&issue_path).unwrap();
     let state = fs::read_to_string(&state_path).unwrap();
+    let trace = fs::read_to_string(&trace_path).unwrap();
     let state_tests = fs::read_to_string(&state_tests_path).unwrap();
     let production_issue = production_rust_source(&issue);
     let compact_queue = compact_rust_code(&production_rust_source(&queue));
@@ -407,6 +410,7 @@ fn fp_vector_live_issue_locks_task4_queue_compute_authority() {
         &rust_function_definition(&production_issue, "live_issue_head_execution_is_valid").unwrap(),
     );
     let compact_state = compact_rust_code(&production_rust_source(&state));
+    let compact_trace = compact_rust_code(&production_rust_source(&trace));
     let compact_state_tests = compact_rust_code(&state_tests);
 
     assert_eq!(
@@ -419,6 +423,10 @@ fn fp_vector_live_issue_locks_task4_queue_compute_authority() {
             "queue_tests/mixed_compute.rs",
             "mixed_compute"
         ),
+        1
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(&state, "state/trace.rs", "trace"),
         1
     );
     assert!(!compact_queue.contains("Scalar(O3RenameMapEntry)"));
@@ -435,12 +443,12 @@ fn fp_vector_live_issue_locks_task4_queue_compute_authority() {
 
     for trace_anchor in ["Self::ScalarFloat=>", "Self::VectorToScalar=>"] {
         assert!(
-            compact_state.contains(trace_anchor),
+            compact_trace.contains(trace_anchor),
             "missing trace variant {trace_anchor}"
         );
     }
-    assert!(state.contains("Self::ScalarFloat => \"scalar_float\""));
-    assert!(state.contains("Self::VectorToScalar => \"vector_to_scalar\""));
+    assert!(trace.contains("Self::ScalarFloat => \"scalar_float\""));
+    assert!(trace.contains("Self::VectorToScalar => \"vector_to_scalar\""));
     assert!(compact_state.contains("scalar_float_issued_rows:u64"));
     assert!(compact_state.contains("vector_to_scalar_issued_rows:u64"));
     assert!(compact_state.contains("scalar_float_issued_rows->u64"));

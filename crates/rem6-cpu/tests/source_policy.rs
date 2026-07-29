@@ -67,6 +67,7 @@ const MAX_O3_RUNTIME_ISSUE_STATE_DECISION_PROJECTION_LINES: usize = 120;
 const MAX_O3_RUNTIME_ISSUE_STATE_DECISION_WINDOW_LINES: usize = 160;
 const MAX_O3_RUNTIME_ISSUE_STATE_DECISION_WINDOW_TEST_LINES: usize = 160;
 const MAX_O3_RUNTIME_ISSUE_STATE_WAKE_LINES: usize = 100;
+const MAX_O3_RUNTIME_ISSUE_STATE_TRACE_LINES: usize = 240;
 const MAX_O3_RUNTIME_ISSUE_STATE_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_ISSUE_STATE_LIFECYCLE_TEST_LINES: usize = 260;
 const MAX_O3_RUNTIME_ISSUE_STATE_LIFECYCLE_STATS_TEST_LINES: usize = 160;
@@ -150,8 +151,10 @@ const MAX_O3_RUNTIME_LIVE_WINDOW_LINES: usize = 800;
 const MAX_O3_RUNTIME_LIVE_WINDOW_TEST_LINES: usize = 1100;
 const MAX_O3_RUNTIME_LIVE_WINDOW_IDENTITY_TEST_LINES: usize = 500;
 const MAX_O3_RUNTIME_WRITEBACK_LINES: usize = 800;
+const MAX_O3_RUNTIME_WRITEBACK_INSPECTION_LINES: usize = 120;
 const MAX_O3_RUNTIME_WRITEBACK_REPLAN_LINES: usize = 600;
 const MAX_O3_RUNTIME_WRITEBACK_OWNERSHIP_LINES: usize = 300;
+const MAX_O3_RUNTIME_WRITEBACK_OWNERSHIP_PROJECTION_LINES: usize = 80;
 const MAX_RISCV_O3_WRITEBACK_WAKE_LINES: usize = 800;
 const MAX_RISCV_O3_WRITEBACK_WAKE_LATE_TEST_LINES: usize = 120;
 const MAX_RISCV_DATA_ISSUE_TEST_ROOT_LINES: usize = 1500;
@@ -221,6 +224,10 @@ fn o3_persistent_iq_cpu_files_stay_focused() {
         (
             "src/o3_runtime_issue/state/wake.rs",
             MAX_O3_RUNTIME_ISSUE_STATE_WAKE_LINES,
+        ),
+        (
+            "src/o3_runtime_issue/state/trace.rs",
+            MAX_O3_RUNTIME_ISSUE_STATE_TRACE_LINES,
         ),
         (
             "src/o3_runtime_issue/state_tests.rs",
@@ -5737,6 +5744,7 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
         crate_dir.join("src/o3_runtime_issue/service_tests/scheduler_request.rs");
     let state_path = crate_dir.join("src/o3_runtime_issue/state.rs");
     let state_wake_path = crate_dir.join("src/o3_runtime_issue/state/wake.rs");
+    let state_trace_path = crate_dir.join("src/o3_runtime_issue/state/trace.rs");
     let state_tests_path = crate_dir.join("src/o3_runtime_issue/state_tests.rs");
     let decision_path = crate_dir.join("src/o3_runtime_issue/state/decision.rs");
     let decision_state_path = crate_dir.join("src/o3_runtime_issue/state/decision_state.rs");
@@ -5782,6 +5790,7 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
     );
     assert!(line_count(&state_path) <= MAX_O3_RUNTIME_ISSUE_STATE_LINES);
     assert!(line_count(&state_wake_path) <= MAX_O3_RUNTIME_ISSUE_STATE_WAKE_LINES);
+    assert!(line_count(&state_trace_path) <= MAX_O3_RUNTIME_ISSUE_STATE_TRACE_LINES);
     assert!(line_count(&decision_path) <= MAX_O3_RUNTIME_ISSUE_STATE_DECISION_LINES);
     assert!(line_count(&decision_state_path) <= MAX_O3_RUNTIME_ISSUE_STATE_DECISION_STATE_LINES);
     assert!(
@@ -5820,6 +5829,11 @@ fn o3_live_issue_service_owns_one_tick_and_delayed_stats() {
     assert_eq!(
         path_owned_module_declaration_count(&state_source, "state/wake.rs", "wake",),
         1,
+    );
+    assert_eq!(
+        path_owned_module_declaration_count(&state_source, "state/trace.rs", "trace",),
+        1,
+        "live issue state must attach its trace child exactly once",
     );
     assert_eq!(
         path_owned_module_declaration_count(&state_source, "state/decision.rs", "decision",),
@@ -6432,11 +6446,19 @@ fn o3_runtime_writeback_lives_in_focused_module() {
     let root_path = crate_dir.join("src/o3_runtime.rs");
     let root = production_rust_source(&fs::read_to_string(&root_path).unwrap());
     let module_path = crate_dir.join("src/o3_runtime_writeback.rs");
-    let module = production_rust_source(&fs::read_to_string(&module_path).unwrap());
+    let module_source = fs::read_to_string(&module_path).unwrap();
+    let module = production_rust_source(&module_source);
+    let inspection_path = crate_dir.join("src/o3_runtime_writeback/inspection.rs");
+    let inspection = production_rust_source(&fs::read_to_string(&inspection_path).unwrap());
     let replan_path = crate_dir.join("src/o3_runtime_writeback/replan.rs");
     let replan = production_rust_source(&fs::read_to_string(&replan_path).unwrap());
     let ownership_path = crate_dir.join("src/o3_runtime_writeback/ownership.rs");
-    let ownership = production_rust_source(&fs::read_to_string(&ownership_path).unwrap());
+    let ownership_source = fs::read_to_string(&ownership_path).unwrap();
+    let ownership = production_rust_source(&ownership_source);
+    let ownership_projection_path =
+        crate_dir.join("src/o3_runtime_writeback/ownership/projection.rs");
+    let ownership_projection =
+        production_rust_source(&fs::read_to_string(&ownership_projection_path).unwrap());
     let issue = production_rust_source(
         &fs::read_to_string(crate_dir.join("src/o3_runtime_issue.rs")).unwrap(),
     );
@@ -6462,6 +6484,15 @@ fn o3_runtime_writeback_lives_in_focused_module() {
         module.contains("mod replan;"),
         "src/o3_runtime_writeback.rs must delegate transactional replanning to its focused child module"
     );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &module_source,
+            "o3_runtime_writeback/inspection.rs",
+            "inspection",
+        ),
+        1,
+        "src/o3_runtime_writeback.rs must attach its inspection child exactly once",
+    );
     assert!(
         module.contains("mod ownership;"),
         "src/o3_runtime_writeback.rs must delegate finalized/live statistics ownership to its focused child module"
@@ -6474,6 +6505,15 @@ fn o3_runtime_writeback_lives_in_focused_module() {
         ownership_path.exists(),
         "finalized O3 writeback statistics ownership belongs in src/o3_runtime_writeback/ownership.rs"
     );
+    assert_eq!(
+        path_owned_module_declaration_count(
+            &ownership_source,
+            "ownership/projection.rs",
+            "projection",
+        ),
+        1,
+        "writeback ownership must attach its projection child exactly once",
+    );
     let root_lines = line_count(&root_path);
     assert!(
         root_lines < MAX_O3_RUNTIME_ROOT_LINES,
@@ -6483,6 +6523,11 @@ fn o3_runtime_writeback_lives_in_focused_module() {
     assert!(
         module_lines < MAX_O3_RUNTIME_WRITEBACK_LINES,
         "src/o3_runtime_writeback.rs must stay below {MAX_O3_RUNTIME_WRITEBACK_LINES} lines, but it has {module_lines} lines"
+    );
+    let inspection_lines = line_count(&inspection_path);
+    assert!(
+        inspection_lines < MAX_O3_RUNTIME_WRITEBACK_INSPECTION_LINES,
+        "src/o3_runtime_writeback/inspection.rs must stay below {MAX_O3_RUNTIME_WRITEBACK_INSPECTION_LINES} lines, but it has {inspection_lines} lines"
     );
     let replan_lines = line_count(&replan_path);
     assert!(
@@ -6494,6 +6539,11 @@ fn o3_runtime_writeback_lives_in_focused_module() {
         ownership_lines < MAX_O3_RUNTIME_WRITEBACK_OWNERSHIP_LINES,
         "src/o3_runtime_writeback/ownership.rs must stay below {MAX_O3_RUNTIME_WRITEBACK_OWNERSHIP_LINES} lines, but it has {ownership_lines} lines"
     );
+    let ownership_projection_lines = line_count(&ownership_projection_path);
+    assert!(
+        ownership_projection_lines < MAX_O3_RUNTIME_WRITEBACK_OWNERSHIP_PROJECTION_LINES,
+        "src/o3_runtime_writeback/ownership/projection.rs must stay below {MAX_O3_RUNTIME_WRITEBACK_OWNERSHIP_PROJECTION_LINES} lines, but it has {ownership_projection_lines} lines"
+    );
     assert!(
         ownership.contains("struct O3FinalizedWritebackPortStats"),
         "src/o3_runtime_writeback/ownership.rs must own finalized writeback statistics"
@@ -6502,6 +6552,34 @@ fn o3_runtime_writeback_lives_in_focused_module() {
         ownership.contains("fn finalize_live_writeback_ownership("),
         "src/o3_runtime_writeback/ownership.rs must own exact finalized/live ownership transfer"
     );
+    for anchor in [
+        "pub struct O3RuntimeWritebackReservation",
+        "pub struct RiscvO3WritebackDebugState",
+        "pub fn o3_runtime_writeback_reservations(",
+    ] {
+        assert!(
+            inspection.contains(anchor),
+            "src/o3_runtime_writeback/inspection.rs is missing inspection owner `{anchor}`"
+        );
+        assert!(
+            !module.contains(anchor),
+            "src/o3_runtime_writeback.rs still owns extracted inspection surface `{anchor}`"
+        );
+    }
+    for anchor in [
+        "fn checkpoint_projection(",
+        "fn from_checkpoint_projection(",
+        "fn from_aggregate(",
+    ] {
+        assert!(
+            ownership_projection.contains(anchor),
+            "writeback ownership projection is missing `{anchor}`"
+        );
+        assert!(
+            !ownership.contains(anchor),
+            "writeback ownership root still owns extracted projection `{anchor}`"
+        );
+    }
     for redundant in [
         "live_writeback_cycle_ticks",
         "live_writeback_ready_rows_by_tick",
