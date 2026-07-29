@@ -38,6 +38,8 @@ use rem6_transport::{
 
 #[path = "support/live_o3.rs"]
 mod live_o3_support;
+#[path = "support/live_o3_pending_address.rs"]
+mod pending_address_support;
 
 #[path = "riscv_checkpoint/o3_compatibility.rs"]
 mod o3_compatibility;

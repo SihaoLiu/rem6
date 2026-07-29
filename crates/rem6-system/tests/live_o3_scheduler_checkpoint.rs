@@ -11,11 +11,16 @@ use rem6_system::{
     SystemActionExecutor, SystemActionOutcome,
 };
 
+#[path = "support/live_o3_pending_address.rs"]
+mod pending_address_support;
 #[path = "support/live_o3.rs"]
 mod support;
 use support::{
     core, seed_live_core, seed_live_core_at, SeededLiveCore, LIVE_TICK, O3LC, O3LH, O3RT,
 };
+
+#[path = "live_o3_scheduler_checkpoint/pending_address.rs"]
+mod pending_address;
 
 const FIRST_PARTITION_FRONTIERS: [usize; 2] = [5 * 8 + 4 + 8, 5 * 8 + 4 + 16];
 

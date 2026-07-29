@@ -404,6 +404,37 @@ fn pending_store_recapture_before_wake_is_identical() {
 }
 
 #[test]
+fn pending_store_rebound_wake_materializes_restored_request() {
+    let fixture = PendingStoreCheckpointFixture::new();
+    let projection = fixture.capture();
+    let destination = pending_store_core();
+    install_pending_projection(&destination, &fixture.core, &projection);
+    destination.mark_o3_writeback_wake_scheduled(fixture.scheduler, fixture.wake);
+
+    destination.mark_o3_writeback_wake_fired(CAPTURED_TICK);
+
+    let state = destination.state.lock().expect("riscv core lock");
+    assert_eq!(state.o3_runtime.pending_data_address_count(), 1);
+    assert_eq!(state.o3_runtime.live_data_access_count_for_test(), 0);
+    assert_eq!(
+        state
+            .o3_runtime
+            .pending_data_address_selected_issue_tick_for_test(),
+        Some(CAPTURED_TICK)
+    );
+    assert!(state
+        .o3_runtime
+        .pending_data_address_materialized_execution_for_test()
+        .is_some());
+    assert_eq!(
+        state
+            .o3_runtime
+            .live_issue_resident_sequences_for_checkpoint(),
+        []
+    );
+}
+
+#[test]
 fn pending_store_prepare_rejects_stable_cross_reference_without_mutation() {
     let fixture = PendingStoreCheckpointFixture::new();
     let projection = fixture.capture();

@@ -15,6 +15,7 @@ use super::*;
 use crate::live_o3_support::{
     core, seed_live_core, seed_live_core_at, SeededLiveCore, LIVE_TICK, O3LC, O3LH, O3RT,
 };
+use crate::pending_address_support::{seed_pending_address_core, STORE_SEQUENCE};
 
 #[test]
 #[rustfmt::skip]
@@ -102,6 +103,47 @@ fn riscv_checkpoint_bank_prepares_all_cores_before_first_install() {
     assert!(destination.restore_all_from(&registry).is_err());
     assert_eq!([core_restore_sentinel(&first), core_restore_sentinel(&second)], before);
     assert_eq!(first.read_register(reg(7)), 0xdead_beef); assert_eq!(second.read_register(reg(8)), 0xcafe_babe);
+}
+
+#[test]
+#[rustfmt::skip]
+fn pending_address_second_bank_corruption_mutates_no_core_or_scheduler() {
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+    let source0 = seed_pending_address_core(0, &mut scheduler, ScheduledEventKind::Serial);
+    let source1 = seed_pending_address_core(1, &mut scheduler, ScheduledEventKind::Parallel);
+    let cpu0 = CheckpointComponentId::new("cpu0").unwrap(); let cpu1 = CheckpointComponentId::new("cpu1").unwrap();
+    let source_bank = RiscvCoreCheckpointBank::new([
+        RiscvCoreCheckpointPort::new(cpu0.clone(), source0.core),
+        RiscvCoreCheckpointPort::new(cpu1.clone(), source1.core),
+    ]).unwrap();
+    let mut registry = CheckpointRegistry::new(); source_bank.register_all(&mut registry).unwrap(); source_bank.capture_all_into_at(&mut registry, LIVE_TICK).unwrap();
+    assert_eq!(RiscvO3LiveCheckpointPayload::decode(registry.chunk(&cpu0, O3LC).unwrap()).unwrap(), source0.live);
+    assert_eq!(RiscvO3LiveCheckpointPayload::decode(registry.chunk(&cpu1, O3LC).unwrap()).unwrap(), source1.live);
+    assert_eq!(O3RuntimeCheckpointPayload::decode(registry.chunk(&cpu0, O3RT).unwrap()).unwrap(), source0.stable);
+    assert_eq!(O3RuntimeCheckpointPayload::decode(registry.chunk(&cpu1, O3RT).unwrap()).unwrap(), source1.stable);
+    let mut invalid = RiscvO3LiveCheckpointPayload::decode(registry.chunk(&cpu1, O3LC).unwrap()).unwrap();
+    let corrupt_sequence = STORE_SEQUENCE + 1;
+    invalid.pending_address.as_mut().unwrap().sequence = corrupt_sequence;
+    invalid.issue_rows[0].sequence = corrupt_sequence;
+    invalid.resident_sequences[0] = corrupt_sequence;
+    registry.write_chunk(&cpu1, O3LC, invalid.encode().unwrap()).unwrap();
+
+    scheduler.checkpoint_access().discard_exact_events(&[source0.wake, source1.wake]).unwrap();
+    let destination0 = seed_pending_address_core(0, &mut scheduler, ScheduledEventKind::Parallel);
+    let destination1 = seed_pending_address_core(1, &mut scheduler, ScheduledEventKind::Serial);
+    destination0.core.write_register(reg(7), 0xdead_beef); destination1.core.write_register(reg(8), 0xcafe_babe);
+    let cores_before = [core_restore_sentinel(&destination0.core), core_restore_sentinel(&destination1.core)];
+    let scheduler_before = scheduler.snapshot(); let registry_before = registry.clone();
+    let destination_bank = RiscvCoreCheckpointBank::new([
+        RiscvCoreCheckpointPort::new(cpu0, destination0.core.clone()),
+        RiscvCoreCheckpointPort::new(cpu1, destination1.core.clone()),
+    ]).unwrap();
+
+    assert!(destination_bank.restore_all_from(&registry).is_err());
+
+    assert_eq!([core_restore_sentinel(&destination0.core), core_restore_sentinel(&destination1.core)], cores_before);
+    assert_eq!(destination0.core.read_register(reg(7)), 0xdead_beef); assert_eq!(destination1.core.read_register(reg(8)), 0xcafe_babe);
+    assert_eq!(scheduler.snapshot(), scheduler_before); assert_eq!(registry, registry_before);
 }
 
 #[test]
