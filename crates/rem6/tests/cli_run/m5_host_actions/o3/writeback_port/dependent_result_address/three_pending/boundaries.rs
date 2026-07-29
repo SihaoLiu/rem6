@@ -132,20 +132,24 @@ fn rem6_run_o3_three_pending_replays_middle_failure() {
 
 #[test]
 fn rem6_run_o3_three_pending_checkpoint_boundary() {
+    assert_three_pending_checkpoint_boundaries();
+}
+
+pub(super) fn assert_three_pending_checkpoint_boundaries() {
     let row = HIERARCHY_ROW;
     let fixture = ThreePendingFixture::new(row);
     let completed = fixture.run(row.max_tick);
     let head = memory_result_event_at_pc(&completed, HEAD_PC);
     let pending = pending_memory_events(&completed);
 
-    let addressless_tick = event_u64(head, "lsq_data_response_tick") - 1;
-    let addressless = fixture.run(addressless_tick);
+    let pre_publication_tick = event_u64(head, "lsq_data_response_tick") - 1;
+    let addressless = fixture.run(pre_publication_tick);
     assert_eq!(addressless_sequences(&addressless).len(), 3);
     assert_host_action_rejected(
         fixture.command(row.max_tick, "detailed"),
         "--host-checkpoint",
-        &format!("{addressless_tick}:three-pending-addressless"),
-        "three-pending addressless checkpoint",
+        &format!("{pre_publication_tick}:three-pending-pre-publication"),
+        "three-pending pre-publication checkpoint",
     );
 
     let (post_bind_tick, _) = post_bind_transport_window(&completed, pending);
@@ -200,12 +204,12 @@ fn rem6_run_host_switch_preserves_o3_three_pending_transport_ticks() {
     let head = memory_result_event_at_pc(&baseline, HEAD_PC);
     let pending = pending_memory_events(&baseline);
 
-    let addressless_tick = event_u64(head, "lsq_data_response_tick") - 1;
+    let live_graph_source_tick = event_u64(head, "commit_tick") - 1;
     assert_host_action_rejected(
         fixture.command(row.max_tick, "detailed"),
         "--host-switch-cpu-mode",
-        &format!("{addressless_tick}:cpu0:timing"),
-        "three-pending addressless switch",
+        &format!("{live_graph_source_tick}:cpu0:timing"),
+        "three-pending live-graph switch",
     );
 
     let (requested_switch, first_response) = post_bind_transport_window(&baseline, pending);

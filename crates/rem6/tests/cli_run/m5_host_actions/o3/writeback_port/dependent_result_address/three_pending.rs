@@ -7,6 +7,9 @@ mod boundaries;
 mod fixture;
 use fixture::*;
 
+#[path = "three_pending/live_checkpoint.rs"]
+mod live_checkpoint;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ThreePendingTopology {
     Sibling,
