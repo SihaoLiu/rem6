@@ -6,6 +6,7 @@ impl SystemHostEventPort {
         context: &mut SchedulerContext<'_>,
         event: GuestEvent,
         component: CheckpointComponentId,
+        capture_prepared: bool,
     ) -> Result<PartitionEventId, SystemError> {
         let capture_deadline = matches!(
             event.kind(),
@@ -21,12 +22,21 @@ impl SystemHostEventPort {
                 }))
         })
         .transpose()?;
-        if let Some(deadline) = capture_deadline {
+        let restore_deadline = capture_deadline
+            .filter(|_| matches!(event.kind(), GuestEventKind::RestoreCheckpoint { .. }));
+        if let Some(deadline) = capture_deadline.filter(|_| !capture_prepared) {
             self.controller
                 .lock()
                 .expect("system host controller lock")
                 .executor()
                 .prepare_source_local_checkpoint_capture(deadline);
+        }
+        if let Some(deadline) = restore_deadline {
+            self.controller
+                .lock()
+                .expect("system host controller lock")
+                .executor()
+                .prepare_source_local_checkpoint_restore(deadline);
         }
         let delivery_controller = Arc::clone(&self.controller);
         let registration_controller = Arc::clone(&self.controller);
@@ -53,6 +63,13 @@ impl SystemHostEventPort {
                         .executor()
                         .release_source_local_checkpoint_capture(deadline);
                 }
+                if let Some(deadline) = restore_deadline {
+                    self.controller
+                        .lock()
+                        .expect("system host controller lock")
+                        .executor()
+                        .release_source_local_checkpoint_restore(deadline);
+                }
                 return Err(error);
             }
         };
@@ -75,6 +92,7 @@ impl RiscvTrapEventPort {
         context: &mut SchedulerContext<'_>,
         event: GuestEventId,
         kind: GuestEventKind,
+        capture_prepared: bool,
     ) -> Result<PartitionEventId, SystemError> {
         let component =
             self.scheduler_checkpoint_component
@@ -86,6 +104,7 @@ impl RiscvTrapEventPort {
             context,
             GuestEvent::new(event, self.source, kind),
             component,
+            capture_prepared,
         )
     }
 
@@ -137,15 +156,56 @@ impl RiscvTrapEventPort {
                 SchedulerCheckpointError::BorrowedSchedulerContextRequired,
             ));
         }
+        let preparation = if matches!(kind, GuestEventKind::RestoreCheckpoint { .. }) {
+            source_tick
+                .checked_sub(1)
+                .filter(|prepare_tick| *prepare_tick >= scheduler.now())
+                .map(|prepare_tick| {
+                    let deadline = source_tick
+                        .checked_add(self.host.channel.host_latency())
+                        .ok_or(SystemError::Scheduler(SchedulerError::TickOverflow {
+                            now: source_tick,
+                            delay: self.host.channel.host_latency(),
+                        }))?;
+                    let controller = Arc::clone(&self.host.controller);
+                    scheduler
+                        .schedule_at(source, prepare_tick, move |_| {
+                            controller
+                                .lock()
+                                .expect("system host controller lock")
+                                .executor()
+                                .prepare_source_local_checkpoint_capture(deadline);
+                        })
+                        .map_err(SystemError::Scheduler)
+                })
+                .transpose()?
+        } else {
+            None
+        };
         let port = self.clone();
-        let scheduler_event = scheduler
-            .schedule_at(source, source_tick, move |context| {
-                port.emit_guest_event_kind_with_source_local_scheduler_checkpoint(
-                    context, event, kind,
-                )
-                .expect("validated source-local scheduler checkpoint control scheduling");
-            })
-            .map_err(SystemError::Scheduler)?;
+        let capture_prepared = preparation.is_some();
+        let scheduler_event = match scheduler.schedule_at(source, source_tick, move |context| {
+            port.emit_guest_event_kind_with_source_local_scheduler_checkpoint(
+                context,
+                event,
+                kind,
+                capture_prepared,
+            )
+            .expect("validated source-local scheduler checkpoint control scheduling");
+        }) {
+            Ok(event) => event,
+            Err(error) => {
+                if let Some(preparation) = preparation {
+                    scheduler
+                        .cancel_event(preparation)
+                        .expect("new restore preparation event remains pending");
+                }
+                return Err(SystemError::Scheduler(error));
+            }
+        };
+        if let Some(preparation) = preparation {
+            self.register_scheduler_checkpoint_control_event(scheduler, preparation);
+        }
         self.register_scheduler_checkpoint_control_event(scheduler, scheduler_event);
         Ok(scheduler_event)
     }
@@ -335,6 +395,7 @@ mod tests {
     fn failed_source_local_restore_releases_only_its_prepare_reference() {
         let fixture = fixture(3, 2);
         fixture.core.prepare_source_local_checkpoint_capture(100);
+        fixture.core.prepare_source_local_checkpoint_restore(100);
         let mut scheduler = fixture.scheduler.lock().unwrap();
         fixture
             .trap
@@ -356,6 +417,40 @@ mod tests {
         ));
         assert!(drive_fetch(&fixture, &mut scheduler).is_none());
         fixture.core.release_source_local_checkpoint_capture(100);
+        assert!(drive_fetch(&fixture, &mut scheduler).is_none());
+        fixture.core.release_source_local_checkpoint_restore(100);
+        assert!(matches!(
+            drive_fetch(&fixture, &mut scheduler),
+            Some(RiscvCoreDriveAction::FetchIssued { .. })
+        ));
+    }
+
+    #[test]
+    fn scheduled_restore_prepares_before_same_tick_fetch_admission() {
+        let fixture = fixture(3, 2);
+        let mut scheduler = fixture.scheduler.lock().unwrap();
+        fixture
+            .trap
+            .schedule_host_checkpoint_restore_event_on_source_parallel(
+                &mut scheduler,
+                GuestEventId::new(1),
+                PartitionId::new(0),
+                2,
+                "missing".to_string(),
+            )
+            .unwrap();
+
+        assert_eq!(scheduler.snapshot().total_pending_events(), 2);
+        scheduler.run_next_epoch();
+        assert_eq!(scheduler.now(), 1);
+        assert!(drive_fetch(&fixture, &mut scheduler).is_none());
+
+        run_until_next_host_result(&fixture, &mut scheduler);
+
+        assert!(matches!(
+            fixture.controller.lock().unwrap().action_errors(),
+            [SystemError::MissingCheckpointManifest { label }] if label == "missing"
+        ));
         assert!(matches!(
             drive_fetch(&fixture, &mut scheduler),
             Some(RiscvCoreDriveAction::FetchIssued { .. })
@@ -378,6 +473,7 @@ mod tests {
             .unwrap();
         run_until_next_host_result(&fixture, &mut scheduler);
         fixture.core.prepare_source_local_checkpoint_capture(100);
+        fixture.core.prepare_source_local_checkpoint_restore(100);
         let restore_source_tick = scheduler.now() + 1;
         fixture
             .trap
@@ -602,7 +698,7 @@ mod tests {
                                 .schedule_remote_after(source, 2, move |context| {
                                     trap
                                         .emit_guest_event_kind_with_source_local_scheduler_checkpoint(
-                                            context, event, kind,
+                                            context, event, kind, false,
                                         )
                                         .unwrap();
                                 })

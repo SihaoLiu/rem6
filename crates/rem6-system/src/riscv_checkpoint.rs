@@ -912,6 +912,20 @@ impl RiscvCoreCheckpointBank {
         }
     }
 
+    pub(crate) fn prepare_source_local_checkpoint_restore(&self, deadline: u64) {
+        for port in self.ports.values() {
+            port.core()
+                .prepare_source_local_checkpoint_restore(deadline);
+        }
+    }
+
+    pub(crate) fn release_source_local_checkpoint_restore(&self, deadline: u64) {
+        for port in self.ports.values() {
+            port.core()
+                .release_source_local_checkpoint_restore(deadline);
+        }
+    }
+
     pub(crate) fn checker_summary_for_target(
         &self,
         target: &ExecutionModeTarget,

@@ -31,6 +31,18 @@ impl SystemActionExecutor {
         }
     }
 
+    pub(crate) fn prepare_source_local_checkpoint_restore(&self, deadline: u64) {
+        if let Some(bank) = &self.riscv_checkpoints {
+            bank.prepare_source_local_checkpoint_restore(deadline);
+        }
+    }
+
+    pub(crate) fn release_source_local_checkpoint_restore(&self, deadline: u64) {
+        if let Some(bank) = &self.riscv_checkpoints {
+            bank.release_source_local_checkpoint_restore(deadline);
+        }
+    }
+
     pub const fn riscv_checkpoint_bank(&self) -> Option<&RiscvCoreCheckpointBank> {
         self.riscv_checkpoints.as_ref()
     }

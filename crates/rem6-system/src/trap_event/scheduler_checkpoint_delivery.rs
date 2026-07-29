@@ -34,6 +34,13 @@ pub(super) fn handle_host_delivery_with_scheduler_checkpoint(
             .executor()
             .release_source_local_checkpoint_capture(delivery_tick);
     }
+    if matches!(event.kind(), GuestEventKind::RestoreCheckpoint { .. }) {
+        controller
+            .lock()
+            .expect("system host controller lock")
+            .executor()
+            .release_source_local_checkpoint_restore(delivery_tick);
+    }
 
     if period == 0 || context.now().checked_add(period).is_none() {
         return;
