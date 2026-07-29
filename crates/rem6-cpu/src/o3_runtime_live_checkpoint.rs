@@ -40,7 +40,7 @@ pub(crate) struct O3LiveCheckpointRuntimeProjection {
     pub(crate) writeback_published_sequences: Vec<u64>,
     pub(crate) reservation: Option<RiscvO3LiveCheckpointReservation>,
     pub(crate) completed_result: Option<RiscvO3LiveCheckpointCompletedFpLoad>,
-    pub(crate) pending_address: Option<RiscvO3LiveCheckpointPendingDataAddress>,
+    pub(crate) pending_addresses: Vec<RiscvO3LiveCheckpointPendingDataAddress>,
     pub(crate) finalized_rows: Vec<RiscvO3LiveCheckpointIssueRow>,
 }
 
@@ -189,8 +189,8 @@ impl O3RuntimeState {
         captured_tick: u64,
     ) -> Result<Option<O3LiveCheckpointRuntimeProjection>, Error> {
         let resident_sequences = self.live_issue.resident_sequences().to_vec();
-        let pending_address = pending_address::capture(self, captured_tick, &resident_sequences)?;
-        let pending_profile = pending_address.is_some();
+        let pending_addresses = pending_address::capture(self, captured_tick, &resident_sequences)?;
+        let pending_profile = !pending_addresses.is_empty();
         let completed_fp = self.checkpoint_completed_fp_load(captured_tick, &resident_sequences)?;
         let completed_profile = completed_fp.is_some();
         if let Some(completed) = &completed_fp {
@@ -273,7 +273,7 @@ impl O3RuntimeState {
                     .remove(&row.sequence);
             }
         }
-        if let Some(pending) = &pending_address {
+        if let Some(pending_root) = pending_addresses.first() {
             let reservations = finalized_writeback
                 .writeback_calendar
                 .by_tick
@@ -284,17 +284,17 @@ impl O3RuntimeState {
             match reservations.as_slice() {
                 [] if finalized_writeback.published_writeback_sequences.is_empty() => {}
                 [reservation]
-                    if reservation.sequence() == pending.producer_sequence
+                    if reservation.sequence() == pending_root.root_sequence
                         && reservation.admitted_tick() <= captured_tick
                         && finalized_writeback.published_writeback_sequences
-                            == BTreeSet::from([pending.producer_sequence]) =>
+                            == BTreeSet::from([pending_root.root_sequence]) =>
                 {
                     finalized_writeback
                         .writeback_calendar
-                        .remove_sequence(pending.producer_sequence);
+                        .remove_sequence(pending_root.root_sequence);
                     finalized_writeback
                         .published_writeback_sequences
-                        .remove(&pending.producer_sequence);
+                        .remove(&pending_root.root_sequence);
                 }
                 _ => {
                     return Err(invalid(
@@ -431,7 +431,7 @@ impl O3RuntimeState {
             writeback_published_sequences: Vec::new(),
             reservation,
             completed_result,
-            pending_address,
+            pending_addresses,
             finalized_rows,
         }))
     }

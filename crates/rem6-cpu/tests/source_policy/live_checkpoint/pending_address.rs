@@ -4,9 +4,12 @@ const POLICY: &str = "tests/source_policy/live_checkpoint/pending_address.rs";
 const CODEC: &str = "src/riscv_live_checkpoint/codec.rs";
 const FETCH: &str = "src/riscv_live_checkpoint/fetch/pending_address.rs";
 const CAPTURE: &str = "src/o3_runtime_live_checkpoint/pending_address.rs";
+const CAPTURE_GRAPH: &str = "src/o3_runtime_live_checkpoint/pending_address/graph.rs";
 const TESTS: &str = "src/riscv_live_checkpoint_tests/pending_address/runtime.rs";
 const CODEC_TESTS: &str = "src/riscv_live_checkpoint_tests/pending_address/runtime/codec.rs";
 const RESTORE_TESTS: &str = "src/riscv_live_checkpoint_tests/pending_address/runtime/restore.rs";
+const GRAPH_RESTORE_TESTS: &str =
+    "src/riscv_live_checkpoint_tests/pending_address/graph/restore.rs";
 
 #[test]
 fn pending_address_live_checkpoint_cpu_sources_are_attached_and_focused() {
@@ -57,6 +60,13 @@ fn pending_address_live_checkpoint_cpu_sources_are_attached_and_focused() {
             "fetch/selection.rs",
             "selection",
         ),
+        (CAPTURE, CAPTURE_GRAPH, "pending_address/graph.rs", "graph"),
+        (
+            "src/riscv_live_checkpoint_tests/pending_address/graph.rs",
+            GRAPH_RESTORE_TESTS,
+            "graph/restore.rs",
+            "restore",
+        ),
     ] {
         assert_unconditional_attachment(crate_dir, owner, child, path, module);
     }
@@ -66,15 +76,17 @@ fn pending_address_live_checkpoint_cpu_sources_are_attached_and_focused() {
         ("src/riscv_live_checkpoint/pending_address.rs", 180),
         ("src/riscv_live_checkpoint/codec/pending_address.rs", 260),
         ("src/riscv_live_checkpoint/fetch.rs", 220),
-        ("src/riscv_live_checkpoint/fetch/pending_address.rs", 100),
+        ("src/riscv_live_checkpoint/fetch/pending_address.rs", 130),
         ("src/riscv_live_checkpoint/fetch/selection.rs", 100),
         (CAPTURE, 400),
+        (CAPTURE_GRAPH, 650),
         ("src/o3_runtime_live_checkpoint/support.rs", 100),
         ("src/riscv_core_checkpoint_restore/pending_address.rs", 180),
         ("src/riscv_live_checkpoint_tests/pending_address.rs", 500),
         (TESTS, 500),
         (CODEC_TESTS, 500),
         (RESTORE_TESTS, 500),
+        (GRAPH_RESTORE_TESTS, 750),
     ] {
         let path = crate_dir.join(relative);
         let lines = line_count(&path);
@@ -125,9 +137,10 @@ fn pending_address_capture_and_fetch_ownership_are_mutation_locked() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let fetch = fs::read_to_string(crate_dir.join(FETCH)).unwrap();
     let capture = fs::read_to_string(crate_dir.join(CAPTURE)).unwrap();
+    let capture_graph = fs::read_to_string(crate_dir.join(CAPTURE_GRAPH)).unwrap();
     let tests = pending_address_tests(crate_dir);
     assert!(pending_fetch_contract(&fetch, &tests));
-    assert!(pending_capture_contract(&capture, &tests));
+    assert!(pending_capture_contract(&capture, &capture_graph, &tests));
 
     let generic = fetch.replacen("events: Vec::new(),", "events: state.events.clone(),", 1);
     assert_ne!(generic, fetch, "generic-event mutation must apply");
@@ -139,7 +152,15 @@ fn pending_address_capture_and_fetch_ownership_are_mutation_locked() {
         1,
     );
     assert_ne!(materialized, capture, "materialization mutation must apply");
-    assert!(!pending_capture_contract(&materialized, &tests));
+    assert!(!pending_capture_contract(
+        &materialized,
+        &capture_graph,
+        &tests
+    ));
+
+    let atomic = capture_graph.replacen("|| row.root_head.atomic_head", "|| false", 1);
+    assert_ne!(atomic, capture_graph, "atomic graph mutation must apply");
+    assert!(!pending_capture_contract(&capture, &atomic, &tests));
 }
 
 fn wire_contract(codec: &str, tests: &str) -> bool {
@@ -175,22 +196,38 @@ fn pending_fetch_contract(source: &str, tests: &str) -> bool {
         && tests.contains("pending_store_capture_keeps_generic_execution_events_empty")
 }
 
-fn pending_capture_contract(source: &str, tests: &str) -> bool {
+fn pending_capture_contract(source: &str, graph_source: &str, tests: &str) -> bool {
     let Some(capture) = unconditional_rust_function_definition(source, "capture") else {
         return false;
     };
+    let Some(store_capture) = unconditional_rust_function_definition(source, "capture_store")
+    else {
+        return false;
+    };
     let capture = compact_rust_code(&capture);
-    capture.contains("runtime.pending_data_addresses.len()!=1")
-        && capture.contains("row.selected_issue_tick.is_some()")
-        && capture.contains("row.materialized.is_some()")
-        && capture.contains("runtime.pending_data_accesses.is_empty()")
-        && capture.contains("runtime.live_data_accesses.is_empty()")
+    let store_capture = compact_rust_code(&store_capture);
+    let graph_capture = compact_rust_code(&production_rust_source(graph_source));
+    capture.contains("runtime.pending_data_addresses.is_empty()")
+        && capture.contains("capture_store(runtime,captured_tick,resident_sequences)")
+        && capture.contains("graph::capture(runtime,captured_tick,resident_sequences)")
+        && store_capture.contains("runtime.pending_data_addresses.len()!=1")
+        && store_capture.contains("row.selected_issue_tick.is_some()")
+        && store_capture.contains("row.materialized.is_some()")
+        && store_capture.contains("runtime.pending_data_accesses.is_empty()")
+        && store_capture.contains("runtime.live_data_accesses.is_empty()")
+        && graph_capture.contains("row.selected_issue_tick.is_some()")
+        && graph_capture.contains("row.materialized.is_some()")
+        && graph_capture.contains("||row.root_head.atomic_head")
+        && graph_capture.contains("runtime.pending_data_accesses.is_empty()")
+        && graph_capture.contains("runtime.live_data_accesses.is_empty()")
+        && graph_capture.contains("live_data_access_younger_sequences")
         && tests.contains("pending_store_capture_uses_pending_profile_after_producer_commit")
         && tests.contains("pending_store_rebound_wake_materializes_restored_request")
+        && tests.contains("pending_load_graph_capture_projects_all_addressless_owners")
 }
 
 fn pending_address_tests(crate_dir: &Path) -> String {
-    [TESTS, CODEC_TESTS, RESTORE_TESTS]
+    [TESTS, CODEC_TESTS, RESTORE_TESTS, GRAPH_RESTORE_TESTS]
         .map(|path| fs::read_to_string(crate_dir.join(path)).unwrap())
         .join("\n")
 }

@@ -437,6 +437,29 @@ impl O3RuntimeState {
     }
 
     #[cfg(test)]
+    pub(crate) fn pending_data_address_selected_issue_ticks_for_test(&self) -> Vec<Option<u64>> {
+        self.pending_data_addresses
+            .iter()
+            .map(|pending| pending.selected_issue_tick)
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_data_address_materialized_fetches_for_test(
+        &self,
+    ) -> Vec<Option<MemoryRequestId>> {
+        self.pending_data_addresses
+            .iter()
+            .map(|pending| {
+                pending
+                    .materialized
+                    .as_ref()
+                    .map(|event| event.fetch().request_id())
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
     pub(super) fn pending_data_address_rows_for_test(&self) -> Vec<O3PendingDataAddress> {
         self.pending_data_addresses.iter().cloned().collect()
     }

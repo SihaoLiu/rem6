@@ -24,14 +24,14 @@ pub(super) fn project_live_fetches(
     expected_requests: &[MemoryRequestId],
     completed_result: Option<&super::RiscvO3LiveCheckpointCompletedFpLoad>,
     projected_pending_terminal_fetch: Option<MemoryRequestId>,
-    pending_address: Option<&super::RiscvO3LiveCheckpointPendingDataAddress>,
+    pending_addresses: Option<&[super::RiscvO3LiveCheckpointPendingDataAddress]>,
     wake_partition: rem6_kernel::PartitionId,
 ) -> Result<LiveFetchProjection, RiscvO3LiveCheckpointError> {
     let completed_fetches = select_live_completed_fetches(
         cpu_events,
         &state.executed_fetches,
         expected_requests,
-        pending_address.map(|pending| pending.fetch.request_id()),
+        None,
     )?;
     if completed_fetches
         .iter()
@@ -40,7 +40,7 @@ pub(super) fn project_live_fetches(
         return Err(invalid("scheduled wake does not match queue service"));
     }
 
-    if let Some(pending) = pending_address {
+    if let Some(pending) = pending_addresses {
         return project_pending_live_fetch(
             state,
             owner_rows,

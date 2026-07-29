@@ -1,13 +1,37 @@
 use super::super::o3_runtime_pending_address::O3PendingDataAddressRootHead;
 use super::*;
 
+#[path = "pending_address/graph.rs"]
+mod graph;
+
 pub(super) fn capture(
     runtime: &O3RuntimeState,
     captured_tick: u64,
     resident_sequences: &[u64],
-) -> Result<Option<RiscvO3LiveCheckpointPendingDataAddress>, Error> {
+) -> Result<Vec<RiscvO3LiveCheckpointPendingDataAddress>, Error> {
+    if runtime.pending_data_addresses.is_empty() {
+        return Ok(Vec::new());
+    }
+    if runtime.pending_data_addresses.len() == 1
+        && runtime
+            .pending_data_addresses
+            .first()
+            .is_some_and(|row| row.destination.is_none())
+    {
+        return capture_store(runtime, captured_tick, resident_sequences).map(|row| vec![row]);
+    }
+    graph::capture(runtime, captured_tick, resident_sequences)
+}
+
+fn capture_store(
+    runtime: &O3RuntimeState,
+    captured_tick: u64,
+    resident_sequences: &[u64],
+) -> Result<RiscvO3LiveCheckpointPendingDataAddress, Error> {
     if runtime.pending_data_addresses.len() != 1 {
-        return Ok(None);
+        return Err(invalid(
+            "pending store does not own exactly one pending row",
+        ));
     }
     let row = runtime
         .pending_data_addresses
@@ -94,7 +118,7 @@ pub(super) fn capture(
         return Err(invalid("pending store retains extra transient authority"));
     }
 
-    Ok(Some(RiscvO3LiveCheckpointPendingDataAddress {
+    Ok(RiscvO3LiveCheckpointPendingDataAddress {
         sequence: row.sequence,
         fetch: row.fetch.clone(),
         consumed_requests: row.consumed_requests.clone(),
@@ -110,12 +134,27 @@ pub(super) fn capture(
         expected_lsq_bytes: row.expected_lsq_bytes,
         published_producer_ready_tick: Some(published_tick),
         requested_wake_tick: Some(requested_wake_tick),
-    }))
+    })
 }
 
 pub(super) fn validate_restore_payload(
     live: &RiscvO3LiveCheckpointPayload,
-) -> Result<&RiscvO3LiveCheckpointPendingDataAddress, Error> {
+) -> Result<&[RiscvO3LiveCheckpointPendingDataAddress], Error> {
+    if live.pending_addresses.is_empty() {
+        return Err(invalid("pending-address profile lacks its pending rows"));
+    }
+    if !live.pending_addresses.is_empty()
+        && live.pending_addresses.len() == 1
+        && live.pending_addresses[0].destination.is_none()
+    {
+        validate_store_restore_payload(live)?;
+        return Ok(live.pending_addresses.as_slice());
+    }
+    graph::validate_restore_payload(live)?;
+    Ok(live.pending_addresses.as_slice())
+}
+
+fn validate_store_restore_payload(live: &RiscvO3LiveCheckpointPayload) -> Result<(), Error> {
     let [pending] = live.pending_addresses.as_slice() else {
         return Err(invalid(
             "pending-address profile lacks its exact pending row",
@@ -177,12 +216,22 @@ pub(super) fn validate_restore_payload(
         return Err(invalid("pending-address row is inconsistent"));
     }
     decode_pending_store(pending)?;
-    Ok(pending)
+    Ok(())
 }
 
 pub(super) fn validate_stable_owner_set(
     runtime: &O3RuntimeState,
-    _live: &RiscvO3LiveCheckpointPayload,
+    live: &RiscvO3LiveCheckpointPayload,
+    pending: &[RiscvO3LiveCheckpointPendingDataAddress],
+) -> Result<(), Error> {
+    if !pending.is_empty() && pending.len() == 1 && pending[0].destination.is_none() {
+        return validate_store_stable_owner_set(runtime, &pending[0]);
+    }
+    graph::validate_stable_owner_set(runtime, live, pending)
+}
+
+fn validate_store_stable_owner_set(
+    runtime: &O3RuntimeState,
     pending: &RiscvO3LiveCheckpointPendingDataAddress,
 ) -> Result<(), Error> {
     let [rob] = runtime.snapshot.reorder_buffer.as_slice() else {
@@ -219,6 +268,17 @@ pub(super) fn validate_stable_owner_set(
 }
 
 pub(super) fn restore(
+    runtime: &mut O3RuntimeState,
+    live: &RiscvO3LiveCheckpointPayload,
+    pending: &[RiscvO3LiveCheckpointPendingDataAddress],
+) -> Result<(), Error> {
+    if !pending.is_empty() && pending.len() == 1 && pending[0].destination.is_none() {
+        return restore_store(runtime, live, &pending[0]);
+    }
+    graph::restore(runtime, live, pending)
+}
+
+fn restore_store(
     runtime: &mut O3RuntimeState,
     live: &RiscvO3LiveCheckpointPayload,
     pending: &RiscvO3LiveCheckpointPendingDataAddress,

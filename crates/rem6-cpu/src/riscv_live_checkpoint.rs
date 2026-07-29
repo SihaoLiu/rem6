@@ -668,12 +668,18 @@ fn capture_live_from_guards(
             "next fetch sequence does not follow restored requests",
         ));
     }
-    if runtime.pending_address.as_ref().is_some_and(|pending| {
-        pending.requested_wake_tick != Some(runtime.service.requested_tick)
-            || pending.requested_wake_tick != Some(wake.tick())
-    }) {
-        return Err(invalid("pending store wake authority is inconsistent"));
+    if !runtime.pending_addresses.is_empty()
+        && runtime
+            .pending_addresses
+            .iter()
+            .filter_map(|pending| pending.requested_wake_tick)
+            .min()
+            != Some(runtime.service.requested_tick)
+    {
+        return Err(invalid("pending-address wake authority is inconsistent"));
     }
+    let pending_addresses =
+        (!runtime.pending_addresses.is_empty()).then_some(runtime.pending_addresses.as_slice());
     let fetch_projection = project_live_fetches(
         cpu.events(),
         state,
@@ -681,16 +687,16 @@ fn capture_live_from_guards(
         &expected_requests,
         completed_result,
         projected_pending_terminal_fetch,
-        runtime.pending_address.as_ref(),
+        pending_addresses,
         wake.event().partition(),
     )?;
     let projected_stable = runtime.stable.clone();
     let next_fetch_pc = runtime
-        .pending_address
-        .as_ref()
+        .pending_addresses
+        .last()
         .map(|pending| Address::new(pending.fetch.pc().get().saturating_add(4)))
         .unwrap_or_else(|| cpu.pc());
-    let pending_addresses = runtime.pending_address.into_iter().collect();
+    let pending_addresses = runtime.pending_addresses;
     Ok(Some((
         RiscvO3LiveCheckpointPayload {
             profile: runtime.profile,
