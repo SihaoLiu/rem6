@@ -223,7 +223,7 @@ ordering changes, or if the host checkpoint no longer reaches the current
 pending-authority rejection, stop and revise the design before editing the
 schema.
 
-- [ ] **Step 3: Freeze one real version-1 payload before changing the codec**
+- [x] **Step 3: Freeze one real version-1 payload before changing the codec**
 
 Temporarily add and run this ignored generator beside `compute_payload()`:
 
@@ -247,7 +247,7 @@ TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib riscv_live_checkpoint_tests:
 Remove the generator immediately. Retain only the binary fixture and a normal
 test that decodes it and compares it with the exact `compute_payload()` value.
 
-- [ ] **Step 4: Write version-2 codec RED tests**
+- [x] **Step 4: Write version-2 codec RED tests**
 
 Define `pending_store_payload()` in the new CPU test child and add:
 
@@ -272,7 +272,7 @@ shape, duplicate consumed requests, invalid root range, root/producer/store
 sequence mismatch, publication after capture, wake before publication, and
 trailing/truncated/excessive pending request lists.
 
-- [ ] **Step 5: Run codec RED**
+- [x] **Step 5: Run codec RED**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib riscv_live_checkpoint_tests::pending_address -- --nocapture
@@ -282,7 +282,7 @@ Expected: compilation fails because the profile/type/field do not exist. Once
 the declarations compile, the round-trip still fails because the current
 codec rejects version 2.
 
-- [ ] **Step 6: Add the typed projection and version dispatch**
+- [x] **Step 6: Add the typed projection and version dispatch**
 
 Add and re-export these exact public shapes from the focused child:
 
@@ -356,7 +356,7 @@ pub fn decode_versioned(
 Update the host summary to report the decoded wire version and map the new
 profile to `"pending_data_address"`; do not inspect byte offset 4 in CLI code.
 
-- [ ] **Step 7: Run wire GREEN and legacy regressions**
+- [x] **Step 7: Run wire GREEN and legacy regressions**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib riscv_live_checkpoint_tests::codec -- --nocapture
@@ -367,7 +367,7 @@ TMPDIR=$PWD/target/tmp cargo test -p rem6 host_action_checkpoint_stats_expose_o3
 Expected: all selected tests PASS. Existing compute and FP payloads encode as
 version 2 with no pending row; the frozen version-1 bytes decode unchanged.
 
-- [ ] **Step 8: Commit and push the wire unit**
+- [x] **Step 8: Commit and push the wire unit**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo fmt --all
