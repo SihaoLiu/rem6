@@ -165,6 +165,33 @@ impl PendingStoreCheckpointFixture {
     }
 }
 
+#[test]
+fn pending_store_capture_preserves_younger_completed_fetch_suffix() {
+    let fixture = PendingStoreCheckpointFixture::new();
+    let younger_sequence = STORE_SEQUENCE + 1;
+    fixture
+        .core
+        .core
+        .state
+        .lock()
+        .expect("cpu core lock")
+        .events
+        .push(completed_fetch(
+            STORE_PC + 4,
+            younger_sequence,
+            i_type(0, 2, 3, 7, 0x03),
+        ));
+    fixture
+        .core
+        .inner()
+        .advance_sequence_past(request(younger_sequence));
+
+    let projection = fixture.capture();
+    let live = captured_pending(&projection);
+    assert_eq!(live.pending_addresses.len(), 1);
+    assert_eq!(live.pending_addresses[0].sequence, LIVE_STORE_SEQUENCE);
+}
+
 fn pending_store_core() -> RiscvCore {
     RiscvCore::new(
         CpuCore::new(

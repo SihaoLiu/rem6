@@ -283,7 +283,7 @@ fn assert_live_chunk(action: &Value, rebound_wakes: u64, wake_tick: u64) {
         live.pointer("/decode_error").and_then(Value::as_bool),
         Some(false)
     );
-    assert_eq!(live.pointer("/version").and_then(Value::as_u64), Some(2));
+    assert_eq!(live.pointer("/version").and_then(Value::as_u64), Some(3));
     assert_eq!(
         live.pointer("/profile").and_then(Value::as_str),
         Some("pending_data_address")

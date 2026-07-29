@@ -27,11 +27,15 @@ pub(super) fn project_live_fetches(
     pending_addresses: Option<&[super::RiscvO3LiveCheckpointPendingDataAddress]>,
     wake_partition: rem6_kernel::PartitionId,
 ) -> Result<LiveFetchProjection, RiscvO3LiveCheckpointError> {
+    let pending_suffix_after = pending_addresses.and_then(|pending| match pending {
+        [store] if store.destination.is_none() => Some(store.fetch.request_id()),
+        _ => None,
+    });
     let completed_fetches = select_live_completed_fetches(
         cpu_events,
         &state.executed_fetches,
         expected_requests,
-        None,
+        pending_suffix_after,
     )?;
     if completed_fetches
         .iter()
