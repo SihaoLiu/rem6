@@ -15,6 +15,8 @@ use rem6_system::{
 
 #[path = "support/live_o3_pending_address.rs"]
 mod pending_address_support;
+#[path = "support/live_o3_pending_load_graph.rs"]
+mod pending_load_graph_support;
 #[path = "support/live_o3.rs"]
 mod support;
 use support::{
@@ -23,6 +25,8 @@ use support::{
 
 #[path = "live_o3_scheduler_checkpoint/pending_address.rs"]
 mod pending_address;
+#[path = "live_o3_scheduler_checkpoint/pending_load_graph.rs"]
+mod pending_load_graph;
 
 const FIRST_PARTITION_FRONTIERS: [usize; 2] = [5 * 8 + 4 + 8, 5 * 8 + 4 + 16];
 
