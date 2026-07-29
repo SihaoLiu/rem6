@@ -232,6 +232,15 @@ capture has its same-identity pending row, issue packet, fetch ownership, and
 wake replaced rather than appended. Older historical observations may remain,
 but they are not operational authority.
 
+The same preflight rule applies to attached in-process runtime sidecars:
+capture and validation may fail, but installation callbacks cannot return an
+error. Runtime-backed banks reject two component IDs that alias the same
+controller, fabric, or cache harness, so one validated component cannot mutate
+the storage another component has yet to restore. The fabric wire chunk remains
+the sole lane, link, credit, and router timing authority; its retained sidecar
+owns only exact activity and wait logs and cannot overwrite the validated wire
+snapshot.
+
 When the rebound callback executes, it enters the normal O3 service path. The
 store address is computed from restored architectural state, the atomic-root
 nonoverlap check runs, the LSQ row receives its address, and ownership moves to
@@ -245,6 +254,13 @@ helper. The source wake is excluded from the scheduler projection because the
 CPU overlay owns its deadline. Destination-timeline O3 wakes are discarded
 during restore, then exactly one callback is rebound after the scheduler tick
 domain is restored.
+
+Current-format capture also writes a versioned `o3-live-wake-authority` chunk
+containing the independently retained source scheduler event identity. O3LC
+version 2 requires an exact instance, partition, tick, order, and kind match;
+version-1 checkpoints remain decodable without this new chunk. Public low-level
+port and bank restore reject the pending-address profile. Only the crate-private
+host path may install it after complete scheduler preflight.
 
 The pending-address profile requires an attached or borrowed scheduler
 snapshot with full restore authority. Discard-only restore is insufficient.
@@ -321,10 +337,13 @@ request identities and counts, pending/issue/LSQ occupancy, publication,
 selection, data issue, completion, and commit ticks. Successful exit alone is
 not sufficient.
 
-Required real-path negative rows keep pre-publication producer transport,
-materialized or bound store, multiple pending rows, dependent AMO consumer,
-translated/MMIO state, corrupted live chunk, missing scheduler authority, and
-mode-switch capture rejected without an artifact or external side effect.
+Required subprocess CLI negative rows keep every user-triggerable boundary:
+pre-publication producer transport, materialized or bound store, multiple
+pending rows, dependent AMO consumer, translated/MMIO state, and mode-switch
+capture are rejected without an artifact or external side effect. Corrupted
+live chunks and omitted scheduler authority are not public CLI inputs; exercise
+those through the real `SystemActionExecutor` host/controller restore path with
+checkpoint registries and manifests, proving transactional failure there.
 
 ## Telemetry And Documentation
 
@@ -351,6 +370,8 @@ Keep the increment within existing ownership boundaries:
 - a focused `o3_runtime_live_checkpoint` child owns runtime capture and
   reconstruction;
 - the current scheduler wake module owns claim and rebind behavior;
+- focused system wake-authority and restore-authority children own current-wire
+  cross-checking and the scheduler-authorized install boundary;
 - focused CPU tests own codec, capture, restore, and corruption evidence;
 - focused `rem6-system` tests own transactional scheduler/bank restore; and
 - focused `rem6` CLI children own direct, hierarchy, timing, and negative
@@ -361,9 +382,22 @@ implementation. Source policy adds line caps and one-owner assertions for the
 new child modules and locks `O3LC` version 2, version-1 decoding, profile tag 2,
 the stable-checkpoint rejection, and real CLI evidence.
 
-The implementation target is roughly 900 to 1600 changed lines. Any expansion
-into general transport, multiple pending rows, or a second memory consumer
-profile requires a new design rather than silently exceeding this boundary.
+The original CPU-only implementation target was roughly 900 to 1600 changed
+lines. The hierarchy RED tests and independent audits exposed that exact
+restoration also requires cache, fabric, and DRAM runtime ownership rather than
+length-only telemetry truncation or silently omitted cache banks. The accepted
+delivery scope therefore includes one generic in-process retained-runtime-state
+carrier plus focused cache, fabric, and DRAM adapters, versioned DRAM refresh
+state, dynamic unsupported-configuration guards, transactional preflight, and
+their direct tests. The final read-only audits additionally required explicit
+runtime-sidecar, scheduler-authorized install, and wake-equality policy proofs.
+Including mechanical source/test splits, the revised audited budget is 8000 to
+11500 touched lines.
+
+This expansion does not claim a durable or cross-process runtime-sidecar wire
+format, non-MSI cache restore, fabric QoS restore, multiple pending rows, a
+second memory consumer profile, or general transport checkpointing. Any such
+expansion requires a new design rather than silently extending this boundary.
 
 ## Delivery Sequence
 

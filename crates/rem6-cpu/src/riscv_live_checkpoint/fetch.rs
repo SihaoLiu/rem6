@@ -1,81 +1,19 @@
-use std::collections::{BTreeMap, BTreeSet};
-
 use rem6_memory::MemoryRequestId;
 
 use super::{invalid, RiscvO3LiveCheckpointError};
+
+#[path = "fetch/pending_address.rs"]
+mod pending_address;
+#[path = "fetch/selection.rs"]
+mod selection;
+use pending_address::project_pending_live_fetch;
+use selection::select_live_completed_fetches;
 
 pub(super) struct LiveFetchProjection {
     pub(super) events: Vec<super::RiscvO3LiveCheckpointEvent>,
     pub(super) executed_fetch_requests: Vec<MemoryRequestId>,
     pub(super) issued_fetch_requests: Vec<MemoryRequestId>,
     pub(super) projected_hart: Option<rem6_isa_riscv::RiscvHartState>,
-}
-
-pub(super) fn select_live_completed_fetches<'a>(
-    cpu_events: &'a [crate::CpuFetchEvent],
-    executed_fetches: &BTreeSet<MemoryRequestId>,
-    expected_requests: &[MemoryRequestId],
-    pending_suffix_after: Option<MemoryRequestId>,
-) -> Result<Vec<&'a crate::CpuFetchEvent>, RiscvO3LiveCheckpointError> {
-    let expected = expected_requests.iter().copied().collect::<BTreeSet<_>>();
-    if expected.len() != expected_requests.len() {
-        return Err(invalid("live issue rows repeat a fetch request"));
-    }
-
-    let mut issued = BTreeSet::new();
-    let mut completed = BTreeMap::new();
-    for event in cpu_events {
-        let request = event.request_id();
-        let permitted_pending_suffix = pending_suffix_after.is_some_and(|pending| {
-            request.agent() == pending.agent() && request.sequence() > pending.sequence()
-        });
-        if !expected.contains(&request)
-            && !executed_fetches.contains(&request)
-            && !permitted_pending_suffix
-        {
-            return Err(invalid(
-                "operational fetch stream contains an unexecuted fetch",
-            ));
-        }
-        match event.kind() {
-            crate::CpuFetchEventKind::Issued => {
-                if !issued.insert(request) {
-                    return Err(invalid("operational fetch stream repeats an issued fetch"));
-                }
-            }
-            crate::CpuFetchEventKind::Completed => {
-                if !matches!(event.data().map(<[u8]>::len), Some(2 | 4))
-                    || event.data().map(|bytes| bytes.len() as u64) != Some(event.size().bytes())
-                    || completed.insert(request, event).is_some()
-                {
-                    return Err(invalid(
-                        "operational fetch stream contains an invalid completed instruction",
-                    ));
-                }
-            }
-            crate::CpuFetchEventKind::Retry | crate::CpuFetchEventKind::Failed => {
-                return Err(invalid(
-                    "operational fetch stream contains an unsuccessful fetch",
-                ));
-            }
-        }
-    }
-    if issued
-        .iter()
-        .any(|request| !completed.contains_key(request))
-    {
-        return Err(invalid("operational fetch stream retains a pending fetch"));
-    }
-
-    expected_requests
-        .iter()
-        .map(|request| {
-            completed
-                .get(request)
-                .copied()
-                .ok_or(invalid("live issue row has no completed fetch"))
-        })
-        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -103,58 +41,13 @@ pub(super) fn project_live_fetches(
     }
 
     if let Some(pending) = pending_address {
-        let expected_owner = [(pending.sequence, pending.fetch.request_id())];
-        let [completed_fetch] = completed_fetches.as_slice() else {
-            return Err(invalid(
-                "pending store does not own exactly one completed fetch",
-            ));
-        };
-        let raw: [u8; 4] = completed_fetch
-            .data()
-            .and_then(|bytes| bytes.try_into().ok())
-            .ok_or(invalid(
-                "pending store fetch is not an uncompressed instruction",
-            ))?;
-        let decoded = rem6_isa_riscv::RiscvInstruction::decode_with_length(u32::from_le_bytes(raw))
-            .map_err(|_| invalid("pending store instruction does not decode"))?;
-        let pending_pc = pending.fetch.pc().get();
-        let next_pc = pending_pc
-            .checked_add(4)
-            .ok_or(invalid("pending store PC overflows"))?;
-        if owner_rows != expected_owner
-            || expected_requests != [pending.fetch.request_id()]
-            || **completed_fetch != pending.fetch
-            || decoded.bytes() != 4
-            || !matches!(
-                decoded.instruction(),
-                rem6_isa_riscv::RiscvInstruction::Store {
-                    rs1,
-                    rs2,
-                    width: rem6_isa_riscv::MemoryWidth::Doubleword,
-                    ..
-                } if rs1 == pending.producer_register && !rs2.is_zero() && rs1 != rs2
-            )
-            || !state
-                .o3_runtime
-                .checkpoint_live_instruction_matches(pending.sequence, decoded.instruction())
-            || state
-                .events
-                .iter()
-                .any(|event| event.fetch().request_id() == pending.fetch.request_id())
-            || state.executed_fetches.contains(&pending.fetch.request_id())
-            || state
-                .issued_data_for_fetches
-                .contains(&pending.fetch.request_id())
-            || !matches!(state.hart.pc(), pc if pc == pending_pc || pc == next_pc)
-        {
-            return Err(invalid("pending store fetch ownership is inconsistent"));
-        }
-        return Ok(LiveFetchProjection {
-            events: Vec::new(),
-            executed_fetch_requests: Vec::new(),
-            issued_fetch_requests: Vec::new(),
-            projected_hart: None,
-        });
+        return project_pending_live_fetch(
+            state,
+            owner_rows,
+            expected_requests,
+            pending,
+            &completed_fetches,
+        );
     }
 
     let mut events = Vec::with_capacity(expected_requests.len());

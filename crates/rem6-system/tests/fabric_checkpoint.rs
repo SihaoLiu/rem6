@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
+use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
 use rem6_fabric::{
     FabricError, FabricLinkId, FabricModel, FabricPacket, FabricPacketId, FabricPath,
     FabricPathHop, FabricRouterId, FabricRouterStage, VirtualNetworkId,
@@ -8,11 +8,13 @@ use rem6_fabric::{
 use rem6_kernel::PartitionId;
 use rem6_stats::StatsRegistry;
 use rem6_system::{
-    FabricCheckpointBank, FabricCheckpointError, FabricCheckpointPort, GuestEventId, GuestSourceId,
-    HostAction, HostActionRecord, SystemActionExecutor, SystemActionOutcome, SystemError,
+    CheckpointRuntimeState, FabricCheckpointBank, FabricCheckpointError, FabricCheckpointPort,
+    GuestEventId, GuestSourceId, HostAction, HostActionRecord, SystemActionExecutor,
+    SystemActionOutcome, SystemError,
 };
 
 const FABRIC_CHUNK: &str = "fabric";
+const FABRIC_RUNTIME_STATE_CHUNK: &str = "fabric-runtime-state";
 
 fn packet(id: u64, bytes: u64, virtual_network: u16) -> FabricPacket {
     FabricPacket::new(
@@ -117,6 +119,53 @@ fn write_string(payload: &mut Vec<u8>, value: &str) {
     payload.extend_from_slice(value.as_bytes());
 }
 
+fn fabric_runtime_state(fabric: &Arc<Mutex<FabricModel>>) -> CheckpointRuntimeState {
+    let capture = Arc::clone(fabric);
+    let validate = Arc::clone(fabric);
+    let restore = Arc::clone(fabric);
+    CheckpointRuntimeState::new(
+        move || {
+            Ok(encode_runtime_log_lengths(
+                capture.lock().unwrap().runtime_log_lengths(),
+            ))
+        },
+        move |payload| {
+            let (activity_len, wait_len) = decode_runtime_log_lengths(payload)?;
+            let (current_activity, current_wait) = validate.lock().unwrap().runtime_log_lengths();
+            if activity_len > current_activity || wait_len > current_wait {
+                return Err("fabric runtime log prefix exceeds live history".to_string());
+            }
+            Ok(())
+        },
+        move |payload| {
+            let (activity_len, wait_len) =
+                decode_runtime_log_lengths(payload).expect("validated fabric runtime state");
+            assert!(restore
+                .lock()
+                .unwrap()
+                .truncate_runtime_logs(activity_len, wait_len));
+        },
+    )
+}
+
+fn encode_runtime_log_lengths((activity_len, wait_len): (usize, usize)) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(16);
+    payload.extend_from_slice(&u64::try_from(activity_len).unwrap().to_le_bytes());
+    payload.extend_from_slice(&u64::try_from(wait_len).unwrap().to_le_bytes());
+    payload
+}
+
+fn decode_runtime_log_lengths(payload: &[u8]) -> Result<(usize, usize), String> {
+    if payload.len() != 16 {
+        return Err("fabric runtime checkpoint must contain two counters".to_string());
+    }
+    let activity_len = usize::try_from(u64::from_le_bytes(payload[..8].try_into().unwrap()))
+        .map_err(|_| "fabric activity prefix exceeds host size".to_string())?;
+    let wait_len = usize::try_from(u64::from_le_bytes(payload[8..].try_into().unwrap()))
+        .map_err(|_| "fabric wait prefix exceeds host size".to_string())?;
+    Ok((activity_len, wait_len))
+}
+
 #[test]
 fn host_checkpoint_refreshes_and_restores_fabric_state() {
     let component = CheckpointComponentId::new("fabric0").unwrap();
@@ -135,11 +184,10 @@ fn host_checkpoint_refreshes_and_restores_fabric_state() {
     let mut expected = live_fabric.clone();
     let expected_transfer = expected.transmit(1, packet(3, 8, 1), path.clone()).unwrap();
     let fabric = Arc::new(Mutex::new(live_fabric));
-    let bank = FabricCheckpointBank::new([FabricCheckpointPort::new(
-        component.clone(),
-        Arc::clone(&fabric),
-    )])
-    .unwrap();
+    let runtime_at_checkpoint = fabric.lock().unwrap().runtime_log_lengths();
+    let port = FabricCheckpointPort::new(component.clone(), Arc::clone(&fabric))
+        .with_runtime_state(fabric_runtime_state(&fabric));
+    let bank = FabricCheckpointBank::new([port]).unwrap();
     let mut executor =
         SystemActionExecutor::with_checkpoint(StatsRegistry::new(), CheckpointRegistry::new());
     executor.attach_fabric_checkpoint_bank(bank).unwrap();
@@ -161,6 +209,13 @@ fn host_checkpoint_refreshes_and_restores_fabric_state() {
             .len()
             > 32
     );
+    assert_eq!(
+        executor
+            .checkpoints()
+            .chunk(&component, FABRIC_RUNTIME_STATE_CHUNK)
+            .unwrap(),
+        encode_runtime_log_lengths(runtime_at_checkpoint)
+    );
 
     fabric
         .lock()
@@ -168,11 +223,19 @@ fn host_checkpoint_refreshes_and_restores_fabric_state() {
         .transmit(20, packet(9, 8, 1), path.clone())
         .unwrap();
     assert_ne!(fabric.lock().unwrap().lane_snapshots(), fabric_snapshot);
+    assert_ne!(
+        fabric.lock().unwrap().runtime_log_lengths(),
+        runtime_at_checkpoint
+    );
 
     let restore = restore_record(source, &checkpoint);
     executor.apply(&restore).unwrap();
 
     assert_eq!(fabric.lock().unwrap().lane_snapshots(), fabric_snapshot);
+    assert_eq!(
+        fabric.lock().unwrap().runtime_log_lengths(),
+        runtime_at_checkpoint
+    );
     let replayed = fabric
         .lock()
         .unwrap()
@@ -183,6 +246,45 @@ fn host_checkpoint_refreshes_and_restores_fabric_state() {
         fabric.lock().unwrap().lane_snapshots(),
         expected.lane_snapshots()
     );
+}
+
+#[test]
+fn fabric_checkpoint_missing_runtime_state_is_atomic() {
+    let component = CheckpointComponentId::new("fabric-runtime-atomic").unwrap();
+    let path = route();
+    let fabric = Arc::new(Mutex::new(FabricModel::new()));
+    fabric
+        .lock()
+        .unwrap()
+        .transmit(0, packet(30, 8, 1), path.clone())
+        .unwrap();
+    let port = FabricCheckpointPort::new(component.clone(), Arc::clone(&fabric))
+        .with_runtime_state(fabric_runtime_state(&fabric));
+    let bank = FabricCheckpointBank::new([port]).unwrap();
+    let mut registry = CheckpointRegistry::new();
+    bank.register_all(&mut registry).unwrap();
+    bank.capture_all_into(&mut registry).unwrap();
+    assert!(registry.remove_chunk(&component, FABRIC_RUNTIME_STATE_CHUNK));
+
+    fabric
+        .lock()
+        .unwrap()
+        .transmit(20, packet(31, 8, 1), path)
+        .unwrap();
+    let before_snapshot = fabric.lock().unwrap().snapshot();
+    let before_runtime = fabric.lock().unwrap().runtime_log_lengths();
+
+    let error = bank.restore_all_from(&registry).unwrap_err();
+
+    assert_eq!(
+        error,
+        FabricCheckpointError::MissingChunk {
+            component,
+            name: FABRIC_RUNTIME_STATE_CHUNK.to_string(),
+        }
+    );
+    assert_eq!(fabric.lock().unwrap().snapshot(), before_snapshot);
+    assert_eq!(fabric.lock().unwrap().runtime_log_lengths(), before_runtime);
 }
 
 #[test]
@@ -454,4 +556,22 @@ fn fabric_checkpoint_bank_rejects_duplicate_components() {
         FabricCheckpointPort::new(component, fabric),
     ])
     .is_err());
+}
+
+#[test]
+fn fabric_checkpoint_bank_rejects_aliased_models() {
+    let fabric = Arc::new(Mutex::new(FabricModel::new()));
+    let first = CheckpointComponentId::new("fabric-alias-0").unwrap();
+    let second = CheckpointComponentId::new("fabric-alias-1").unwrap();
+
+    let error = FabricCheckpointBank::new([
+        FabricCheckpointPort::new(first, Arc::clone(&fabric)),
+        FabricCheckpointPort::new(second.clone(), fabric),
+    ])
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        CheckpointError::DuplicateComponent { component: second }
+    );
 }

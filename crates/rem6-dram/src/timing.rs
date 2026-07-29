@@ -92,6 +92,28 @@ impl DramRefreshTiming {
         self
     }
 
+    pub const fn from_effective_cycles(
+        interval: u64,
+        recovery: u64,
+        granularity: DramRefreshGranularity,
+    ) -> Result<Self, DramError> {
+        if interval == 0 {
+            return Err(DramError::ZeroRefreshTiming {
+                field: DramRefreshTimingField::Interval,
+            });
+        }
+        if recovery == 0 {
+            return Err(DramError::ZeroRefreshTiming {
+                field: DramRefreshTimingField::Recovery,
+            });
+        }
+        Ok(Self {
+            interval,
+            recovery,
+            granularity,
+        })
+    }
+
     pub const fn interval(self) -> u64 {
         self.interval
     }

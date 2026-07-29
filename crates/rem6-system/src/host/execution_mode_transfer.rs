@@ -27,6 +27,7 @@ pub(super) struct AttachedCheckpointCapture {
     borrowed_scheduler_component: Option<CheckpointComponentId>,
     live_data_handoff: bool,
     restorable: bool,
+    pub(super) pending_data_address_live_checkpoint: bool,
 }
 
 impl ExecutionModeSwitchStateTransfer {
@@ -333,6 +334,7 @@ impl SystemActionExecutor {
             _ => false,
         };
         let mut restorable = !live_data_handoff;
+        let mut pending_data_address_live_checkpoint = false;
         if live_data_handoff {
             if let Some(scheduler_checkpoints) = &self.scheduler_checkpoints {
                 for component in scheduler_checkpoints.components() {
@@ -441,6 +443,13 @@ impl SystemActionExecutor {
                 scheduler_checkpoint.as_deref(),
                 scheduler_checkpoint_bank,
             )?;
+            pending_data_address_live_checkpoint = self
+                .riscv_checkpoints
+                .as_ref()
+                .map(|bank| bank.has_pending_data_address_live_checkpoint(staged_checkpoints))
+                .transpose()
+                .map_err(SystemError::RiscvCheckpoint)?
+                .unwrap_or(false);
         }
         if let Some(memory_checkpoints) = &self.memory_checkpoints {
             memory_checkpoints
@@ -485,7 +494,7 @@ impl SystemActionExecutor {
         if let Some(dram_memory_checkpoints) = &self.dram_memory_checkpoints {
             dram_memory_checkpoints
                 .capture_all_into(staged_checkpoints)
-                .map_err(SystemError::Checkpoint)?;
+                .map_err(SystemError::DramMemoryCheckpoint)?;
         }
         if let Some(readfile_checkpoints) = &self.readfile_checkpoints {
             readfile_checkpoints
@@ -590,6 +599,7 @@ impl SystemActionExecutor {
             borrowed_scheduler_component,
             live_data_handoff,
             restorable,
+            pending_data_address_live_checkpoint,
         })
     }
 

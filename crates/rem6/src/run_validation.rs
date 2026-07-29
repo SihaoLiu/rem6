@@ -11,6 +11,7 @@ pub(super) fn validate_run_config_inputs(config: &Rem6RunConfig) -> Result<(), R
     }
     validate_debug_flag_inputs(config)?;
     validate_cache_inputs(config)?;
+    validate_fabric_checkpoint_inputs(config)?;
     validate_readfile_inputs(config)?;
     validate_riscv_se_inputs(config)?;
     validate_riscv_sbi_inputs(config)?;
@@ -20,6 +21,25 @@ pub(super) fn validate_run_config_inputs(config: &Rem6RunConfig) -> Result<(), R
         validate_run_gdb_listen_config(config)?;
     }
     Ok(())
+}
+
+fn validate_fabric_checkpoint_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
+    let has_fabric_qos = config
+        .fabric()
+        .is_some_and(|fabric| fabric.qos_queue_policy().is_some());
+    if has_fabric_qos && run_has_checkpoint_actions(config) {
+        return Err(Rem6CliError::Execute {
+            error: "fabric QoS checkpoint restore is not supported".to_string(),
+        });
+    }
+    Ok(())
+}
+
+pub(super) fn run_has_checkpoint_actions(config: &Rem6RunConfig) -> bool {
+    !config.host_checkpoints().is_empty()
+        || !config.host_checkpoint_restores().is_empty()
+        || !config.host_execution_mode_switches().is_empty()
+        || config.m5_switch_cpu_mode_is_explicit()
 }
 
 fn validate_riscv_data_translation_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {

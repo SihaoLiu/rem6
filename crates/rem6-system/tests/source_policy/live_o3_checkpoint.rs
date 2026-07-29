@@ -1,22 +1,21 @@
 use super::*;
-
+#[path = "live_o3_checkpoint/authority.rs"]
+mod authority;
+#[path = "live_o3_checkpoint/pending_address.rs"]
+mod pending_address;
 const LEDGER: &str = "docs/architecture/gem5-to-rem6-migration.md";
-
 fn read(crate_dir: &Path, relative: &str) -> String {
     fs::read_to_string(crate_dir.join(relative)).unwrap()
 }
-
 fn compact(source: &str) -> String {
     without_whitespace(&rust_code_without_comments_and_literals(source))
 }
-
 fn unconditional_function_body(source: &str, name: &str) -> String {
     compact(
         &unconditional_rust_function_definition(source, name)
             .unwrap_or_else(|| panic!("missing unique unconditional function `{name}`")),
     )
 }
-
 fn unconditional_method_body(source: &str, owner: &str, name: &str) -> String {
     compact(
         &unconditional_rust_impl_method_definition(source, owner, name)
@@ -151,6 +150,7 @@ fn riscv_checkpoint_live_o3_sources_stay_within_caps() {
             "src/host/action_apply/tests/checkpoint_atomicity_tests.rs",
             125,
         ),
+        ("tests/source_policy/live_o3_checkpoint/authority.rs", 100),
         ("tests/source_policy/live_o3_checkpoint.rs", 500),
     ];
     for (relative, maximum) in caps {
@@ -190,6 +190,7 @@ fn riscv_checkpoint_live_o3_sources_stay_within_caps() {
 fn riscv_checkpoint_live_o3_capture_and_restore_contracts_are_ordered() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let riscv = read(crate_dir, "src/riscv_checkpoint.rs");
+    let restore_authority = read(crate_dir, "src/riscv_checkpoint/restore_authority.rs");
     let scheduler = read(crate_dir, "src/scheduler_checkpoint.rs");
     let live_o3 = read(crate_dir, "src/scheduler_checkpoint/live_o3.rs");
     let write_record = unconditional_method_body(&riscv, "RiscvCoreCheckpointPort", "write_record");
@@ -198,7 +199,17 @@ fn riscv_checkpoint_live_o3_capture_and_restore_contracts_are_ordered() {
         "RiscvCoreCheckpointBank",
         "capture_target_for_execution_mode_handoff_into_impl",
     );
-    let restore = unconditional_method_body(&riscv, "RiscvCoreCheckpointBank", "restore_all_from");
+    let restore_entry = unconditional_method_body(
+        &restore_authority,
+        "RiscvCoreCheckpointBank",
+        "restore_all_from",
+    );
+    let restore_install = unconditional_method_body(
+        &restore_authority,
+        "RiscvCoreCheckpointBank",
+        "install_decoded_restores",
+    );
+    let restore = format!("{restore_entry}{restore_install}");
     let scheduler_capture =
         unconditional_method_body(&scheduler, "SchedulerCheckpointContext", "capture_into");
     let live_o3_validate = unconditional_method_body(
@@ -238,6 +249,7 @@ fn riscv_checkpoint_live_o3_capture_and_restore_contracts_are_ordered() {
         &restore,
         &[
             "self.decode_and_prepare_all(registry)",
+            "port.validate_low_level_restore_authority(record)",
             "port.core.install_prepared_checkpoint_restore(prepared)",
         ]
     ));
@@ -410,7 +422,7 @@ fn riscv_checkpoint_system_validation_and_restore_mutations_are_ordered() {
     assert!(!stats_preflight.contains("self.resettable_pipeline_cycles("));
 
     let restore_markers = [
-        "riscv_checkpoints.restore_all_from(&self.checkpoints)",
+        "riscv_checkpoints.restore_all_from_with_scheduler_authority(&self.checkpoints)",
         "restore_all_from_with_owned_events(&self.checkpoints,&owned_scheduler_events)",
         "scheduler_checkpoint.restore_from(&self.checkpoints,&owned_scheduler_events)",
         "Self::rebind_live_o3_scheduler_restores(",

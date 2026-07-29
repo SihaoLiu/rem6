@@ -9,7 +9,10 @@ use rem6_fabric::{
     FabricRouterInputVcSnapshot, FabricRouterOutputPortSnapshot, FabricSnapshot, VirtualNetworkId,
 };
 
+use crate::CheckpointRuntimeState;
+
 const FABRIC_CHUNK: &str = "fabric";
+const FABRIC_RUNTIME_STATE_CHUNK: &str = "fabric-runtime-state";
 const LEGACY_FORMAT_VERSION: u64 = 1;
 const FORMAT_VERSION: u64 = 2;
 const U32_BYTES: usize = 4;
@@ -47,15 +50,34 @@ impl FabricCheckpointRecord {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct FabricCheckpointPort {
     component: CheckpointComponentId,
     fabric: Arc<Mutex<FabricModel>>,
+    runtime_state: Option<CheckpointRuntimeState>,
+}
+
+impl fmt::Debug for FabricCheckpointPort {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("FabricCheckpointPort")
+            .field("component", &self.component)
+            .finish_non_exhaustive()
+    }
 }
 
 impl FabricCheckpointPort {
     pub fn new(component: CheckpointComponentId, fabric: Arc<Mutex<FabricModel>>) -> Self {
-        Self { component, fabric }
+        Self {
+            component,
+            fabric,
+            runtime_state: None,
+        }
+    }
+
+    pub fn with_runtime_state(mut self, runtime_state: CheckpointRuntimeState) -> Self {
+        self.runtime_state = Some(runtime_state);
+        self
     }
 
     pub fn component(&self) -> &CheckpointComponentId {
@@ -82,6 +104,19 @@ impl FabricCheckpointPort {
         registry
             .write_chunk(&self.component, FABRIC_CHUNK, encode_snapshot(&snapshot))
             .map_err(FabricCheckpointError::Checkpoint)?;
+        if let Some(runtime_state) = &self.runtime_state {
+            let payload =
+                runtime_state
+                    .capture()
+                    .map_err(|reason| FabricCheckpointError::RuntimeState {
+                        component: self.component.clone(),
+                        operation: "capture",
+                        reason,
+                    })?;
+            registry
+                .write_chunk(&self.component, FABRIC_RUNTIME_STATE_CHUNK, payload)
+                .map_err(FabricCheckpointError::Checkpoint)?;
+        }
         Ok(FabricCheckpointRecord::new(
             self.component.clone(),
             snapshot,
@@ -93,7 +128,10 @@ impl FabricCheckpointPort {
         registry: &CheckpointRegistry,
     ) -> Result<FabricCheckpointRecord, FabricCheckpointError> {
         let record = self.decode_from(registry)?;
+        self.validate_snapshot(record.snapshot())?;
+        self.validate_runtime_state(registry)?;
         self.restore_snapshot(record.snapshot())?;
+        self.restore_runtime_state(registry);
         Ok(record)
     }
 
@@ -134,6 +172,50 @@ impl FabricCheckpointPort {
                 error,
             })
     }
+
+    fn runtime_state_payload<'a>(
+        &self,
+        registry: &'a CheckpointRegistry,
+    ) -> Result<Option<&'a [u8]>, FabricCheckpointError> {
+        let Some(_runtime_state) = &self.runtime_state else {
+            return Ok(None);
+        };
+        registry
+            .chunk(&self.component, FABRIC_RUNTIME_STATE_CHUNK)
+            .map(Some)
+            .ok_or_else(|| FabricCheckpointError::MissingChunk {
+                component: self.component.clone(),
+                name: FABRIC_RUNTIME_STATE_CHUNK.to_string(),
+            })
+    }
+
+    fn validate_runtime_state(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<(), FabricCheckpointError> {
+        let (Some(runtime_state), Some(payload)) =
+            (&self.runtime_state, self.runtime_state_payload(registry)?)
+        else {
+            return Ok(());
+        };
+        runtime_state
+            .validate(payload)
+            .map_err(|reason| FabricCheckpointError::RuntimeState {
+                component: self.component.clone(),
+                operation: "validate restore",
+                reason,
+            })
+    }
+
+    fn restore_runtime_state(&self, registry: &CheckpointRegistry) {
+        let Some(runtime_state) = &self.runtime_state else {
+            return;
+        };
+        let payload = registry
+            .chunk(&self.component, FABRIC_RUNTIME_STATE_CHUNK)
+            .expect("validated fabric runtime checkpoint state");
+        runtime_state.restore(payload);
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -146,10 +228,16 @@ impl FabricCheckpointBank {
     where
         I: IntoIterator<Item = FabricCheckpointPort>,
     {
-        let mut by_component = BTreeMap::new();
+        let mut by_component = BTreeMap::<CheckpointComponentId, FabricCheckpointPort>::new();
         for port in ports {
             let component = port.component().clone();
             if by_component.contains_key(&component) {
+                return Err(CheckpointError::DuplicateComponent { component });
+            }
+            if by_component
+                .values()
+                .any(|existing| Arc::ptr_eq(&existing.fabric, &port.fabric))
+            {
                 return Err(CheckpointError::DuplicateComponent { component });
             }
             by_component.insert(component, port);
@@ -193,13 +281,13 @@ impl FabricCheckpointBank {
         let mut decoded = Vec::new();
         for port in self.ports.values() {
             let record = port.decode_from(registry)?;
-            port.validate_snapshot(record.snapshot())?;
             decoded.push((port, record));
         }
 
         let mut restored = Vec::new();
         for (port, record) in decoded {
             port.restore_snapshot(record.snapshot())?;
+            port.restore_runtime_state(registry);
             restored.push(record);
         }
         Ok(restored)
@@ -212,6 +300,7 @@ impl FabricCheckpointBank {
         for port in self.ports.values() {
             let record = port.decode_from(registry)?;
             port.validate_snapshot(record.snapshot())?;
+            port.validate_runtime_state(registry)?;
         }
         Ok(())
     }
@@ -232,6 +321,11 @@ pub enum FabricCheckpointError {
         component: CheckpointComponentId,
         error: FabricError,
     },
+    RuntimeState {
+        component: CheckpointComponentId,
+        operation: &'static str,
+        reason: String,
+    },
 }
 
 impl FabricCheckpointError {
@@ -239,7 +333,8 @@ impl FabricCheckpointError {
         match self {
             Self::MissingChunk { component, .. }
             | Self::InvalidChunk { component, .. }
-            | Self::Fabric { component, .. } => Some(component),
+            | Self::Fabric { component, .. }
+            | Self::RuntimeState { component, .. } => Some(component),
             Self::Checkpoint(_) => None,
         }
     }
@@ -264,6 +359,15 @@ impl fmt::Display for FabricCheckpointError {
                 "fabric checkpoint component {} restore failed: {error}",
                 component.as_str()
             ),
+            Self::RuntimeState {
+                component,
+                operation,
+                reason,
+            } => write!(
+                formatter,
+                "fabric checkpoint component {} runtime state {operation} failed: {reason}",
+                component.as_str()
+            ),
         }
     }
 }
@@ -273,7 +377,9 @@ impl Error for FabricCheckpointError {
         match self {
             Self::Checkpoint(error) => Some(error),
             Self::Fabric { error, .. } => Some(error),
-            Self::MissingChunk { .. } | Self::InvalidChunk { .. } => None,
+            Self::MissingChunk { .. } | Self::InvalidChunk { .. } | Self::RuntimeState { .. } => {
+                None
+            }
         }
     }
 }

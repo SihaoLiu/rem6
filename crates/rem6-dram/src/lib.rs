@@ -24,8 +24,8 @@ pub use low_power::{
     DramLowPowerTimingField,
 };
 pub use memory_controller::{
-    DramMemoryController, DramMemoryOutcome, DramMemorySnapshot, DramMemoryTargetSnapshot,
-    DramMemoryWaitForMarker,
+    DramMemoryController, DramMemoryOutcome, DramMemoryRuntimeLogs, DramMemorySnapshot,
+    DramMemoryTargetSnapshot, DramMemoryWaitForMarker,
 };
 pub use memory_error::DramMemoryError;
 pub use preset::DramJedecRefreshPreset;

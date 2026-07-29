@@ -8,7 +8,10 @@ use rem6_coherence::{
     HarnessError, MsiBankCycleHistory, MsiBankDirectoryHarness, MsiBankDirectoryHarnessSnapshot,
 };
 
+use crate::CheckpointRuntimeState;
+
 const MSI_BANK_CHUNK: &str = "msi-bank";
+const MSI_BANK_RUNTIME_STATE_CHUNK: &str = "msi-bank-runtime-state";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MsiBankCheckpointRecord {
@@ -44,6 +47,7 @@ impl MsiBankCheckpointRecord {
 pub struct MsiBankCheckpointPort {
     component: CheckpointComponentId,
     harness: Arc<Mutex<MsiBankDirectoryHarness>>,
+    runtime_state: Option<CheckpointRuntimeState>,
 }
 
 impl fmt::Debug for MsiBankCheckpointPort {
@@ -60,7 +64,16 @@ impl MsiBankCheckpointPort {
         component: CheckpointComponentId,
         harness: Arc<Mutex<MsiBankDirectoryHarness>>,
     ) -> Self {
-        Self { component, harness }
+        Self {
+            component,
+            harness,
+            runtime_state: None,
+        }
+    }
+
+    pub fn with_runtime_state(mut self, runtime_state: CheckpointRuntimeState) -> Self {
+        self.runtime_state = Some(runtime_state);
+        self
     }
 
     pub fn component(&self) -> &CheckpointComponentId {
@@ -87,6 +100,19 @@ impl MsiBankCheckpointPort {
         registry
             .write_chunk(&self.component, MSI_BANK_CHUNK, snapshot.to_bytes())
             .map_err(MsiBankCheckpointError::Checkpoint)?;
+        if let Some(runtime_state) = &self.runtime_state {
+            let payload =
+                runtime_state
+                    .capture()
+                    .map_err(|reason| MsiBankCheckpointError::RuntimeState {
+                        component: self.component.clone(),
+                        operation: "capture",
+                        reason,
+                    })?;
+            registry
+                .write_chunk(&self.component, MSI_BANK_RUNTIME_STATE_CHUNK, payload)
+                .map_err(MsiBankCheckpointError::Checkpoint)?;
+        }
         Ok(MsiBankCheckpointRecord::new(
             self.component.clone(),
             snapshot,
@@ -98,7 +124,10 @@ impl MsiBankCheckpointPort {
         registry: &CheckpointRegistry,
     ) -> Result<MsiBankCheckpointRecord, MsiBankCheckpointError> {
         let record = self.decode_from(registry)?;
+        self.validate_snapshot(record.snapshot())?;
+        self.validate_runtime_state(registry)?;
         self.restore_snapshot(record.snapshot())?;
+        self.restore_runtime_state(registry);
         Ok(record)
     }
 
@@ -141,6 +170,50 @@ impl MsiBankCheckpointPort {
             })
     }
 
+    fn runtime_state_payload<'a>(
+        &self,
+        registry: &'a CheckpointRegistry,
+    ) -> Result<Option<&'a [u8]>, MsiBankCheckpointError> {
+        let Some(_runtime_state) = &self.runtime_state else {
+            return Ok(None);
+        };
+        registry
+            .chunk(&self.component, MSI_BANK_RUNTIME_STATE_CHUNK)
+            .map(Some)
+            .ok_or_else(|| MsiBankCheckpointError::MissingChunk {
+                component: self.component.clone(),
+                name: MSI_BANK_RUNTIME_STATE_CHUNK.to_string(),
+            })
+    }
+
+    fn validate_runtime_state(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<(), MsiBankCheckpointError> {
+        let (Some(runtime_state), Some(payload)) =
+            (&self.runtime_state, self.runtime_state_payload(registry)?)
+        else {
+            return Ok(());
+        };
+        runtime_state
+            .validate(payload)
+            .map_err(|reason| MsiBankCheckpointError::RuntimeState {
+                component: self.component.clone(),
+                operation: "validate restore",
+                reason,
+            })
+    }
+
+    fn restore_runtime_state(&self, registry: &CheckpointRegistry) {
+        let Some(runtime_state) = &self.runtime_state else {
+            return;
+        };
+        let payload = registry
+            .chunk(&self.component, MSI_BANK_RUNTIME_STATE_CHUNK)
+            .expect("validated MSI bank runtime checkpoint state");
+        runtime_state.restore(payload);
+    }
+
     fn restore_snapshot(
         &self,
         snapshot: &MsiBankDirectoryHarnessSnapshot,
@@ -166,10 +239,16 @@ impl MsiBankCheckpointBank {
     where
         I: IntoIterator<Item = MsiBankCheckpointPort>,
     {
-        let mut by_component = BTreeMap::new();
+        let mut by_component = BTreeMap::<CheckpointComponentId, MsiBankCheckpointPort>::new();
         for port in ports {
             let component = port.component().clone();
             if by_component.contains_key(&component) {
+                return Err(CheckpointError::DuplicateComponent { component });
+            }
+            if by_component
+                .values()
+                .any(|existing| Arc::ptr_eq(&existing.harness, &port.harness))
+            {
                 return Err(CheckpointError::DuplicateComponent { component });
             }
             by_component.insert(component, port);
@@ -212,13 +291,13 @@ impl MsiBankCheckpointBank {
         let mut decoded = Vec::new();
         for port in self.ports.values() {
             let record = port.decode_from(registry)?;
-            port.validate_snapshot(record.snapshot())?;
             decoded.push((port, record));
         }
 
         let mut restored = Vec::new();
         for (port, record) in decoded {
             port.restore_snapshot(record.snapshot())?;
+            port.restore_runtime_state(registry);
             restored.push(record);
         }
         Ok(restored)
@@ -231,6 +310,7 @@ impl MsiBankCheckpointBank {
         for port in self.ports.values() {
             let record = port.decode_from(registry)?;
             port.validate_snapshot(record.snapshot())?;
+            port.validate_runtime_state(registry)?;
         }
         Ok(())
     }
@@ -251,6 +331,11 @@ pub enum MsiBankCheckpointError {
         component: CheckpointComponentId,
         error: Box<HarnessError>,
     },
+    RuntimeState {
+        component: CheckpointComponentId,
+        operation: &'static str,
+        reason: String,
+    },
 }
 
 impl MsiBankCheckpointError {
@@ -258,7 +343,8 @@ impl MsiBankCheckpointError {
         match self {
             Self::MissingChunk { component, .. }
             | Self::InvalidChunk { component, .. }
-            | Self::Harness { component, .. } => Some(component),
+            | Self::Harness { component, .. }
+            | Self::RuntimeState { component, .. } => Some(component),
             Self::Checkpoint(_) => None,
         }
     }
@@ -283,6 +369,15 @@ impl fmt::Display for MsiBankCheckpointError {
                 "MSI bank checkpoint component {} restore failed: {error}",
                 component.as_str()
             ),
+            Self::RuntimeState {
+                component,
+                operation,
+                reason,
+            } => write!(
+                formatter,
+                "MSI bank checkpoint component {} runtime state {operation} failed: {reason}",
+                component.as_str()
+            ),
         }
     }
 }
@@ -292,7 +387,9 @@ impl Error for MsiBankCheckpointError {
         match self {
             Self::Checkpoint(error) => Some(error),
             Self::Harness { error, .. } => Some(error.as_ref()),
-            Self::MissingChunk { .. } | Self::InvalidChunk { .. } => None,
+            Self::MissingChunk { .. } | Self::InvalidChunk { .. } | Self::RuntimeState { .. } => {
+                None
+            }
         }
     }
 }

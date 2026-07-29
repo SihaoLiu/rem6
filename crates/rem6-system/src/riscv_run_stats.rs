@@ -61,7 +61,7 @@ impl RiscvSystemRunDriver {
         self.reset_runtime_stats_for_new_stats_resets(cluster)?;
         let retired =
             self.record_retirement_observations(cluster, turn, tick, retirement_budget)?;
-        self.record_instruction_stats(&retired)?;
+        self.record_instruction_stats(&retired, tick)?;
         self.record_data_access_stats(cluster)?;
         Ok(RiscvRetirementSummary {
             count: u64::try_from(retired.len()).unwrap_or(u64::MAX),
@@ -268,6 +268,7 @@ impl RiscvSystemRunDriver {
     fn record_instruction_stats(
         &self,
         retired: &[RiscvRetirementObservation],
+        tick: Tick,
     ) -> Result<(), SystemError> {
         let Some(instruction_stats) = &self.instruction_stats else {
             return Ok(());
@@ -290,6 +291,9 @@ impl RiscvSystemRunDriver {
                     .map_err(SystemError::Stats)?;
             }
         }
+        controller
+            .executor_mut()
+            .finalize_pending_riscv_instruction_probe_checkpoints(tick);
         Ok(())
     }
 }

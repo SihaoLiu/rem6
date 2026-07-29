@@ -4,9 +4,11 @@ use rem6_checkpoint::{CheckpointComponentId, CheckpointManifest, CheckpointRegis
 use rem6_cpu::{RiscvCore, RiscvO3LiveCheckpointPayload};
 use rem6_isa_riscv::Register;
 use rem6_kernel::{PartitionId, PartitionedScheduler, PendingEventSnapshot, ScheduledEventKind};
+use rem6_memory::{AccessSize, Address, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore};
 use rem6_stats::StatsRegistry;
 use rem6_system::{
-    GuestEventId, GuestSourceId, HostAction, HostActionRecord, RiscvCoreCheckpointBank,
+    ExecutionMode, ExecutionModeTarget, GuestEventId, GuestSourceId, HostAction, HostActionRecord,
+    MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, RiscvCoreCheckpointBank,
     RiscvCoreCheckpointPort, SchedulerCheckpointBank, SchedulerCheckpointPort,
     SystemActionExecutor, SystemActionOutcome,
 };
@@ -35,6 +37,44 @@ fn attached_executor(cores: &[&RiscvCore], scheduler: &Arc<Mutex<PartitionedSche
         SchedulerCheckpointPort::new(sched.clone(), Arc::clone(scheduler)),
     ]).unwrap()).unwrap();
     (executor, cpus, sched)
+}
+
+fn attached_executor_with_memory(
+    cores: &[&RiscvCore],
+    scheduler: &Arc<Mutex<PartitionedScheduler>>,
+) -> (
+    SystemActionExecutor,
+    Vec<CheckpointComponentId>,
+    CheckpointComponentId,
+    Arc<Mutex<PartitionedMemoryStore>>,
+    MemoryTargetId,
+) {
+    let (mut executor, cpus, scheduler_component) = attached_executor(cores, scheduler);
+    let target = MemoryTargetId::new(0);
+    let mut store = PartitionedMemoryStore::new();
+    let layout = CacheLineLayout::new(16).unwrap();
+    store.add_partition(target, layout).unwrap();
+    store
+        .map_region(
+            target,
+            Address::new(0x9000),
+            AccessSize::new(0x1000).unwrap(),
+        )
+        .unwrap();
+    store
+        .insert_line(target, Address::new(0x9000), vec![0x11; 16])
+        .unwrap();
+    let store = Arc::new(Mutex::new(store));
+    executor
+        .attach_memory_checkpoint_bank(
+            MemoryStoreCheckpointBank::new([MemoryStoreCheckpointPort::new(
+                CheckpointComponentId::new("memory0").unwrap(),
+                Arc::clone(&store),
+            )])
+            .unwrap(),
+        )
+        .unwrap();
+    (executor, cpus, scheduler_component, store, target)
 }
 
 #[rustfmt::skip]
@@ -195,6 +235,25 @@ fn live_o3_restore_validates_saved_scheduler_order_and_preserves_kind() {
     assert!(executor.apply(&restore_record(invalid)).is_err()); assert_eq!(seeded.core.read_register(reg(7)), 0xfeed);
     executor.apply(&restore_record(manifest)).unwrap();
     assert_eq!(scheduler.lock().unwrap().snapshot().partitions()[0].pending_events()[0].kind(), ScheduledEventKind::Parallel);
+}
+
+#[test]
+fn live_o3_restore_rejects_saved_wake_kind_that_disagrees_with_source_authority() {
+    let (scheduler, seeded, mut executor, cpu, _, manifest) =
+        live_fixture(ScheduledEventKind::Serial, "kind-authority");
+    let corrupt = rewrite_o3lc(&manifest, &cpu, |live| {
+        live.wake.kind = ScheduledEventKind::Parallel;
+    });
+    seeded.core.write_register(reg(7), 0xfeed);
+    let core_before = seeded.core.checkpoint_hart_state();
+    let wakes_before = seeded.core.owned_o3_writeback_wakes();
+    let scheduler_before = scheduler.lock().unwrap().snapshot();
+
+    assert!(executor.apply(&restore_record(corrupt)).is_err());
+
+    assert_eq!(seeded.core.checkpoint_hart_state(), core_before);
+    assert_eq!(seeded.core.owned_o3_writeback_wakes(), wakes_before);
+    assert_eq!(scheduler.lock().unwrap().snapshot(), scheduler_before);
 }
 
 #[test]

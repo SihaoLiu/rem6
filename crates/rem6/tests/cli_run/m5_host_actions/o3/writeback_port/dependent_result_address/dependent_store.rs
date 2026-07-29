@@ -286,11 +286,19 @@ fn assert_store_request_transport(json: &Value, head: &Value, store: &Value, mem
     );
     if memory_system == "cache-fabric-dram" {
         let packet = (route << 48) | request;
-        let hop = json
+        let hops = json
             .pointer("/memory_resources/fabric/hop_activities")
             .and_then(Value::as_array)
-            .and_then(|hops| hops.iter().find(|hop| event_u64(hop, "packet") == packet))
-            .unwrap_or_else(|| panic!("dependent store fabric packet {packet} missing: {json}"));
+            .expect("fabric hop activities")
+            .iter()
+            .filter(|hop| {
+                event_u64(hop, "packet") == packet
+                    && event_u64(hop, "ready_tick") == event_u64(store_request, "tick")
+            })
+            .collect::<Vec<_>>();
+        let [hop] = hops.as_slice() else {
+            panic!("expected one restored store fabric hop for packet {packet}: {hops:?}");
+        };
         assert_eq!(
             event_u64(hop, "ready_tick"),
             event_u64(store_request, "tick")

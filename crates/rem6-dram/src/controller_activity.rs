@@ -11,10 +11,41 @@ use crate::refresh::{
 use crate::{
     low_power, record_low_power_before_refreshes, refresh_events_for_bank, DramAccess,
     DramActivityMarker, DramActivityProfile, DramBankActivity, DramController, DramPortActivity,
-    DramRefreshPolicy,
+    DramRefreshPolicy, DramWaitRecord,
 };
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DramRuntimeLogs {
+    activity: Vec<DramAccess>,
+    wait: Vec<DramWaitRecord>,
+}
+
 impl DramController {
+    pub fn runtime_log_lengths(&self) -> (usize, usize) {
+        (self.activity_log.len(), self.wait_log.len())
+    }
+
+    pub(crate) fn runtime_logs(&self) -> DramRuntimeLogs {
+        DramRuntimeLogs {
+            activity: self.activity_log.clone(),
+            wait: self.wait_log.clone(),
+        }
+    }
+
+    pub(crate) fn restore_runtime_logs(&mut self, logs: DramRuntimeLogs) {
+        self.activity_log = logs.activity;
+        self.wait_log = logs.wait;
+    }
+
+    pub fn truncate_runtime_logs(&mut self, activity_len: usize, wait_len: usize) -> bool {
+        if activity_len > self.activity_log.len() || wait_len > self.wait_log.len() {
+            return false;
+        }
+        self.activity_log.truncate(activity_len);
+        self.wait_log.truncate(wait_len);
+        true
+    }
+
     pub fn mark_activity(&self) -> DramActivityMarker {
         DramActivityMarker::new(self.activity_log.len())
     }

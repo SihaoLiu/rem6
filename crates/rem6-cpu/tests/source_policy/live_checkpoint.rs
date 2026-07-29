@@ -1,11 +1,14 @@
 use super::*;
 
+#[path = "live_checkpoint/pending_address.rs"]
+mod pending_address;
+
 const POLICY: &str = "tests/source_policy/live_checkpoint.rs";
 const LEDGER: &str = "docs/architecture/gem5-to-rem6-migration.md";
 const CPU_HEADING: &str = "### CPU Execution Models - 74% representative";
 const CPU_SCORE: &str = "**Score calculation:** 8 of 10 items have executable evidence, or 80% raw, capped at the 74% representative bucket cap.";
-const BOUNDED_CLAIM: &str = "checkpoint-restorable compute IQ window plus exactly one response-admitted scalar FLW/FLD result";
-const RETAINED_GAPS: &str = "Pre-response transport, general IQ shapes, broader memory/result state, and a general O3 engine remain non-restorable.";
+const BOUNDED_CLAIM: &str = "checkpoint-restorable compute IQ window, exactly one response-admitted scalar FLW/FLD result, and exactly one post-publication, committed-producer, unmaterialized dependent `SD`";
+const RETAINED_GAPS: &str = "Pre-response producer transport, general IQ shapes, multiple pending-address rows, materialized or submitted stores, dependent atomics, translated/MMIO memory, broader memory/result state, broad O3 restoration, and a general O3 engine remain non-restorable.";
 
 #[test]
 fn live_checkpoint_cpu_owners_are_unconditional_and_bounded() {
@@ -189,9 +192,14 @@ fn live_checkpoint_cpu_capture_takes_each_state_lock_once() {
         ("self.core.state.lock()", "self.core.state.try_lock()"),
         ("self.state.lock()", "self.state.try_lock()"),
         (
-            "let mut projected_state = riscv_state.clone();",
-            "let mut projected_state = riscv_state;",
+            "crate::CpuCore::checkpoint_state_from_guard(&cpu_state)",
+            "crate::CpuCore::checkpoint_state_from_guard(&projected_cpu_state)",
         ),
+        (
+            "state: Arc::new(Mutex::new(riscv_state.clone())),",
+            "state: Arc::new(Mutex::new(riscv_state)),",
+        ),
+        ("drop(riscv_state);", "drop(projected_state);"),
         (
             "projected_state.finalize_quiescent_o3_writeback_state_for_checkpoint();",
             "self.finalize_quiescent_o3_writeback_for_checkpoint();",
@@ -336,9 +344,22 @@ fn capture_lock_contract(source: &str) -> bool {
     };
     let capture = compact_rust_code(&capture);
     let guarded = compact_rust_code(&guarded);
+    let detached_after_unlock = match (
+        capture.find("drop(riscv_state);"),
+        capture.find("drop(cpu_state);"),
+        capture.find("lethas_pending_address="),
+    ) {
+        (Some(riscv), Some(cpu), Some(project)) => riscv < project && cpu < project,
+        _ => false,
+    };
     capture.matches("self.core.state.lock()").count() == 1
         && capture.matches("self.state.lock()").count() == 1
-        && capture.contains("letmutprojected_state=riscv_state.clone();")
+        && capture.contains("crate::CpuCore::checkpoint_state_from_guard(&cpu_state)")
+        && capture.contains("state:Arc::new(Mutex::new(riscv_state.clone()))")
+        && detached_after_unlock
+        && capture.matches("projected.core.state.lock()").count() == 1
+        && capture.matches("projected.state.lock()").count() == 2
+        && capture.contains("letmutprojected_state=projected.state.lock()")
         && capture
             .contains("projected_state.finalize_quiescent_o3_writeback_state_for_checkpoint();")
         && capture.contains("&projected_state")

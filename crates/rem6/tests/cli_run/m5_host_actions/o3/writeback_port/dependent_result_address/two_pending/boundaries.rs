@@ -154,6 +154,38 @@ fn rem6_run_o3_two_pending_result_address_rejects_atomic_chain_overlap() {
 
 #[test]
 fn rem6_run_o3_two_pending_result_address_rejects_live_checkpoint_and_handoff() {
+    assert_live_checkpoint_rejects_multiple_pending_rows();
+
+    let row = TWO_PENDING_ROWS[2];
+    let fixture = TwoPendingFixture::new(row);
+    let completed = fixture.run(row.max_tick);
+    let checkpoint_tick = event_u64(event_at_pc(&completed, WITNESS2_PC), "commit_tick") + 1;
+    let restore_tick = checkpoint_tick + 1;
+    let checkpoint = format!("{checkpoint_tick}:two-pending-drained");
+    let restore = format!("{restore_tick}:two-pending-drained");
+    let restored = fixture.run_mode(
+        row.max_tick,
+        "detailed",
+        &[
+            "--host-checkpoint",
+            checkpoint.as_str(),
+            "--host-restore-checkpoint",
+            restore.as_str(),
+        ],
+    );
+    assert_eq!(json_u64(&restored, "/host_actions/checkpoint_count"), 1);
+    assert_eq!(
+        json_u64(&restored, "/host_actions/checkpoint_restored_count"),
+        1
+    );
+    assert_eq!(
+        restored.pointer("/cores/0/registers"),
+        completed.pointer("/cores/0/registers")
+    );
+    assert_eq!(restored.pointer("/memory"), completed.pointer("/memory"));
+}
+
+pub(in crate::m5_host_actions::o3) fn assert_live_checkpoint_rejects_multiple_pending_rows() {
     let row = TWO_PENDING_ROWS[2];
     let fixture = TwoPendingFixture::new(row);
     let completed = fixture.run(row.max_tick);
@@ -166,7 +198,12 @@ fn rem6_run_o3_two_pending_result_address_rejects_live_checkpoint_and_handoff() 
         (1, one_owner_tick),
     ] {
         let resident = fixture.run(action_tick);
+        let delivered_control = fixture.run(action_tick + 1);
         assert_eq!(addressless_sequences(&resident).len(), owners);
+        assert_eq!(
+            resident.pointer("/memory"),
+            delivered_control.pointer("/memory")
+        );
         for (flag, argument, label) in [
             (
                 "--host-checkpoint",
@@ -197,31 +234,6 @@ fn rem6_run_o3_two_pending_result_address_rejects_live_checkpoint_and_handoff() 
             assert!(!artifact.exists(), "{label}: {}", artifact.display());
         }
     }
-
-    let checkpoint_tick = event_u64(event_at_pc(&completed, WITNESS2_PC), "commit_tick") + 1;
-    let restore_tick = checkpoint_tick + 1;
-    let checkpoint = format!("{checkpoint_tick}:two-pending-drained");
-    let restore = format!("{restore_tick}:two-pending-drained");
-    let restored = fixture.run_mode(
-        row.max_tick,
-        "detailed",
-        &[
-            "--host-checkpoint",
-            checkpoint.as_str(),
-            "--host-restore-checkpoint",
-            restore.as_str(),
-        ],
-    );
-    assert_eq!(json_u64(&restored, "/host_actions/checkpoint_count"), 1);
-    assert_eq!(
-        json_u64(&restored, "/host_actions/checkpoint_restored_count"),
-        1
-    );
-    assert_eq!(
-        restored.pointer("/cores/0/registers"),
-        completed.pointer("/cores/0/registers")
-    );
-    assert_eq!(restored.pointer("/memory"), completed.pointer("/memory"));
 }
 
 #[test]

@@ -12,8 +12,8 @@ pub const O3_RUNTIME_STATE_CHUNK: &str = "o3-runtime-state";
 pub(super) fn decode_o3_live_checkpoint(
     component: &CheckpointComponentId,
     payload: &[u8],
-) -> Result<RiscvO3LiveCheckpointPayload, RiscvCoreCheckpointError> {
-    RiscvO3LiveCheckpointPayload::decode(payload).map_err(|error| {
+) -> Result<(u8, RiscvO3LiveCheckpointPayload), RiscvCoreCheckpointError> {
+    RiscvO3LiveCheckpointPayload::decode_versioned(payload).map_err(|error| {
         RiscvCoreCheckpointError::InvalidO3LiveCheckpoint {
             component: component.clone(),
             error,

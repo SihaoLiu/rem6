@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_fabric::{QosPriority, QosQueueArbiter};
 use rem6_kernel::WaitForGraph;
@@ -7,6 +7,7 @@ use rem6_memory::{
     MemoryTargetId, PartitionedMemorySnapshot, PartitionedMemoryStore,
 };
 
+use crate::controller_activity::DramRuntimeLogs;
 use crate::{
     merge_wait_for_graph, profile_snapshot, DramAccess, DramController, DramControllerConfig,
     DramControllerSnapshot, DramMemoryActivityMarker, DramMemoryActivityProfile, DramMemoryError,
@@ -75,6 +76,11 @@ pub struct DramMemoryController {
     store: PartitionedMemoryStore,
     dram: BTreeMap<MemoryTargetId, DramController>,
     profiles: BTreeMap<MemoryTargetId, ExternalMemoryProfile>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DramMemoryRuntimeLogs {
+    targets: BTreeMap<MemoryTargetId, DramRuntimeLogs>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -471,6 +477,103 @@ impl DramMemoryController {
                 })
                 .collect(),
         )
+    }
+
+    pub fn runtime_log_lengths(&self) -> Vec<(MemoryTargetId, usize, usize)> {
+        self.dram
+            .iter()
+            .map(|(target, controller)| {
+                let (activity_len, wait_len) = controller.runtime_log_lengths();
+                (*target, activity_len, wait_len)
+            })
+            .collect()
+    }
+
+    pub fn runtime_logs(&self) -> DramMemoryRuntimeLogs {
+        DramMemoryRuntimeLogs {
+            targets: self
+                .dram
+                .iter()
+                .map(|(target, controller)| (*target, controller.runtime_logs()))
+                .collect(),
+        }
+    }
+
+    pub fn validate_runtime_logs(
+        &self,
+        logs: &DramMemoryRuntimeLogs,
+    ) -> Result<(), DramMemoryError> {
+        if self.dram.keys().eq(logs.targets.keys()) {
+            return Ok(());
+        }
+        let target = self
+            .dram
+            .keys()
+            .find(|target| !logs.targets.contains_key(target))
+            .or_else(|| {
+                logs.targets
+                    .keys()
+                    .find(|target| !self.dram.contains_key(target))
+            })
+            .copied()
+            .expect("different DRAM runtime-log target sets must have a distinct target");
+        Err(DramMemoryError::MissingDramTarget { target })
+    }
+
+    pub fn restore_runtime_logs(
+        &mut self,
+        logs: DramMemoryRuntimeLogs,
+    ) -> Result<(), DramMemoryError> {
+        self.validate_runtime_logs(&logs)?;
+        for (target, logs) in logs.targets {
+            self.dram
+                .get_mut(&target)
+                .expect("validated DRAM runtime-log target")
+                .restore_runtime_logs(logs);
+        }
+        Ok(())
+    }
+
+    pub fn can_truncate_runtime_logs(&self, lengths: &[(MemoryTargetId, usize, usize)]) -> bool {
+        if lengths.len() != self.dram.len() {
+            return false;
+        }
+        let mut targets = BTreeSet::new();
+        lengths.iter().all(|(target, activity_len, wait_len)| {
+            targets.insert(*target)
+                && self.dram.get(target).is_some_and(|controller| {
+                    let (current_activity, current_wait) = controller.runtime_log_lengths();
+                    *activity_len <= current_activity && *wait_len <= current_wait
+                })
+        })
+    }
+
+    pub fn truncate_runtime_logs(&mut self, lengths: &[(MemoryTargetId, usize, usize)]) -> bool {
+        if !self.can_truncate_runtime_logs(lengths) {
+            return false;
+        }
+        for (target, activity_len, wait_len) in lengths {
+            if !self
+                .dram
+                .get_mut(target)
+                .expect("validated DRAM runtime-log target")
+                .truncate_runtime_logs(*activity_len, *wait_len)
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    pub fn restore_preserving_runtime_logs(
+        &mut self,
+        snapshot: &DramMemorySnapshot,
+    ) -> Result<(), DramMemoryError> {
+        let logs = self.runtime_logs();
+        let mut restored = Self::from_snapshot(snapshot)?;
+        restored.restore_runtime_logs(logs)?;
+        *self = restored;
+        Ok(())
     }
 
     pub fn restore(&mut self, snapshot: &DramMemorySnapshot) -> Result<(), DramMemoryError> {

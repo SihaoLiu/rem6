@@ -401,6 +401,7 @@ fn riscv_checkpoint_emits_one_o3_authority_and_isolates_legacy_decode() {
 fn riscv_checkpoint_owns_one_versioned_vector_state_authority() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let checkpoint_path = crate_dir.join("src/riscv_checkpoint.rs");
+    let restore_authority_path = crate_dir.join("src/riscv_checkpoint/restore_authority.rs");
     let vector_state_path = crate_dir.join("src/riscv_checkpoint/vector_state.rs");
     assert!(
         vector_state_path.exists(),
@@ -408,8 +409,10 @@ fn riscv_checkpoint_owns_one_versioned_vector_state_authority() {
     );
 
     let checkpoint_source = fs::read_to_string(&checkpoint_path).unwrap();
+    let restore_authority_source = fs::read_to_string(&restore_authority_path).unwrap();
     let vector_state_source = fs::read_to_string(&vector_state_path).unwrap();
     let checkpoint = rust_code_without_comments_and_literals(&checkpoint_source);
+    let restore_authority = rust_code_without_comments_and_literals(&restore_authority_source);
     let vector_state = rust_code_without_comments_and_literals(&vector_state_source);
     let checkpoint_literals = active_rust_string_literals(&checkpoint_source);
     let vector_state_literals = active_rust_string_literals(&vector_state_source);
@@ -424,8 +427,12 @@ fn riscv_checkpoint_owns_one_versioned_vector_state_authority() {
         "#[derive(Clone, Copy, Debug, Eq, PartialEq)]",
     );
     let write_record = source_section(&checkpoint, "fn write_record(", "pub fn restore_from(");
-    let decode_from = source_section(&checkpoint, "fn decode_from(", "fn restore_record(");
-    let restore_record = source_section(&checkpoint, "fn restore_record(", "fn capture_record(");
+    let decode_from = source_section(&checkpoint, "fn decode_from(", "fn capture_record(");
+    let restore_record = source_section(
+        &restore_authority,
+        "pub(super) fn restore_record(",
+        "impl RiscvCoreCheckpointBank {",
+    );
     let compact_write = without_whitespace(write_record);
     let (encode_signature, encode_body) = rust_function_signature_and_body(
         &vector_state,

@@ -132,6 +132,7 @@ pub use resource_acquire_cli::{
 };
 pub use resource_acquire_config::{Rem6ResourceAcquireConfig, Rem6ResourceAcquireResourceConfig};
 use riscv_checkpoint_runtime::{
+    attach_cli_cache_checkpoint_bank, attach_cli_fabric_checkpoint_bank,
     attach_cli_memory_checkpoint_bank, attach_cli_riscv_checkpoint_bank,
 };
 use riscv_core_runtime::build_cli_riscv_cores;
@@ -825,6 +826,22 @@ fn execute_riscv(
     }
     attach_cli_riscv_checkpoint_bank(&controller, &cluster)?;
     attach_cli_memory_checkpoint_bank(&controller, &memory)?;
+    attach_cli_fabric_checkpoint_bank(&controller, &transport)?;
+    if config
+        .fabric()
+        .is_some_and(|fabric| fabric.qos_queue_policy().is_some())
+    {
+        controller
+            .lock()
+            .map_err(|error| execute_error(format!("host controller lock poisoned: {error}")))?
+            .executor_mut()
+            .reject_checkpoint_actions("fabric QoS checkpoint restore is not supported");
+    }
+    attach_cli_cache_checkpoint_bank(
+        &controller,
+        &instruction_cache_hierarchy,
+        &data_cache_hierarchy,
+    )?;
     let trap_port = RiscvTrapEventPort::new(
         SystemHostEventPort::with_controller(
             host_partition,

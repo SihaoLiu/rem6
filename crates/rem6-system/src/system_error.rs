@@ -27,7 +27,9 @@ pub enum SystemError {
     RiscvCluster(RiscvClusterError),
     Stats(StatsError),
     Checkpoint(CheckpointError),
+    CheckpointActionsUnsupported { reason: String },
     MissingCheckpointManifest { label: String },
+    PendingInstructionProbeCheckpoint { label: String, tick: u64 },
     ReservedCheckpointManifestLabel { label: String, prefix: String },
     ExecutionModeCheckpoint(ExecutionModeCheckpointError),
     AcceleratorCheckpoint(AcceleratorCheckpointError),
@@ -75,9 +77,14 @@ impl fmt::Display for SystemError {
             Self::RiscvCluster(error) => write!(formatter, "{error}"),
             Self::Stats(error) => write!(formatter, "{error}"),
             Self::Checkpoint(error) => write!(formatter, "{error}"),
+            Self::CheckpointActionsUnsupported { reason } => write!(formatter, "{reason}"),
             Self::MissingCheckpointManifest { label } => {
                 write!(formatter, "checkpoint manifest {label} is not available")
             }
+            Self::PendingInstructionProbeCheckpoint { label, tick } => write!(
+                formatter,
+                "checkpoint manifest {label} at tick {tick} is awaiting instruction probe finalization"
+            ),
             Self::ReservedCheckpointManifestLabel { label, prefix } => write!(
                 formatter,
                 "checkpoint manifest label {label} uses reserved prefix {prefix}"
@@ -127,7 +134,9 @@ impl Error for SystemError {
             Self::RiscvCluster(error) => Some(error),
             Self::Stats(error) => Some(error),
             Self::Checkpoint(error) => Some(error),
+            Self::CheckpointActionsUnsupported { .. } => None,
             Self::MissingCheckpointManifest { .. } => None,
+            Self::PendingInstructionProbeCheckpoint { .. } => None,
             Self::ReservedCheckpointManifestLabel { .. } => None,
             Self::ExecutionModeCheckpoint(error) => Some(error),
             Self::AcceleratorCheckpoint(error) => Some(error),

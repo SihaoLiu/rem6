@@ -680,7 +680,7 @@ git push
 - Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/dependent_store/live_checkpoint_support.rs`
 - Modify: `docs/architecture/gem5-to-rem6-migration.md`
 
-- [ ] **Step 1: Add hierarchy, timing, and retained-boundary RED tests**
+- [x] **Step 1: Add hierarchy, timing, and retained-boundary RED tests**
 
 Add:
 
@@ -700,13 +700,16 @@ The timing row uses the same source schedule, requires architectural
 equivalence, and asserts no `O3LC`, O3 runtime, issue, pending-address,
 writeback, or O3 stats surface.
 
-The boundary row retains rejection for pre-publication producer transport,
-materialized or submitted store, multiple pending rows, dependent AMO
-consumer, translated/MMIO state, missing scheduler authority, and live mode
+The subprocess boundary row retains every user-triggerable rejection:
+pre-publication producer transport, materialized or submitted store, multiple
+pending rows, dependent AMO consumer, translated/MMIO state, and live mode
 switch. Every failed command must exit 2, leave stdout and output artifact
-empty, and leave target memory unchanged.
+empty, and leave target memory unchanged. Corrupted live chunks and missing
+scheduler authority are not public CLI inputs; prove both through the real
+`SystemActionExecutor` host/controller restore path using checkpoint registries
+and manifests, with all CPU, scheduler, registry, and memory state unchanged.
 
-- [ ] **Step 2: Run the expanded CLI RED/GREEN loop**
+- [x] **Step 2: Run the expanded CLI RED/GREEN loop**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run rem6_run_o3_dependent_store_live_checkpoint_ -- --nocapture
@@ -716,7 +719,7 @@ Expected initially: any missing hierarchy/timing/boundary assertion fails.
 Adjust only fixture scheduling and profile validation; do not broaden the
 runtime envelope to make a negative row pass.
 
-- [ ] **Step 3: Add focused source-policy contracts**
+- [x] **Step 3: Add focused source-policy contracts**
 
 Attach each new policy child on one line to preserve existing parent caps. Lock
 these file caps:
@@ -738,7 +741,7 @@ generic execution events, pending capture admits materialized state, stable
 checkpoint/mode-switch rejection disappears, or any real CLI anchor is
 disabled/renamed/unregistered.
 
-- [ ] **Step 4: Update ledger wording without changing its score or size**
+- [x] **Step 4: Update ledger wording without changing its score or size**
 
 Edit the existing CPU paragraph in place. It must claim exactly one
 post-publication, committed-producer, unmaterialized dependent `SD` beside the
@@ -758,7 +761,7 @@ serialization is missing. Keep the heading and score text exactly:
 test "$(wc -l < docs/architecture/gem5-to-rem6-migration.md)" -eq 1200
 ```
 
-- [ ] **Step 5: Run policy and complete focused GREEN**
+- [x] **Step 5: Run policy and complete focused GREEN**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run rem6_run_o3_dependent_store_live_checkpoint_ -- --nocapture
@@ -767,7 +770,7 @@ TMPDIR=$PWD/target/tmp cargo test -p rem6-system --test source_policy pending_ad
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --test source_policy pending_address -- --nocapture
 ```
 
-- [ ] **Step 6: Commit and push evidence, policy, and ledger**
+- [x] **Step 6: Commit and push evidence, policy, and ledger**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo fmt --all
@@ -791,7 +794,7 @@ git push
 **Files:**
 - Modify only files required to resolve verified regressions or audit findings.
 
-- [ ] **Step 1: Run formatting, focused suites, and ledger checks from clean state**
+- [x] **Step 1: Run formatting, focused suites, and ledger checks from clean state**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo fmt --all -- --check
@@ -805,7 +808,7 @@ TMPDIR=$PWD/target/tmp cargo test -p rem6 --test cli_run rem6_run_o3_dependent_s
 TMPDIR=$PWD/target/tmp cargo test -p rem6 --test source_policy
 ```
 
-- [ ] **Step 2: Run broad suites with only documented baseline skips**
+- [x] **Step 2: Run broad suites with only documented baseline skips**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib -- \
@@ -823,7 +826,7 @@ Then run the unskipped CPU library and CPU source-policy commands once to
 confirm their failure sets are still exactly the documented one and four,
 with no new failing test names.
 
-- [ ] **Step 3: Dispatch six independent read-only high-intensity audits**
+- [x] **Step 3: Dispatch six independent read-only high-intensity audits**
 
 Assign one audit each to:
 
@@ -840,7 +843,7 @@ Require severity, exact file/line evidence, and a concrete reproduction for
 every finding. Resolve all critical and important findings, rerun the affected
 focused command, and repeat the corresponding audit until clear.
 
-- [ ] **Step 4: Verify final commit and remote parity**
+- [x] **Step 4: Verify final commit and remote parity**
 
 If audit fixes changed files, create one bounded fix commit after all affected
 tests pass:
@@ -848,34 +851,16 @@ tests pass:
 ```bash
 TMPDIR=$PWD/target/tmp cargo fmt --all
 git diff --check
-git add crates/rem6-cpu/src/riscv_live_checkpoint.rs \
-  crates/rem6-cpu/src/riscv_live_checkpoint \
-  crates/rem6-cpu/src/o3_runtime_live_checkpoint.rs \
-  crates/rem6-cpu/src/o3_runtime_live_checkpoint \
-  crates/rem6-cpu/src/riscv_core_checkpoint_restore.rs \
-  crates/rem6-cpu/src/riscv_core_checkpoint_restore \
-  crates/rem6-cpu/src/o3_runtime_snapshot_entries.rs \
-  crates/rem6-cpu/src/riscv_live_checkpoint_tests.rs \
-  crates/rem6-cpu/src/riscv_live_checkpoint_tests \
-  crates/rem6-cpu/tests/source_policy/live_checkpoint.rs \
-  crates/rem6-cpu/tests/source_policy/live_checkpoint \
-  crates/rem6-system/tests/support/live_o3_pending_address.rs \
-  crates/rem6-system/tests/live_o3_scheduler_checkpoint.rs \
-  crates/rem6-system/tests/live_o3_scheduler_checkpoint \
-  crates/rem6-system/tests/riscv_checkpoint/o3_live.rs \
-  crates/rem6-system/tests/source_policy/live_o3_checkpoint.rs \
-  crates/rem6-system/tests/source_policy/live_o3_checkpoint \
-  crates/rem6/src/host_actions/o3_live_checkpoint.rs \
-  crates/rem6/src/stats_output/host_actions/tests.rs \
-  crates/rem6/tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/dependent_store.rs \
-  crates/rem6/tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/dependent_store \
-  crates/rem6/tests/source_policy/o3_live_checkpoint_ownership.rs \
-  crates/rem6/tests/source_policy/o3_live_checkpoint_ownership \
-  crates/rem6/tests/source_policy/core_test_anchors.txt \
-  docs/architecture/gem5-to-rem6-migration.md
+git status --short
+git add -A
+git diff --cached --check
+git status --short
 git commit -m "fix: harden pending-address checkpoint restore"
 git push
 ```
+
+Use `git add -A` only after the pre-stage status confirms every visible path is
+part of this plan and that no temporary or generated artifact is present.
 
 Finish with:
 

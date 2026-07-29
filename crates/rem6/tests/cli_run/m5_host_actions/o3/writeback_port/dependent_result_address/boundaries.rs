@@ -184,6 +184,25 @@ fn assert_live_actions_reject() {
     }
 }
 
+#[rustfmt::skip]
+pub(in crate::m5_host_actions::o3) fn assert_live_checkpoint_rejects_dependent_atomic_and_mmio() {
+    for case in [BoundaryCase::DependentAtomic, BoundaryCase::MmioPointer] {
+        let fixture = BoundaryFixture::new(case);
+        let completed = fixture.run(1_200, &[]); let source_tick = event_u64(event_at_pc(&completed, DEPENDENT_PC), "issue_tick").checked_sub(1).expect("dependent consumer must leave a host-action boundary");
+        let control = fixture.run(source_tick, &[]);
+        assert_eq!(memory_dump_hex(&control, POINTER), Some(hex_u64_pair(TARGET_ZERO_VALUE, 0).as_str()), "{case:?} target changed before the rejected action");
+        let label = format!("pending-store-unsupported-{}", case.label());
+        let artifact = unique_output(&label);
+        let mut command = fixture.command(1_200);
+        command.args(["--host-checkpoint", &format!("{source_tick}:{label}"), "--output", artifact.to_str().unwrap()]);
+        let output = wait_for_boundary(command);
+        assert_eq!(output.status.code(), Some(2), "{case:?}: {output:?}");
+        assert!(output.stdout.is_empty(), "{case:?}: {output:?}");
+        assert_eq!(String::from_utf8(output.stderr).unwrap(), "failed to execute run: host action failed: checkpoint component is not quiescent: cpu0\n");
+        assert!(!artifact.exists(), "{case:?}: {}", artifact.display());
+    }
+}
+
 fn assert_drained_checkpoint_restores() {
     let row = DEPENDENT_ADDRESS_ROWS[0];
     let fixture = DependentAddressFixture::new(row);
@@ -235,7 +254,7 @@ impl BoundaryFixture {
         }
     }
 
-    fn run(&self, max_tick: u64, extra_args: &[&str]) -> Value {
+    fn command(&self, max_tick: u64) -> std::process::Command {
         let mut command =
             dependent_address_command(&self.binary, "direct", 1, 9, max_tick, "detailed");
         add_memory_dumps(&mut command);
@@ -245,6 +264,11 @@ impl BoundaryFixture {
                 &format!("0x10000000:0x100:{}", readfile.display()),
             ]);
         }
+        command
+    }
+
+    fn run(&self, max_tick: u64, extra_args: &[&str]) -> Value {
+        let mut command = self.command(max_tick);
         command.args(extra_args);
         let json = run_json(command, self.case.label());
         if max_tick != 1_200 {

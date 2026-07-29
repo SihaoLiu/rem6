@@ -1,6 +1,6 @@
 use super::*;
 
-const O3_LIVE_CHECKPOINT_CHUNK: &str = "o3-live-checkpoint";
+pub(super) const O3_LIVE_CHECKPOINT_CHUNK: &str = "o3-live-checkpoint";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct PendingStoreLiveSchedule {
@@ -24,6 +24,38 @@ impl PendingStoreLiveSchedule {
             checkpoint_source_tick,
             restore_source_tick,
         }
+    }
+
+    pub(super) fn discover_after_transport_drain(baseline: &Value) -> Self {
+        let mut schedule = Self::discover(baseline);
+        let initial_delivery = schedule.restore_source_tick + 1;
+        let trace = baseline
+            .pointer("/debug/memory_trace")
+            .and_then(Value::as_array)
+            .expect("memory trace");
+        let visible = trace
+            .iter()
+            .filter(|record| {
+                event_str(record, "channel") == "fetch"
+                    && event_str(record, "kind") == "request_sent"
+                    && event_u64(record, "tick") <= initial_delivery
+            })
+            .map(|record| (event_u64(record, "route"), event_u64(record, "request")))
+            .collect::<std::collections::BTreeSet<_>>();
+        let drain_tick = trace
+            .iter()
+            .filter(|record| {
+                event_str(record, "channel") == "fetch"
+                    && event_str(record, "kind") == "response_arrived"
+                    && visible.contains(&(event_u64(record, "route"), event_u64(record, "request")))
+            })
+            .map(|record| event_u64(record, "tick"))
+            .max()
+            .expect("visible fetch requests must complete");
+        schedule.restore_source_tick = drain_tick
+            .checked_sub(1)
+            .expect("fetch transport drain must occur after tick zero");
+        schedule
     }
 }
 
@@ -109,17 +141,39 @@ pub(super) fn assert_pending_store_live_restore(
 
     let baseline_store = memory_result_event_at_pc(baseline, STORE_PC);
     let restored_store = memory_result_event_at_pc(restored, STORE_PC);
-    for field in ["issue_tick", "commit_tick"] {
+    for field in [
+        "issue_tick",
+        "lsq_data_response_tick",
+        "writeback_tick",
+        "commit_tick",
+    ] {
         assert_eq!(
             event_u64(restored_store, field),
             event_u64(baseline_store, field),
             "restored store {field}"
         );
     }
+    assert!(
+        event_u64(restored_store, "issue_tick")
+            < event_u64(restored_store, "lsq_data_response_tick")
+    );
+    assert!(
+        event_u64(restored_store, "lsq_data_response_tick")
+            <= event_u64(restored_store, "writeback_tick")
+    );
+    assert!(
+        event_u64(restored_store, "writeback_tick") <= event_u64(restored_store, "commit_tick")
+    );
+    assert_eq!(
+        event_u64(restored_store, "lsq_store_bytes"),
+        event_u64(baseline_store, "lsq_store_bytes"),
+        "restored store bytes"
+    );
     let requests = data_requests_sent(restored);
     let [producer, store] = requests.as_slice() else {
         panic!("expected one producer and one restored store request: {requests:?}");
     };
+    assert_eq!(requests, data_requests_sent(baseline));
     assert_eq!(
         event_u64(producer, "tick"),
         event_u64(memory_result_event_at_pc(baseline, HEAD_PC), "issue_tick")
@@ -142,7 +196,54 @@ pub(super) fn assert_pending_store_live_restore(
         restored.pointer("/cores/0/registers"),
         baseline.pointer("/cores/0/registers")
     );
+    assert_eq!(
+        restored.pointer("/cores/0/committed_instructions"),
+        baseline.pointer("/cores/0/committed_instructions")
+    );
     assert_eq!(restored.pointer("/memory"), baseline.pointer("/memory"));
+    for pointer in [
+        "/cores/0/o3_runtime/issue",
+        "/cores/0/o3_runtime/writeback_port",
+    ] {
+        assert_eq!(
+            restored.pointer(pointer),
+            baseline.pointer(pointer),
+            "restored exactly-once stats {pointer}"
+        );
+    }
+    assert_eq!(
+        restored.pointer("/cores/0/o3_runtime/lsq"),
+        baseline.pointer("/cores/0/o3_runtime/lsq"),
+        "restored exactly-once LSQ stats"
+    );
+}
+
+pub(super) fn assert_pending_store_restore_replaces_divergent_mode(
+    restored: &Value,
+    no_restore: &Value,
+) {
+    assert_eq!(
+        json_u64(no_restore, "/host_actions/checkpoint_restored_count"),
+        0
+    );
+    assert_eq!(
+        no_restore
+            .pointer("/host_actions/execution_modes/0/mode")
+            .and_then(Value::as_str),
+        Some("timing")
+    );
+    assert_eq!(
+        no_restore
+            .pointer("/cores/0/o3_runtime/execution_mode")
+            .and_then(Value::as_str),
+        Some("timing")
+    );
+    assert_eq!(
+        restored
+            .pointer("/cores/0/o3_runtime/execution_mode")
+            .and_then(Value::as_str),
+        Some("detailed")
+    );
 }
 
 pub(super) fn assert_pending_store_live_capture(
@@ -165,17 +266,7 @@ pub(super) fn assert_pending_store_live_capture(
 }
 
 fn assert_live_chunk(action: &Value, rebound_wakes: u64, wake_tick: u64) {
-    let chunks = action
-        .pointer("/components")
-        .and_then(Value::as_array)
-        .and_then(|components| {
-            components.iter().find(|component| {
-                component.pointer("/component").and_then(Value::as_str) == Some("cpu0")
-            })
-        })
-        .and_then(|component| component.pointer("/chunks"))
-        .and_then(Value::as_array)
-        .expect("cpu0 checkpoint chunks");
+    let chunks = cpu_checkpoint_chunks(action);
     let matches = chunks
         .iter()
         .filter(|chunk| {
@@ -213,4 +304,19 @@ fn assert_live_chunk(action: &Value, rebound_wakes: u64, wake_tick: u64) {
         live.pointer("/rebound_wakes").and_then(Value::as_u64),
         Some(rebound_wakes)
     );
+}
+
+pub(super) fn cpu_checkpoint_chunks(action: &Value) -> &[Value] {
+    action
+        .pointer("/components")
+        .and_then(Value::as_array)
+        .and_then(|components| {
+            components.iter().find(|component| {
+                component.pointer("/component").and_then(Value::as_str) == Some("cpu0")
+            })
+        })
+        .and_then(|component| component.pointer("/chunks"))
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .expect("cpu0 checkpoint chunks")
 }

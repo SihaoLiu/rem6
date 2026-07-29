@@ -1,3 +1,7 @@
+#[path = "validation/cache_checkpoint.rs"]
+mod cache_checkpoint;
+#[path = "validation/fabric_checkpoint.rs"]
+mod fabric_checkpoint;
 #[path = "validation/o3_depths.rs"]
 mod o3_depths;
 #[path = "validation/o3_memory_issue_width.rs"]
@@ -528,48 +532,6 @@ fn rem6_run_rejects_riscv_execution_mode_without_execution() {
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("--riscv-execution-mode requires --execute"));
-}
-
-#[test]
-fn rem6_run_rejects_host_checkpoint_flags_without_execution() {
-    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
-    let checkpoint_path = temp_binary("host-checkpoint-without-execute", &elf);
-    let restore_path = temp_binary("host-checkpoint-restore-without-execute", &elf);
-
-    for (path, flag, message) in [
-        (
-            checkpoint_path.as_path(),
-            "--host-checkpoint",
-            "--host-checkpoint requires --execute",
-        ),
-        (
-            restore_path.as_path(),
-            "--host-restore-checkpoint",
-            "--host-restore-checkpoint requires --execute",
-        ),
-    ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
-            .args([
-                "run",
-                "--isa",
-                "riscv",
-                "--binary",
-                path.to_str().unwrap(),
-                "--max-tick",
-                "40",
-                "--stats-format",
-                "json",
-                flag,
-                "8:cp",
-            ])
-            .output()
-            .unwrap();
-
-        assert!(!output.status.success(), "{flag} should require execution");
-        assert!(output.stdout.is_empty());
-        let stderr = String::from_utf8(output.stderr).unwrap();
-        assert!(stderr.contains(message), "stderr: {stderr}");
-    }
 }
 
 #[test]

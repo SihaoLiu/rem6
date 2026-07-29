@@ -6,6 +6,7 @@ use rem6_kernel::{
 use rem6_mmio::MmioBus;
 use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
 
+mod checkpoint_runtime_state;
 mod clint_checkpoint;
 mod coherence_checkpoint;
 mod cpu_local_timer_checkpoint;
@@ -76,6 +77,7 @@ mod workload_replay;
 mod workload_replay_heterogeneous;
 mod workload_replay_host;
 
+pub use checkpoint_runtime_state::CheckpointRuntimeState;
 pub use clint_checkpoint::{
     ClintCheckpointBank, ClintCheckpointError, ClintCheckpointPort, ClintCheckpointRecord,
 };

@@ -7,8 +7,8 @@ use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry
 use rem6_dram::{
     DramAccessKind, DramBankState, DramCommandWindow, DramControllerSnapshot, DramGeometry,
     DramLowPowerTiming, DramMemoryController, DramMemoryError, DramMemorySnapshot,
-    DramMemoryTargetSnapshot, DramPortState, DramTiming, ExternalMemoryProfile,
-    ExternalMemoryTopology, NvmMediaTiming,
+    DramMemoryTargetSnapshot, DramPortState, DramRefreshGranularity, DramRefreshPolicy,
+    DramRefreshTiming, DramTiming, ExternalMemoryProfile, ExternalMemoryTopology, NvmMediaTiming,
 };
 use rem6_memory::{
     AccessSize, Address, AddressInterleave, AddressMapRegion, AddressRange, CacheLineLayout,
@@ -16,7 +16,12 @@ use rem6_memory::{
     PartitionedMemorySnapshot, PartitionedMemoryStore,
 };
 
+use crate::CheckpointRuntimeState;
+
 const DRAM_CHUNK: &str = "dram";
+const DRAM_CURRENT_MAGIC: &[u8; 4] = b"DRM2";
+const DRAM_CURRENT_SENTINEL: [u8; U64_BYTES] = u64::MAX.to_le_bytes();
+const DRAM_RUNTIME_STATE_CHUNK: &str = "dram-runtime-state";
 const STORE_CHUNK: &str = "store";
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
@@ -306,10 +311,20 @@ impl DramMemoryCheckpointRecord {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct DramMemoryCheckpointPort {
     component: CheckpointComponentId,
     controller: Arc<Mutex<DramMemoryController>>,
+    runtime_state: Option<CheckpointRuntimeState>,
+}
+
+impl fmt::Debug for DramMemoryCheckpointPort {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DramMemoryCheckpointPort")
+            .field("component", &self.component)
+            .finish_non_exhaustive()
+    }
 }
 
 impl DramMemoryCheckpointPort {
@@ -320,7 +335,13 @@ impl DramMemoryCheckpointPort {
         Self {
             component,
             controller,
+            runtime_state: None,
         }
+    }
+
+    pub fn with_runtime_state(mut self, runtime_state: CheckpointRuntimeState) -> Self {
+        self.runtime_state = Some(runtime_state);
+        self
     }
 
     pub fn component(&self) -> &CheckpointComponentId {
@@ -338,9 +359,29 @@ impl DramMemoryCheckpointPort {
     pub fn capture_into(
         &self,
         registry: &mut CheckpointRegistry,
-    ) -> Result<DramMemoryCheckpointRecord, CheckpointError> {
+    ) -> Result<DramMemoryCheckpointRecord, DramMemoryCheckpointError> {
         let snapshot = self.controller.lock().expect("DRAM memory lock").snapshot();
-        registry.write_chunk(&self.component, DRAM_CHUNK, encode_dram_memory(&snapshot))?;
+        registry
+            .write_chunk(&self.component, DRAM_CHUNK, encode_dram_memory(&snapshot))
+            .map_err(|error| DramMemoryCheckpointError::Checkpoint {
+                component: self.component.clone(),
+                error,
+            })?;
+        if let Some(runtime_state) = &self.runtime_state {
+            let payload = runtime_state.capture().map_err(|reason| {
+                DramMemoryCheckpointError::RuntimeState {
+                    component: self.component.clone(),
+                    operation: "capture",
+                    reason,
+                }
+            })?;
+            registry
+                .write_chunk(&self.component, DRAM_RUNTIME_STATE_CHUNK, payload)
+                .map_err(|error| DramMemoryCheckpointError::Checkpoint {
+                    component: self.component.clone(),
+                    error,
+                })?;
+        }
         Ok(DramMemoryCheckpointRecord::new(
             self.component.clone(),
             snapshot,
@@ -352,7 +393,10 @@ impl DramMemoryCheckpointPort {
         registry: &CheckpointRegistry,
     ) -> Result<DramMemoryCheckpointRecord, DramMemoryCheckpointError> {
         let record = self.decode_from(registry)?;
+        self.validate_snapshot(record.snapshot())?;
+        self.validate_runtime_state(registry)?;
         self.restore_snapshot(record.snapshot())?;
+        self.restore_runtime_state(registry);
         Ok(record)
     }
 
@@ -377,26 +421,79 @@ impl DramMemoryCheckpointPort {
         &self,
         snapshot: &DramMemorySnapshot,
     ) -> Result<(), DramMemoryCheckpointError> {
-        DramMemoryController::from_snapshot(snapshot)
-            .map(|_| ())
-            .map_err(|error| DramMemoryCheckpointError::DramMemory {
-                component: self.component.clone(),
-                error,
-            })
+        let result = if self.runtime_state.is_some() {
+            self.controller
+                .lock()
+                .expect("DRAM memory lock")
+                .clone()
+                .restore_preserving_runtime_logs(snapshot)
+        } else {
+            DramMemoryController::from_snapshot(snapshot).map(|_| ())
+        };
+        result.map_err(|error| DramMemoryCheckpointError::DramMemory {
+            component: self.component.clone(),
+            error,
+        })
     }
 
     fn restore_snapshot(
         &self,
         snapshot: &DramMemorySnapshot,
     ) -> Result<(), DramMemoryCheckpointError> {
-        self.controller
-            .lock()
-            .expect("DRAM memory lock")
-            .restore(snapshot)
-            .map_err(|error| DramMemoryCheckpointError::DramMemory {
+        let mut controller = self.controller.lock().expect("DRAM memory lock");
+        let result = if self.runtime_state.is_some() {
+            controller.restore_preserving_runtime_logs(snapshot)
+        } else {
+            controller.restore(snapshot)
+        };
+        result.map_err(|error| DramMemoryCheckpointError::DramMemory {
+            component: self.component.clone(),
+            error,
+        })
+    }
+
+    fn runtime_state_payload<'a>(
+        &self,
+        registry: &'a CheckpointRegistry,
+    ) -> Result<Option<&'a [u8]>, DramMemoryCheckpointError> {
+        let Some(_runtime_state) = &self.runtime_state else {
+            return Ok(None);
+        };
+        registry
+            .chunk(&self.component, DRAM_RUNTIME_STATE_CHUNK)
+            .map(Some)
+            .ok_or_else(|| DramMemoryCheckpointError::MissingChunk {
                 component: self.component.clone(),
-                error,
+                name: DRAM_RUNTIME_STATE_CHUNK.to_string(),
             })
+    }
+
+    fn validate_runtime_state(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<(), DramMemoryCheckpointError> {
+        let (Some(runtime_state), Some(payload)) =
+            (&self.runtime_state, self.runtime_state_payload(registry)?)
+        else {
+            return Ok(());
+        };
+        runtime_state
+            .validate(payload)
+            .map_err(|reason| DramMemoryCheckpointError::RuntimeState {
+                component: self.component.clone(),
+                operation: "validate restore",
+                reason,
+            })
+    }
+
+    fn restore_runtime_state(&self, registry: &CheckpointRegistry) {
+        let Some(runtime_state) = &self.runtime_state else {
+            return;
+        };
+        let payload = registry
+            .chunk(&self.component, DRAM_RUNTIME_STATE_CHUNK)
+            .expect("validated DRAM runtime checkpoint state");
+        runtime_state.restore(payload);
     }
 }
 
@@ -410,10 +507,16 @@ impl DramMemoryCheckpointBank {
     where
         I: IntoIterator<Item = DramMemoryCheckpointPort>,
     {
-        let mut by_component = BTreeMap::new();
+        let mut by_component = BTreeMap::<CheckpointComponentId, DramMemoryCheckpointPort>::new();
         for port in ports {
             let component = port.component().clone();
             if by_component.contains_key(&component) {
+                return Err(CheckpointError::DuplicateComponent { component });
+            }
+            if by_component
+                .values()
+                .any(|existing| Arc::ptr_eq(&existing.controller, &port.controller))
+            {
                 return Err(CheckpointError::DuplicateComponent { component });
             }
             by_component.insert(component, port);
@@ -442,7 +545,7 @@ impl DramMemoryCheckpointBank {
     pub fn capture_all_into(
         &self,
         registry: &mut CheckpointRegistry,
-    ) -> Result<Vec<DramMemoryCheckpointRecord>, CheckpointError> {
+    ) -> Result<Vec<DramMemoryCheckpointRecord>, DramMemoryCheckpointError> {
         self.ports
             .values()
             .map(|port| port.capture_into(registry))
@@ -457,13 +560,13 @@ impl DramMemoryCheckpointBank {
         let mut decoded = Vec::new();
         for port in self.ports.values() {
             let record = port.decode_from(registry)?;
-            port.validate_snapshot(record.snapshot())?;
             decoded.push((port, record));
         }
 
         let mut restored = Vec::new();
         for (port, record) in decoded {
             port.restore_snapshot(record.snapshot())?;
+            port.restore_runtime_state(registry);
             restored.push(record);
         }
         Ok(restored)
@@ -476,6 +579,7 @@ impl DramMemoryCheckpointBank {
         for port in self.ports.values() {
             let record = port.decode_from(registry)?;
             port.validate_snapshot(record.snapshot())?;
+            port.validate_runtime_state(registry)?;
         }
         Ok(())
     }
@@ -495,6 +599,15 @@ pub enum DramMemoryCheckpointError {
         component: CheckpointComponentId,
         error: DramMemoryError,
     },
+    Checkpoint {
+        component: CheckpointComponentId,
+        error: CheckpointError,
+    },
+    RuntimeState {
+        component: CheckpointComponentId,
+        operation: &'static str,
+        reason: String,
+    },
 }
 
 impl DramMemoryCheckpointError {
@@ -502,7 +615,9 @@ impl DramMemoryCheckpointError {
         match self {
             Self::MissingChunk { component, .. }
             | Self::InvalidChunk { component, .. }
-            | Self::DramMemory { component, .. } => component,
+            | Self::DramMemory { component, .. }
+            | Self::Checkpoint { component, .. }
+            | Self::RuntimeState { component, .. } => component,
         }
     }
 }
@@ -525,6 +640,16 @@ impl fmt::Display for DramMemoryCheckpointError {
                 "DRAM checkpoint component {} restore failed: {error}",
                 component.as_str()
             ),
+            Self::Checkpoint { error, .. } => write!(formatter, "{error}"),
+            Self::RuntimeState {
+                component,
+                operation,
+                reason,
+            } => write!(
+                formatter,
+                "DRAM checkpoint component {} runtime state {operation} failed: {reason}",
+                component.as_str()
+            ),
         }
     }
 }
@@ -533,7 +658,10 @@ impl Error for DramMemoryCheckpointError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::DramMemory { error, .. } => Some(error),
-            Self::MissingChunk { .. } | Self::InvalidChunk { .. } => None,
+            Self::Checkpoint { error, .. } => Some(error),
+            Self::MissingChunk { .. } | Self::InvalidChunk { .. } | Self::RuntimeState { .. } => {
+                None
+            }
         }
     }
 }
@@ -577,6 +705,8 @@ fn encode_store(snapshot: &PartitionedMemorySnapshot) -> Vec<u8> {
 fn encode_dram_memory(snapshot: &DramMemorySnapshot) -> Vec<u8> {
     let store_payload = encode_store(snapshot.store());
     let mut payload = Vec::new();
+    payload.extend_from_slice(&DRAM_CURRENT_SENTINEL);
+    payload.extend_from_slice(DRAM_CURRENT_MAGIC);
     write_u64(&mut payload, store_payload.len() as u64);
     payload.extend_from_slice(&store_payload);
     write_u64(&mut payload, snapshot.targets().len() as u64);
@@ -599,6 +729,11 @@ fn encode_dram_memory(snapshot: &DramMemorySnapshot) -> Vec<u8> {
         write_optional_u64(&mut payload, timing.same_bank_group_burst_spacing());
         write_command_window(&mut payload, timing.command_window());
         write_low_power_timing(&mut payload, timing.low_power_timing());
+        write_refresh_timing(
+            &mut payload,
+            timing.refresh_timing(),
+            timing.refresh_policy(),
+        );
         write_profile(&mut payload, target.profile());
         write_nvm_media_state(
             &mut payload,
@@ -617,6 +752,7 @@ fn encode_dram_memory(snapshot: &DramMemorySnapshot) -> Vec<u8> {
                 None => write_u64(&mut payload, 0),
             }
             write_u64(&mut payload, bank.available_cycle());
+            write_u64(&mut payload, bank.next_refresh_cycle());
         }
         for port in controller.ports() {
             write_u64(&mut payload, port.bus_available_cycle());
@@ -675,6 +811,37 @@ fn write_low_power_timing(payload: &mut Vec<u8>, low_power_timing: Option<DramLo
     write_u64(payload, low_power_timing.self_refresh_entry_delay());
     write_u64(payload, low_power_timing.exit_latency());
     write_u64(payload, low_power_timing.self_refresh_exit_latency());
+}
+
+fn write_refresh_timing(
+    payload: &mut Vec<u8>,
+    refresh_timing: Option<DramRefreshTiming>,
+    refresh_policy: DramRefreshPolicy,
+) {
+    match refresh_timing {
+        Some(refresh_timing) => {
+            write_u64(payload, 1);
+            write_u64(payload, refresh_timing.interval());
+            write_u64(payload, refresh_timing.recovery());
+            write_u64(
+                payload,
+                match refresh_timing.granularity() {
+                    DramRefreshGranularity::OneX => 1,
+                    DramRefreshGranularity::TwoX => 2,
+                    DramRefreshGranularity::FourX => 4,
+                },
+            );
+        }
+        None => write_u64(payload, 0),
+    }
+    write_u64(
+        payload,
+        match refresh_policy {
+            DramRefreshPolicy::PerBank => 1,
+            DramRefreshPolicy::BankGroup => 2,
+            DramRefreshPolicy::AllBank => 3,
+        },
+    );
 }
 
 fn write_profile(payload: &mut Vec<u8>, profile: Option<&ExternalMemoryProfile>) {
@@ -868,6 +1035,18 @@ fn decode_dram_memory(
     component: &CheckpointComponentId,
     payload: &[u8],
 ) -> Result<DramMemorySnapshot, DramMemoryCheckpointError> {
+    let current_format = payload.starts_with(&DRAM_CURRENT_SENTINEL);
+    let payload = if current_format {
+        payload
+            .get(DRAM_CURRENT_SENTINEL.len()..)
+            .and_then(|payload| payload.strip_prefix(DRAM_CURRENT_MAGIC))
+            .ok_or_else(|| DramMemoryCheckpointError::InvalidChunk {
+                component: component.clone(),
+                reason: "current DRAM format marker is missing".to_string(),
+            })?
+    } else {
+        payload
+    };
     let mut cursor = DramPayloadCursor::new(component.clone(), payload);
     let store_len = cursor.read_count("store byte count")?;
     let store_payload = cursor.read_bytes("store payload", store_len)?;
@@ -934,6 +1113,11 @@ fn decode_dram_memory(
         };
         let timing = read_command_window(&mut cursor, target, timing)?;
         let timing = read_low_power_timing(&mut cursor, target, timing)?;
+        let timing = if current_format {
+            read_refresh_timing(&mut cursor, target, timing)?
+        } else {
+            timing
+        };
         let line_layout = CacheLineLayout::new(line_size).map_err(|error| {
             cursor.invalid(format!(
                 "DRAM target {} has invalid profile line layout: {error}",
@@ -982,7 +1166,25 @@ fn decode_dram_memory(
                 }
             };
             let available_cycle = cursor.read_u64("DRAM bank available cycle")?;
-            banks.push(DramBankState::from_snapshot(open_row, available_cycle));
+            let bank = if current_format {
+                let next_refresh_cycle = cursor.read_u64("DRAM bank next refresh cycle")?;
+                validate_refresh_frontier(
+                    &cursor,
+                    target,
+                    bank,
+                    timing,
+                    available_cycle,
+                    next_refresh_cycle,
+                )?;
+                DramBankState::from_snapshot_with_refresh(
+                    open_row,
+                    available_cycle,
+                    next_refresh_cycle,
+                )
+            } else {
+                DramBankState::from_snapshot(open_row, available_cycle)
+            };
+            banks.push(bank);
         }
 
         let mut ports = Vec::with_capacity(port_count);
@@ -1031,6 +1233,37 @@ fn decode_dram_memory(
         }
     })?;
     Ok(snapshot)
+}
+
+fn validate_refresh_frontier(
+    cursor: &DramPayloadCursor<'_>,
+    target: MemoryTargetId,
+    bank: usize,
+    timing: DramTiming,
+    available_cycle: u64,
+    next_refresh_cycle: u64,
+) -> Result<(), DramMemoryCheckpointError> {
+    let Some(refresh) = timing.refresh_timing() else {
+        if next_refresh_cycle == 0 {
+            return Ok(());
+        }
+        return Err(cursor.invalid(format!(
+            "DRAM target {} bank {bank} has next refresh cycle {next_refresh_cycle} without refresh timing",
+            target.get()
+        )));
+    };
+    let aligned = next_refresh_cycle != 0
+        && (next_refresh_cycle == u64::MAX || next_refresh_cycle % refresh.interval() == 0);
+    let previous_refresh = next_refresh_cycle.saturating_sub(refresh.interval());
+    let minimum_available = previous_refresh.saturating_add(refresh.recovery());
+    if aligned && (next_refresh_cycle <= refresh.interval() || available_cycle >= minimum_available)
+    {
+        return Ok(());
+    }
+    Err(cursor.invalid(format!(
+        "DRAM target {} bank {bank} next refresh cycle {next_refresh_cycle} is inconsistent with available cycle {available_cycle}",
+        target.get()
+    )))
 }
 
 fn read_profile(
@@ -1214,6 +1447,71 @@ fn read_low_power_timing(
             target.get()
         ))),
     }
+}
+
+fn read_refresh_timing(
+    cursor: &mut DramPayloadCursor<'_>,
+    target: MemoryTargetId,
+    timing: DramTiming,
+) -> Result<DramTiming, DramMemoryCheckpointError> {
+    let timing = match cursor.read_u64("DRAM refresh timing presence")? {
+        0 => timing,
+        1 => {
+            let interval = cursor.read_u64("DRAM refresh interval")?;
+            let recovery = cursor.read_u64("DRAM refresh recovery")?;
+            let granularity = match cursor.read_u64("DRAM refresh granularity")? {
+                1 => DramRefreshGranularity::OneX,
+                2 => DramRefreshGranularity::TwoX,
+                4 => DramRefreshGranularity::FourX,
+                value => {
+                    return Err(cursor.invalid(format!(
+                        "DRAM target {} has invalid refresh granularity {value}",
+                        target.get()
+                    )));
+                }
+            };
+            let refresh_timing =
+                DramRefreshTiming::from_effective_cycles(interval, recovery, granularity).map_err(
+                    |error| {
+                        cursor.invalid(format!(
+                            "DRAM target {} has invalid refresh timing: {error}",
+                            target.get()
+                        ))
+                    },
+                )?;
+            timing
+                .with_refresh_timing(refresh_timing)
+                .map_err(|error| {
+                    cursor.invalid(format!(
+                        "DRAM target {} has invalid refresh timing: {error}",
+                        target.get()
+                    ))
+                })?
+        }
+        value => {
+            return Err(cursor.invalid(format!(
+                "DRAM target {} has invalid refresh timing presence {value}",
+                target.get()
+            )));
+        }
+    };
+    let policy = match cursor.read_u64("DRAM refresh policy")? {
+        1 => DramRefreshPolicy::PerBank,
+        2 => DramRefreshPolicy::BankGroup,
+        3 => DramRefreshPolicy::AllBank,
+        value => {
+            return Err(cursor.invalid(format!(
+                "DRAM target {} has invalid refresh policy {value}",
+                target.get()
+            )));
+        }
+    };
+    timing.with_refresh_policy(policy).map_err(|error| {
+        cursor.invalid(format!(
+            "DRAM target {} has invalid refresh policy: {error}",
+            target.get()
+        ))
+    })
 }
 
 fn read_optional_u64(

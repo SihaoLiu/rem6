@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
+use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
 use rem6_coherence::{MsiBankDirectoryHarness, SubmitKind};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
@@ -8,9 +8,9 @@ use rem6_memory::{
 use rem6_protocol_msi::MsiState;
 use rem6_stats::StatsRegistry;
 use rem6_system::{
-    ExecutionMode, ExecutionModeTarget, GuestEventId, GuestSourceId, HostAction, HostActionRecord,
-    MsiBankCheckpointBank, MsiBankCheckpointPort, MsiBankCheckpointRecord, SystemActionExecutor,
-    SystemActionOutcome,
+    CheckpointRuntimeState, ExecutionMode, ExecutionModeTarget, GuestEventId, GuestSourceId,
+    HostAction, HostActionRecord, MsiBankCheckpointBank, MsiBankCheckpointPort,
+    MsiBankCheckpointRecord, SystemActionExecutor, SystemActionOutcome,
 };
 
 fn agent(value: u32) -> AgentId {
@@ -77,6 +77,24 @@ fn warm_harness(harness: &mut MsiBankDirectoryHarness) {
     harness
         .submit_cpu_request(agent(1), read(1, 30, 0x1018))
         .unwrap();
+}
+
+#[test]
+fn msi_bank_checkpoint_bank_rejects_aliased_harnesses() {
+    let harness = Arc::new(Mutex::new(harness()));
+    let first = CheckpointComponentId::new("msi-alias-0").unwrap();
+    let second = CheckpointComponentId::new("msi-alias-1").unwrap();
+
+    let error = MsiBankCheckpointBank::new([
+        MsiBankCheckpointPort::new(first, Arc::clone(&harness)),
+        MsiBankCheckpointPort::new(second.clone(), harness),
+    ])
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        CheckpointError::DuplicateComponent { component: second }
+    );
 }
 
 #[test]
@@ -367,4 +385,85 @@ fn msi_bank_checkpoint_bank_rejects_truncated_payload_without_partial_restore() 
     assert_eq!(error.component(), Some(&component1));
     assert_eq!(bank0.lock().unwrap().snapshot(), before0);
     assert_eq!(bank1.lock().unwrap().snapshot(), before1);
+}
+
+fn runtime_state_port(
+    component: CheckpointComponentId,
+    harness: Arc<Mutex<MsiBankDirectoryHarness>>,
+    state: Arc<Mutex<Vec<u8>>>,
+) -> MsiBankCheckpointPort {
+    let capture_state = Arc::clone(&state);
+    let validate_state = Arc::clone(&state);
+    let restore_state = state;
+    MsiBankCheckpointPort::new(component, harness).with_runtime_state(CheckpointRuntimeState::new(
+        move || Ok(capture_state.lock().unwrap().clone()),
+        move |payload| {
+            if payload.len() != validate_state.lock().unwrap().len() {
+                return Err("runtime state width mismatch".to_string());
+            }
+            Ok(())
+        },
+        move |payload| {
+            restore_state.lock().unwrap().copy_from_slice(payload);
+        },
+    ))
+}
+
+#[test]
+fn msi_bank_checkpoint_restores_attached_runtime_state() {
+    let mut live = harness();
+    warm_harness(&mut live);
+    let expected_harness = live.snapshot();
+    let live = Arc::new(Mutex::new(live));
+    let state = Arc::new(Mutex::new(vec![1, 2, 3, 4]));
+    let component = CheckpointComponentId::new("l1d-msi-runtime").unwrap();
+    let port = runtime_state_port(component.clone(), Arc::clone(&live), Arc::clone(&state));
+    let mut registry = CheckpointRegistry::new();
+    port.register(&mut registry).unwrap();
+    port.capture_into(&mut registry).unwrap();
+
+    live.lock()
+        .unwrap()
+        .submit_cpu_request(agent(2), write(2, 92, 0x1004, vec![0xee; 8]))
+        .unwrap();
+    state.lock().unwrap().copy_from_slice(&[9, 8, 7, 6]);
+
+    port.restore_from(&registry).unwrap();
+
+    assert_eq!(live.lock().unwrap().snapshot(), expected_harness);
+    assert_eq!(*state.lock().unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(
+        registry
+            .chunk(&component, "msi-bank-runtime-state")
+            .unwrap(),
+        &[1, 2, 3, 4]
+    );
+}
+
+#[test]
+fn msi_bank_checkpoint_missing_runtime_state_is_atomic() {
+    let mut live = harness();
+    warm_harness(&mut live);
+    let live = Arc::new(Mutex::new(live));
+    let state = Arc::new(Mutex::new(vec![1, 2, 3, 4]));
+    let component = CheckpointComponentId::new("l1d-msi-runtime").unwrap();
+    let port = runtime_state_port(component.clone(), Arc::clone(&live), Arc::clone(&state));
+    let bank = MsiBankCheckpointBank::new([port]).unwrap();
+    let mut registry = CheckpointRegistry::new();
+    bank.register_all(&mut registry).unwrap();
+    bank.capture_all_into(&mut registry).unwrap();
+    assert!(registry.remove_chunk(&component, "msi-bank-runtime-state"));
+
+    live.lock()
+        .unwrap()
+        .submit_cpu_request(agent(2), write(2, 93, 0x1018, vec![0xdd; 8]))
+        .unwrap();
+    state.lock().unwrap().copy_from_slice(&[9, 8, 7, 6]);
+    let before_harness = live.lock().unwrap().snapshot();
+
+    let error = bank.restore_all_from(&registry).unwrap_err();
+
+    assert_eq!(error.component(), Some(&component));
+    assert_eq!(live.lock().unwrap().snapshot(), before_harness);
+    assert_eq!(*state.lock().unwrap(), vec![9, 8, 7, 6]);
 }

@@ -1,23 +1,25 @@
 use std::sync::{Arc, Mutex};
 
-use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
+use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
 use rem6_dram::{
     DramControllerConfig, DramGeometry, DramLowPowerTiming, DramMemoryController,
-    DramMemoryTechnology, DramTiming, ExternalMemoryProfile, NvmMediaTiming,
+    DramMemoryTechnology, DramRefreshGranularity, DramRefreshPolicy, DramRefreshTiming, DramTiming,
+    ExternalMemoryProfile, NvmMediaTiming,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
     MemoryTargetId, PartitionedMemorySnapshot, PartitionedMemoryStore,
 };
 use rem6_system::{
-    DramMemoryCheckpointBank, DramMemoryCheckpointError, DramMemoryCheckpointPort,
-    DramMemoryCheckpointRecord, MemoryStoreCheckpointBank, MemoryStoreCheckpointError,
-    MemoryStoreCheckpointPort, MemoryStoreCheckpointRecord,
+    CheckpointRuntimeState, DramMemoryCheckpointBank, DramMemoryCheckpointError,
+    DramMemoryCheckpointPort, DramMemoryCheckpointRecord, MemoryStoreCheckpointBank,
+    MemoryStoreCheckpointError, MemoryStoreCheckpointPort, MemoryStoreCheckpointRecord,
 };
 
 const TEST_U64_BYTES: usize = 8;
 const TEST_DRAM_TARGET_MIN_RECORD_BYTES: usize = 208;
 const TEST_DRAM_BANK_STATE_MIN_RECORD_BYTES: usize = TEST_U64_BYTES * 2;
+const DRAM_RUNTIME_STATE_CHUNK: &str = "dram-runtime-state";
 
 fn layout() -> CacheLineLayout {
     CacheLineLayout::new(64).unwrap()
@@ -187,6 +189,118 @@ fn dram_memory_controller() -> (DramMemoryController, MemoryTargetId, MemoryTarg
         .insert_line(high, Address::new(0x8000), line_data(0x80))
         .unwrap();
     (controller, low, high)
+}
+
+fn single_target_dram_controller(
+    target: MemoryTargetId,
+    timing: DramTiming,
+) -> DramMemoryController {
+    let mut controller = DramMemoryController::new();
+    controller
+        .add_target(DramControllerConfig::new(
+            target,
+            layout(),
+            dram_geometry(),
+            timing,
+        ))
+        .unwrap();
+    controller
+        .map_region(
+            target,
+            Address::new(0x0000),
+            AccessSize::new(0x4000).unwrap(),
+        )
+        .unwrap();
+    controller
+        .insert_line(target, Address::new(0x1000), line_data(0x10))
+        .unwrap();
+    controller
+}
+
+fn dram_runtime_state(controller: &Arc<Mutex<DramMemoryController>>) -> CheckpointRuntimeState {
+    let capture = Arc::clone(controller);
+    let validate = Arc::clone(controller);
+    let restore = Arc::clone(controller);
+    CheckpointRuntimeState::new(
+        move || {
+            Ok(encode_dram_runtime_lengths(
+                &capture.lock().unwrap().runtime_log_lengths(),
+            ))
+        },
+        move |payload| {
+            let lengths = decode_dram_runtime_lengths(payload)?;
+            if !validate.lock().unwrap().can_truncate_runtime_logs(&lengths) {
+                return Err("DRAM runtime log prefix exceeds live history".to_string());
+            }
+            Ok(())
+        },
+        move |payload| {
+            let lengths =
+                decode_dram_runtime_lengths(payload).expect("validated DRAM runtime state");
+            assert!(restore.lock().unwrap().truncate_runtime_logs(&lengths));
+        },
+    )
+}
+
+fn stored_dram_runtime_state(
+    controller: &Arc<Mutex<DramMemoryController>>,
+) -> CheckpointRuntimeState {
+    let capture = Arc::clone(controller);
+    let validate = Arc::clone(controller);
+    let restore = Arc::clone(controller);
+    CheckpointRuntimeState::stored(
+        move || Ok(capture.lock().unwrap().runtime_logs()),
+        move |snapshot| {
+            validate
+                .lock()
+                .unwrap()
+                .validate_runtime_logs(snapshot)
+                .map_err(|error| error.to_string())
+        },
+        move |snapshot| {
+            restore
+                .lock()
+                .unwrap()
+                .restore_runtime_logs(snapshot)
+                .expect("validated DRAM runtime logs");
+        },
+    )
+}
+
+fn encode_dram_runtime_lengths(lengths: &[(MemoryTargetId, usize, usize)]) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(8 + lengths.len() * 20);
+    payload.extend_from_slice(&u64::try_from(lengths.len()).unwrap().to_le_bytes());
+    for (target, activity_len, wait_len) in lengths {
+        payload.extend_from_slice(&target.get().to_le_bytes());
+        payload.extend_from_slice(&u64::try_from(*activity_len).unwrap().to_le_bytes());
+        payload.extend_from_slice(&u64::try_from(*wait_len).unwrap().to_le_bytes());
+    }
+    payload
+}
+
+fn decode_dram_runtime_lengths(
+    payload: &[u8],
+) -> Result<Vec<(MemoryTargetId, usize, usize)>, String> {
+    let count = payload
+        .get(..8)
+        .ok_or_else(|| "truncated DRAM runtime checkpoint".to_string())?;
+    let count = usize::try_from(u64::from_le_bytes(count.try_into().unwrap()))
+        .map_err(|_| "DRAM runtime target count exceeds host size".to_string())?;
+    if payload.len() != 8 + count.saturating_mul(20) {
+        return Err("invalid DRAM runtime checkpoint length".to_string());
+    }
+    payload[8..]
+        .chunks_exact(20)
+        .map(|entry| {
+            let target = MemoryTargetId::new(u32::from_le_bytes(entry[..4].try_into().unwrap()));
+            let activity_len =
+                usize::try_from(u64::from_le_bytes(entry[4..12].try_into().unwrap()))
+                    .map_err(|_| "DRAM runtime activity prefix exceeds host size".to_string())?;
+            let wait_len = usize::try_from(u64::from_le_bytes(entry[12..20].try_into().unwrap()))
+                .map_err(|_| "DRAM runtime wait prefix exceeds host size".to_string())?;
+            Ok((target, activity_len, wait_len))
+        })
+        .collect()
 }
 
 #[test]
@@ -608,6 +722,240 @@ fn dram_memory_checkpoint_rejects_impossible_command_window_count_without_mutati
 }
 
 #[test]
+fn dram_runtime_log_validation_rejects_duplicate_targets() {
+    let (controller, low, _high) = dram_memory_controller();
+    let duplicate = [(low, 0, 0), (low, 0, 0)];
+
+    assert!(!controller.can_truncate_runtime_logs(&duplicate));
+}
+
+#[test]
+fn dram_memory_checkpoint_bank_rejects_aliased_controllers() {
+    let controller = Arc::new(Mutex::new(dram_memory_controller().0));
+    let first = CheckpointComponentId::new("dram-alias-0").unwrap();
+    let second = CheckpointComponentId::new("dram-alias-1").unwrap();
+
+    let error = DramMemoryCheckpointBank::new([
+        DramMemoryCheckpointPort::new(first, Arc::clone(&controller)),
+        DramMemoryCheckpointPort::new(second.clone(), controller),
+    ])
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        CheckpointError::DuplicateComponent { component: second }
+    );
+}
+
+#[test]
+fn dram_runtime_sidecar_target_mismatch_fails_bank_preflight() {
+    let live_target = MemoryTargetId::new(80);
+    let snapshot_target = MemoryTargetId::new(81);
+    let mut live = single_target_dram_controller(live_target, dram_timing());
+    live.accept(0, &read(0x1000, 8, 90)).unwrap();
+    let live = Arc::new(Mutex::new(live));
+    let component = CheckpointComponentId::new("dram-runtime-targets").unwrap();
+    let port = DramMemoryCheckpointPort::new(component.clone(), Arc::clone(&live))
+        .with_runtime_state(dram_runtime_state(&live));
+    let bank = DramMemoryCheckpointBank::new([port]).unwrap();
+    let mut registry = CheckpointRegistry::new();
+    bank.register_all(&mut registry).unwrap();
+    bank.capture_all_into(&mut registry).unwrap();
+
+    let replacement = Arc::new(Mutex::new(single_target_dram_controller(
+        snapshot_target,
+        dram_timing(),
+    )));
+    let replacement_port =
+        DramMemoryCheckpointPort::new(component.clone(), Arc::clone(&replacement));
+    let mut replacement_registry = CheckpointRegistry::new();
+    replacement_port
+        .register(&mut replacement_registry)
+        .unwrap();
+    replacement_port
+        .capture_into(&mut replacement_registry)
+        .unwrap();
+    registry
+        .write_chunk(
+            &component,
+            "dram",
+            replacement_registry
+                .chunk(&component, "dram")
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+    let before = live.lock().unwrap().clone();
+
+    assert!(bank.validate_restore_from(&registry).is_err());
+    assert_eq!(*live.lock().unwrap(), before);
+}
+
+#[test]
+fn dram_runtime_sidecar_restores_logs_without_overriding_wire_snapshot() {
+    let target = MemoryTargetId::new(83);
+    let mut source = single_target_dram_controller(target, dram_timing());
+    source.accept(0, &read(0x1000, 8, 93)).unwrap();
+    let source = Arc::new(Mutex::new(source));
+    let component = CheckpointComponentId::new("dram-wire-authority").unwrap();
+    let source_port = DramMemoryCheckpointPort::new(component.clone(), Arc::clone(&source))
+        .with_runtime_state(stored_dram_runtime_state(&source));
+    let mut registry = CheckpointRegistry::new();
+    source_port.register(&mut registry).unwrap();
+    source_port.capture_into(&mut registry).unwrap();
+    let captured_runtime = source.lock().unwrap().runtime_log_lengths();
+
+    let mut replacement = single_target_dram_controller(target, fast_dram_timing());
+    replacement
+        .accept(0, &write(0x1000, &[0xa5; 8], 94))
+        .unwrap();
+    let replacement = Arc::new(Mutex::new(replacement));
+    let replacement_port =
+        DramMemoryCheckpointPort::new(component.clone(), Arc::clone(&replacement));
+    let mut replacement_registry = CheckpointRegistry::new();
+    replacement_port
+        .register(&mut replacement_registry)
+        .unwrap();
+    let replacement_record = replacement_port
+        .capture_into(&mut replacement_registry)
+        .unwrap();
+    registry
+        .write_chunk(
+            &component,
+            "dram",
+            replacement_registry
+                .chunk(&component, "dram")
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+    source
+        .lock()
+        .unwrap()
+        .accept(20, &read(0x1000, 8, 95))
+        .unwrap();
+
+    source_port.restore_from(&registry).unwrap();
+
+    assert_eq!(
+        source.lock().unwrap().snapshot(),
+        *replacement_record.snapshot()
+    );
+    assert_eq!(
+        source.lock().unwrap().runtime_log_lengths(),
+        captured_runtime
+    );
+}
+
+#[test]
+fn dram_current_format_marker_cannot_collide_with_legacy_store_length() {
+    let controller = dram_controller_for_malformed_restore();
+    let before = controller.lock().unwrap().snapshot();
+    let component = CheckpointComponentId::new("dram-legacy-marker-collision").unwrap();
+    let port = DramMemoryCheckpointPort::new(component.clone(), Arc::clone(&controller));
+    let mut payload = u64::from_le_bytes(*b"DRM2\0\0\0\0").to_le_bytes().to_vec();
+    payload.extend_from_slice(&[0; 16]);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "dram", payload).unwrap();
+
+    let error = port.restore_from(&registry).unwrap_err();
+
+    assert_eq!(
+        error,
+        DramMemoryCheckpointError::InvalidChunk {
+            component,
+            reason: "store payload is truncated".to_string(),
+        }
+    );
+    assert_eq!(controller.lock().unwrap().snapshot(), before);
+}
+
+#[test]
+fn dram_memory_checkpoint_rejects_impossible_refresh_frontier_without_mutation() {
+    let target = MemoryTargetId::new(84);
+    let timing = dram_timing()
+        .with_refresh_timing(DramRefreshTiming::new(40, 10).unwrap())
+        .unwrap();
+    let controller = Arc::new(Mutex::new(single_target_dram_controller(target, timing)));
+    let before = controller.lock().unwrap().snapshot();
+    let component = CheckpointComponentId::new("dram-refresh-frontier-invalid").unwrap();
+    let port = DramMemoryCheckpointPort::new(component.clone(), Arc::clone(&controller));
+    let mut registry = CheckpointRegistry::new();
+    port.register(&mut registry).unwrap();
+    port.capture_into(&mut registry).unwrap();
+    let mut payload = registry.chunk(&component, "dram").unwrap().to_vec();
+    let encoded_interval = 40_u64.to_le_bytes();
+    let frontier_offsets = payload
+        .windows(encoded_interval.len())
+        .enumerate()
+        .filter_map(|(offset, bytes)| (bytes == encoded_interval).then_some(offset))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        frontier_offsets.len(),
+        dram_geometry().bank_count() as usize + 1
+    );
+    for offset in frontier_offsets.into_iter().skip(1) {
+        payload[offset..offset + 8].copy_from_slice(&80_u64.to_le_bytes());
+    }
+    registry.write_chunk(&component, "dram", payload).unwrap();
+
+    let error = port.restore_from(&registry).unwrap_err();
+
+    let DramMemoryCheckpointError::InvalidChunk { reason, .. } = error else {
+        panic!("unexpected error: {error}");
+    };
+    assert!(reason.contains("next refresh cycle 80"), "{reason}");
+    assert_eq!(controller.lock().unwrap().snapshot(), before);
+}
+
+#[test]
+fn dram_memory_checkpoint_preserves_refresh_timing_and_frontier() {
+    let target = MemoryTargetId::new(82);
+    let timing = dram_timing()
+        .with_refresh_timing(
+            DramRefreshTiming::new(40, 10)
+                .unwrap()
+                .with_granularity(DramRefreshGranularity::TwoX),
+        )
+        .unwrap()
+        .with_refresh_policy(DramRefreshPolicy::AllBank)
+        .unwrap();
+    let mut controller = single_target_dram_controller(target, timing);
+    controller.accept(45, &read(0x1000, 8, 91)).unwrap();
+    let controller = Arc::new(Mutex::new(controller));
+    let component = CheckpointComponentId::new("dram-refresh").unwrap();
+    let port = DramMemoryCheckpointPort::new(component.clone(), Arc::clone(&controller));
+    let mut registry = CheckpointRegistry::new();
+    port.register(&mut registry).unwrap();
+
+    let captured = port.capture_into(&mut registry).unwrap();
+    let captured_controller = captured.snapshot().targets()[0].controller();
+    assert_eq!(
+        captured_controller.timing().refresh_timing(),
+        timing.refresh_timing()
+    );
+    assert_eq!(
+        captured_controller.timing().refresh_policy(),
+        DramRefreshPolicy::AllBank
+    );
+    assert!(captured_controller
+        .banks()
+        .iter()
+        .all(|bank| bank.next_refresh_cycle() > 0));
+    controller
+        .lock()
+        .unwrap()
+        .accept(90, &read(0x1000, 8, 92))
+        .unwrap();
+
+    let restored = port.restore_from(&registry).unwrap();
+
+    assert_eq!(restored, captured);
+    assert_eq!(controller.lock().unwrap().snapshot(), *captured.snapshot());
+}
+
+#[test]
 fn dram_memory_checkpoint_captures_and_restores_controller() {
     let (mut controller, low, high) = dram_memory_controller();
     let first = controller.accept(0, &read(0x1000, 8, 20)).unwrap();
@@ -615,7 +963,9 @@ fn dram_memory_checkpoint_captures_and_restores_controller() {
     assert!(!first.dram_access().row_hit());
     let controller = Arc::new(Mutex::new(controller));
     let component = CheckpointComponentId::new("dram0").unwrap();
-    let port = DramMemoryCheckpointPort::new(component.clone(), Arc::clone(&controller));
+    let runtime_at_checkpoint = controller.lock().unwrap().runtime_log_lengths();
+    let port = DramMemoryCheckpointPort::new(component.clone(), Arc::clone(&controller))
+        .with_runtime_state(dram_runtime_state(&controller));
     let mut registry = CheckpointRegistry::new();
 
     port.register(&mut registry).unwrap();
@@ -637,6 +987,12 @@ fn dram_memory_checkpoint_captures_and_restores_controller() {
         &[0, 0]
     );
     assert!(registry.chunk(&component, "dram").unwrap().len() > 192);
+    assert_eq!(
+        registry
+            .chunk(&component, DRAM_RUNTIME_STATE_CHUNK)
+            .unwrap(),
+        encode_dram_runtime_lengths(&runtime_at_checkpoint)
+    );
 
     {
         let mut controller = controller.lock().unwrap();
@@ -649,10 +1005,18 @@ fn dram_memory_checkpoint_captures_and_restores_controller() {
             &[0xaa, 0xbb, 0xcc, 0xdd]
         );
     }
+    assert_ne!(
+        controller.lock().unwrap().runtime_log_lengths(),
+        runtime_at_checkpoint
+    );
 
     let restored = port.restore_from(&registry).unwrap();
 
     assert_eq!(restored, captured);
+    assert_eq!(
+        controller.lock().unwrap().runtime_log_lengths(),
+        runtime_at_checkpoint
+    );
     assert_eq!(
         restored.snapshot().targets()[0]
             .controller()
@@ -686,6 +1050,44 @@ fn dram_memory_checkpoint_captures_and_restores_controller() {
     assert!(row_hit.dram_access().row_hit());
     assert_eq!(row_hit.dram_access().command_cycle(), 10);
     assert_eq!(row_hit.ready_cycle(), 15);
+}
+
+#[test]
+fn dram_memory_checkpoint_missing_runtime_state_is_atomic() {
+    let (mut controller, _low, _high) = dram_memory_controller();
+    controller.accept(0, &read(0x1000, 8, 30)).unwrap();
+    let controller = Arc::new(Mutex::new(controller));
+    let component = CheckpointComponentId::new("dram-runtime-atomic").unwrap();
+    let port = DramMemoryCheckpointPort::new(component.clone(), Arc::clone(&controller))
+        .with_runtime_state(dram_runtime_state(&controller));
+    let bank = DramMemoryCheckpointBank::new([port]).unwrap();
+    let mut registry = CheckpointRegistry::new();
+    bank.register_all(&mut registry).unwrap();
+    bank.capture_all_into(&mut registry).unwrap();
+    assert!(registry.remove_chunk(&component, DRAM_RUNTIME_STATE_CHUNK));
+
+    controller
+        .lock()
+        .unwrap()
+        .accept(20, &write(0x1000, &[0xaa; 8], 31))
+        .unwrap();
+    let before_snapshot = controller.lock().unwrap().snapshot();
+    let before_runtime = controller.lock().unwrap().runtime_log_lengths();
+
+    let error = bank.restore_all_from(&registry).unwrap_err();
+
+    assert_eq!(
+        error,
+        DramMemoryCheckpointError::MissingChunk {
+            component,
+            name: DRAM_RUNTIME_STATE_CHUNK.to_string(),
+        }
+    );
+    assert_eq!(controller.lock().unwrap().snapshot(), before_snapshot);
+    assert_eq!(
+        controller.lock().unwrap().runtime_log_lengths(),
+        before_runtime
+    );
 }
 
 #[test]

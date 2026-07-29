@@ -30,8 +30,13 @@ use crate::runtime_memory::{
 };
 use crate::{execute_error, Rem6CliError};
 
+mod checkpoint;
+mod harness;
 mod readiness;
 
+use harness::{
+    CliChiLineHarnesses, CliDataCacheHarness, CliMesiLineHarnesses, CliMoesiLineHarnesses,
+};
 use readiness::{delay_target_outcome_until, CliDataCacheBacking, CliDataCacheLineFill};
 
 const PREFETCH_REQUEST_SEQUENCE_BASE: u64 = 1 << 63;
@@ -52,13 +57,6 @@ pub(super) struct CliDataCacheRuntime {
 #[derive(Clone, Default)]
 pub(super) struct CliCacheHierarchy {
     levels: Vec<CliDataCacheRuntime>,
-}
-
-enum CliDataCacheHarness {
-    Msi(MsiBankDirectoryHarness),
-    Mesi(CliMesiLineHarnesses),
-    Moesi(CliMoesiLineHarnesses),
-    Chi(CliChiLineHarnesses),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -90,21 +88,7 @@ impl CliDataCacheResponse {
     }
 }
 
-struct CliMesiLineHarnesses {
-    agents: Vec<AgentId>,
-    lines: BTreeMap<Address, MesiDirectoryLineHarness>,
-}
-
-struct CliMoesiLineHarnesses {
-    agents: Vec<AgentId>,
-    lines: BTreeMap<Address, MoesiDirectoryLineHarness>,
-}
-
-struct CliChiLineHarnesses {
-    agents: Vec<AgentId>,
-    lines: BTreeMap<Address, ChiDirectoryLineHarness>,
-}
-
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct CliDataCachePrefetchRuntime {
     tagged: TaggedPrefetcher,
     queue: QueuedPrefetcher,
@@ -491,9 +475,9 @@ impl CliDataCacheRuntime {
     {
         Ok(Self {
             layout,
-            harness: Arc::new(Mutex::new(CliDataCacheHarness::Msi(
+            harness: Arc::new(Mutex::new(CliDataCacheHarness::Msi(Arc::new(Mutex::new(
                 MsiBankDirectoryHarness::new(layout, agents).map_err(execute_error)?,
-            ))),
+            ))))),
             prefetch: cli_prefetch_runtime(layout, prefetcher)?,
             prefetch_fills: Arc::new(Mutex::new(0)),
             line_ready_ticks: Arc::new(Mutex::new(BTreeMap::new())),
@@ -716,6 +700,7 @@ impl CliDataCacheRuntime {
         let mut harness = self.harness.lock().expect("CLI data cache lock");
         match &mut *harness {
             CliDataCacheHarness::Msi(harness) => {
+                let mut harness = harness.lock().expect("CLI MSI data cache lock");
                 let agents = harness.cache_agents();
                 *harness =
                     MsiBankDirectoryHarness::new(self.layout, agents).map_err(execute_error)?;
@@ -779,7 +764,11 @@ impl CliDataCacheRuntime {
 
         let mut harness = self.harness.lock().expect("CLI data cache lock");
         let inserted = match &mut *harness {
-            CliDataCacheHarness::Msi(harness) => harness.insert_backing_line(line, data).is_ok(),
+            CliDataCacheHarness::Msi(harness) => harness
+                .lock()
+                .expect("CLI MSI data cache lock")
+                .insert_backing_line(line, data)
+                .is_ok(),
             CliDataCacheHarness::Mesi(harnesses) => {
                 let Ok(backing) = LineBackingStore::new(self.layout, line, data) else {
                     return None;
@@ -884,11 +873,14 @@ impl CliDataCacheRuntime {
     fn cached_line_data(&self, line: Address, agent: AgentId) -> Option<Vec<u8>> {
         let harness = self.harness.lock().expect("CLI data cache lock");
         match &*harness {
-            CliDataCacheHarness::Msi(harness) => harness
-                .functional_read_line(line)
-                .ok()?
-                .data()
-                .map(<[u8]>::to_vec),
+            CliDataCacheHarness::Msi(harness) => {
+                let harness = harness.lock().expect("CLI MSI data cache lock");
+                harness
+                    .functional_read_line(line)
+                    .ok()?
+                    .data()
+                    .map(<[u8]>::to_vec)
+            }
             CliDataCacheHarness::Mesi(harnesses) => {
                 harnesses.lines.get(&line)?.cache_data(agent).ok().flatten()
             }
@@ -905,6 +897,7 @@ impl CliDataCacheRuntime {
         let harness = self.harness.lock().expect("CLI data cache lock");
         match &*harness {
             CliDataCacheHarness::Msi(harness) => {
+                let harness = harness.lock().expect("CLI MSI data cache lock");
                 harness.backing_line(line).is_some()
                     || harness.directory_line_addresses().contains(&line)
                     || harness.cache_agents().into_iter().any(|agent| {
@@ -949,7 +942,10 @@ impl CliDataCacheRuntime {
     ) -> Result<CliDataCacheResponse, Rem6CliError> {
         let mut harness = self.harness.lock().expect("CLI data cache lock");
         match &mut *harness {
-            CliDataCacheHarness::Msi(harness) => self.respond_msi_inner(&context, harness),
+            CliDataCacheHarness::Msi(harness) => self.respond_msi_inner(
+                &context,
+                &mut harness.lock().expect("CLI MSI data cache lock"),
+            ),
             CliDataCacheHarness::Mesi(harnesses) => self.respond_mesi_inner(&context, harnesses),
             CliDataCacheHarness::Moesi(harnesses) => self.respond_moesi_inner(&context, harnesses),
             CliDataCacheHarness::Chi(harnesses) => self.respond_chi_inner(&context, harnesses),

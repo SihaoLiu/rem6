@@ -4,6 +4,7 @@ mod execution_mode_checkpoint;
 mod execution_mode_handoff;
 mod execution_mode_transfer;
 mod stats_sync;
+mod system_host_controller;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -321,9 +322,11 @@ pub struct SystemActionExecutor {
     stats: StatsRegistry,
     checkpoints: CheckpointRegistry,
     captured_manifests: BTreeMap<String, CheckpointManifest>,
+    checkpoint_action_rejections: BTreeSet<String>,
     riscv_instruction_stats: Option<Arc<RiscvInstructionStats>>,
     riscv_instruction_probe_checkpoints:
         Vec<(CheckpointManifest, RiscvRetiredInstructionProbeSnapshot)>,
+    pending_riscv_instruction_probe_checkpoint_indices: BTreeSet<usize>,
     riscv_data_access_stats: Option<Arc<RiscvDataAccessStats>>,
     riscv_data_access_probe_checkpoints: Vec<(CheckpointManifest, RiscvDataAccessProbeCheckpoint)>,
     memory_traces: Option<(MemoryTrace, MemoryTrace)>,
@@ -406,8 +409,10 @@ impl SystemActionExecutor {
             stats,
             checkpoints,
             captured_manifests: BTreeMap::new(),
+            checkpoint_action_rejections: BTreeSet::new(),
             riscv_instruction_stats: None,
             riscv_instruction_probe_checkpoints: Vec::new(),
+            pending_riscv_instruction_probe_checkpoint_indices: BTreeSet::new(),
             riscv_data_access_stats: None,
             riscv_data_access_probe_checkpoints: Vec::new(),
             memory_traces: None,
@@ -567,6 +572,10 @@ impl SystemActionExecutor {
 
     pub const fn checkpoints_mut(&mut self) -> &mut CheckpointRegistry {
         &mut self.checkpoints
+    }
+
+    pub fn reject_checkpoint_actions(&mut self, reason: impl Into<String>) {
+        self.checkpoint_action_rejections.insert(reason.into());
     }
 
     pub fn execution_mode(&self, target: &ExecutionModeTarget) -> Option<ExecutionMode> {
@@ -1415,7 +1424,7 @@ impl SystemActionExecutor {
         }
         if let Some(riscv_checkpoints) = &self.riscv_checkpoints {
             riscv_checkpoints
-                .restore_all_from(&self.checkpoints)
+                .restore_all_from_with_scheduler_authority(&self.checkpoints)
                 .map_err(SystemError::RiscvCheckpoint)?;
         }
         if self.scheduler_checkpoints.is_some() {
@@ -1741,80 +1750,4 @@ pub struct SystemHostController {
     executor: SystemActionExecutor,
     action_errors: Vec<SystemError>,
     consumed_stats_reset_outcomes: usize,
-}
-
-impl SystemHostController {
-    pub fn new(policy: HostEventPolicy, stats: StatsRegistry) -> Self {
-        Self {
-            run: SystemRunController::new(policy),
-            executor: SystemActionExecutor::new(stats),
-            action_errors: Vec::new(),
-            consumed_stats_reset_outcomes: 0,
-        }
-    }
-
-    pub const fn run(&self) -> &SystemRunController {
-        &self.run
-    }
-
-    pub const fn run_mut(&mut self) -> &mut SystemRunController {
-        &mut self.run
-    }
-
-    pub const fn executor(&self) -> &SystemActionExecutor {
-        &self.executor
-    }
-
-    pub const fn executor_mut(&mut self) -> &mut SystemActionExecutor {
-        &mut self.executor
-    }
-
-    pub fn handle_delivery(&mut self, delivery: GuestEventDelivery) -> Vec<SystemActionOutcome> {
-        match self.run.execute_delivery(delivery, &mut self.executor) {
-            Ok(outcomes) => outcomes,
-            Err(error) => {
-                self.action_errors.push(error);
-                Vec::new()
-            }
-        }
-    }
-
-    pub(crate) fn handle_delivery_with_scheduler_checkpoint(
-        &mut self,
-        delivery: GuestEventDelivery,
-        component: CheckpointComponentId,
-        mut scheduler: rem6_kernel::SchedulerCheckpointAccess<'_>,
-    ) -> Vec<SystemActionOutcome> {
-        let records = self.run.handle_delivery(delivery);
-        let mut outcomes = Vec::with_capacity(records.len());
-        for record in &records {
-            match self.executor.apply_with_scheduler_checkpoint(
-                record,
-                component.clone(),
-                scheduler.reborrow(),
-            ) {
-                Ok(outcome) => outcomes.push(outcome),
-                Err(error) => {
-                    self.action_errors.push(error);
-                    return Vec::new();
-                }
-            }
-        }
-        self.run.outcomes.extend(outcomes.iter().cloned());
-        outcomes
-    }
-
-    pub fn consume_stats_reset_outcomes(&mut self) -> bool {
-        let outcomes = self.run.action_outcomes();
-        let first = self.consumed_stats_reset_outcomes.min(outcomes.len());
-        let saw_stats_reset = outcomes[first..]
-            .iter()
-            .any(|outcome| matches!(outcome, SystemActionOutcome::StatsReset(_)));
-        self.consumed_stats_reset_outcomes = outcomes.len();
-        saw_stats_reset
-    }
-
-    pub fn action_errors(&self) -> &[SystemError] {
-        &self.action_errors
-    }
 }

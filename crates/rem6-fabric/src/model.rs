@@ -350,6 +350,12 @@ pub struct FabricModel {
     wait_log: Vec<FabricWaitRecord>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FabricRuntimeLogs {
+    activity: Vec<FabricHopActivity>,
+    wait: Vec<FabricWaitRecord>,
+}
+
 pub struct FabricTransaction<'a> {
     model: &'a mut FabricModel,
 }
@@ -664,6 +670,31 @@ impl FabricModel {
     pub fn clear_activity(&mut self) {
         self.activity_log.clear();
         self.wait_log.clear();
+    }
+
+    pub fn runtime_log_lengths(&self) -> (usize, usize) {
+        (self.activity_log.len(), self.wait_log.len())
+    }
+
+    pub fn runtime_logs(&self) -> FabricRuntimeLogs {
+        FabricRuntimeLogs {
+            activity: self.activity_log.clone(),
+            wait: self.wait_log.clone(),
+        }
+    }
+
+    pub fn restore_runtime_logs(&mut self, logs: FabricRuntimeLogs) {
+        self.activity_log = logs.activity;
+        self.wait_log = logs.wait;
+    }
+
+    pub fn truncate_runtime_logs(&mut self, activity_len: usize, wait_len: usize) -> bool {
+        if activity_len > self.activity_log.len() || wait_len > self.wait_log.len() {
+            return false;
+        }
+        self.activity_log.truncate(activity_len);
+        self.wait_log.truncate(wait_len);
+        true
     }
 
     fn reserve_router_stage(

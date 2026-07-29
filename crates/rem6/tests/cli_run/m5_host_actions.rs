@@ -1933,7 +1933,13 @@ fn rem6_run_emits_m5_dram_checkpoint_host_action_detail_from_real_riscv_executio
             "xregs",
         ],
     );
-    assert_checkpoint_component_chunks(host_actions, 0, 1, "memory0", &["dram"]);
+    assert_checkpoint_component_chunks(
+        host_actions,
+        0,
+        1,
+        "memory0",
+        &["dram", "dram-runtime-state"],
+    );
     assert_checkpoint_counts_match_nested_details(host_actions, 0);
 }
 

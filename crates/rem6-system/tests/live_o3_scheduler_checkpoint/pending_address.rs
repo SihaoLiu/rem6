@@ -8,6 +8,9 @@ use rem6_transport::{
     TransportEndpointId,
 };
 
+#[path = "pending_address/atomicity.rs"]
+mod atomicity;
+
 fn endpoint(name: &str) -> TransportEndpointId {
     TransportEndpointId::new(name).unwrap()
 }
@@ -152,40 +155,6 @@ fn pending_address_restore_replaces_destination_wake_and_fetch() {
     assert_ne!(*rebound, destination_wake);
     assert_eq!(rebound.kind(), ScheduledEventKind::Serial);
     assert_eq!(destination.core.owned_o3_writeback_wakes().len(), 1);
-}
-
-#[test]
-fn pending_address_restore_requires_full_scheduler_snapshot() {
-    let scheduler = Arc::new(Mutex::new(PartitionedScheduler::new(1).unwrap()));
-    let seeded = seed_pending_address_core(
-        0,
-        &mut scheduler.lock().unwrap(),
-        ScheduledEventKind::Serial,
-    );
-    let (mut executor, _, scheduler_component) = attached_executor(&[&seeded.core], &scheduler);
-    let manifest = captured_manifest(
-        executor
-            .apply(&checkpoint_record("pending-scheduler"))
-            .unwrap(),
-    );
-    let states = manifest
-        .states()
-        .iter()
-        .filter(|state| state.component() != &scheduler_component)
-        .cloned()
-        .collect();
-    let without_scheduler = CheckpointManifest::new(manifest.label(), manifest.tick(), states);
-    seeded.core.write_register(reg(7), 0xfeed);
-    let scheduler_before = scheduler.lock().unwrap().snapshot();
-    let wakes_before = seeded.core.owned_o3_writeback_wakes();
-    let fetches_before = seeded.core.inner().fetch_events();
-
-    assert!(executor.apply(&restore_record(without_scheduler)).is_err());
-
-    assert_eq!(seeded.core.read_register(reg(7)), 0xfeed);
-    assert_eq!(seeded.core.owned_o3_writeback_wakes(), wakes_before);
-    assert_eq!(seeded.core.inner().fetch_events(), fetches_before);
-    assert_eq!(scheduler.lock().unwrap().snapshot(), scheduler_before);
 }
 
 #[test]

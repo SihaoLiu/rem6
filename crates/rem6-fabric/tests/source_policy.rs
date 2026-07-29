@@ -17,6 +17,10 @@ fn fabric_lib_rs_remains_a_facade() {
     let lines = line_count(&path);
     let source = fs::read_to_string(&path).unwrap();
     let syntax = syn::parse_file(&source).unwrap();
+    let expected_model_reexports = ["FabricModel", "FabricRuntimeLogs", "FabricTransaction"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
     let expected_modules = [
         "activity",
         "model",
@@ -39,6 +43,19 @@ fn fabric_lib_rs_remains_a_facade() {
     assert!(
         syntax.attrs.is_empty(),
         "src/lib.rs must not use crate-level attributes to alter the facade"
+    );
+    assert_eq!(
+        use_names_for_root(&syntax, "model"),
+        expected_model_reexports
+    );
+    let missing_runtime_logs = source.replacen("FabricRuntimeLogs, ", "", 1);
+    assert_ne!(missing_runtime_logs, source);
+    let comment_decoy = format!(
+        "{missing_runtime_logs}\n// pub use model::{{FabricModel, FabricRuntimeLogs, FabricTransaction}};"
+    );
+    assert_ne!(
+        use_names_for_root(&syn::parse_file(&comment_decoy).unwrap(), "model"),
+        expected_model_reexports
     );
 
     for item in syntax.items {
@@ -93,7 +110,10 @@ fn fabric_runtime_domains_live_in_focused_modules() {
                 "FabricVirtualNetworkActivity",
             ][..],
         ),
-        ("model", &["FabricModel", "FabricTransaction"][..]),
+        (
+            "model",
+            &["FabricModel", "FabricRuntimeLogs", "FabricTransaction"][..],
+        ),
         (
             "path",
             &[
@@ -192,6 +212,37 @@ fn fabric_runtime_domains_live_in_focused_modules() {
             model_items.contains(definition),
             "src/model.rs is missing private runtime state `{definition}`"
         );
+    }
+    assert_eq!(
+        named_struct_fields(&model_syntax, "FabricRuntimeLogs"),
+        ["activity", "wait"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    );
+    for (field, inner) in [
+        ("activity", "FabricHopActivity"),
+        ("wait", "FabricWaitRecord"),
+    ] {
+        assert!(type_is_single_generic_path(
+            named_struct_field_type(&model_syntax, "FabricRuntimeLogs", field),
+            "Vec",
+            &[inner],
+        ));
+    }
+    let restore = impl_method(&model_syntax, "FabricModel", "restore_runtime_logs");
+    assert_eq!(restore.block.stmts.len(), 2);
+    for (statement, (target, source)) in restore
+        .block
+        .stmts
+        .iter()
+        .zip([("activity_log", "activity"), ("wait_log", "wait")])
+    {
+        let syn::Stmt::Expr(Expr::Assign(assignment), Some(_)) = statement else {
+            panic!("fabric runtime-log restore must contain only field assignments");
+        };
+        assert!(expr_is_self_field(assignment.left.as_ref(), target));
+        assert!(expr_is_field(assignment.right.as_ref(), "logs", source));
     }
 }
 
@@ -787,6 +838,15 @@ fn expr_is_self_field(expr: &Expr, expected: &str) -> bool {
     )
 }
 
+fn expr_is_field(expr: &Expr, base: &str, expected: &str) -> bool {
+    matches!(
+        expr,
+        Expr::Field(field)
+            if expr_is_path(field.base.as_ref(), base)
+                && matches!(&field.member, syn::Member::Named(member) if member == expected)
+    )
+}
+
 fn expr_is_clone_of(expr: &Expr, expected: &str) -> bool {
     matches!(
         expr,
@@ -800,6 +860,35 @@ fn use_root(tree: &UseTree) -> String {
         UseTree::Path(path) => path.ident.to_string(),
         _ => panic!("fabric facade re-exports must start with a module path"),
     }
+}
+
+fn use_names_for_root(syntax: &syn::File, root: &str) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for item in &syntax.items {
+        let Item::Use(item) = item else {
+            continue;
+        };
+        let UseTree::Path(path) = &item.tree else {
+            continue;
+        };
+        if path.ident == root {
+            let UseTree::Group(group) = path.tree.as_ref() else {
+                names.insert("<non-direct-export>".to_string());
+                continue;
+            };
+            for item in &group.items {
+                match item {
+                    UseTree::Name(name) => {
+                        names.insert(name.ident.to_string());
+                    }
+                    _ => {
+                        names.insert("<non-direct-export>".to_string());
+                    }
+                }
+            }
+        }
+    }
+    names
 }
 
 fn item_name(item: &Item) -> Option<String> {
