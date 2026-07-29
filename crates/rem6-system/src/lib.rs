@@ -790,11 +790,23 @@ fn schedule_o3_writeback_wakes(
             ScheduledEventKind::Serial
         };
         let mut checkpoint = scheduler.checkpoint_access();
-        let event_id = schedule_o3_writeback_wake(&core, &mut checkpoint, tick, kind)
-            .map_err(SystemError::Scheduler)?;
+        let event_id = schedule_o3_writeback_wake(
+            &core,
+            &mut checkpoint,
+            tick,
+            kind,
+            O3WritebackWakeSchedule::Runtime,
+        )
+        .map_err(SystemError::Scheduler)?;
         scheduled.push(event_id);
     }
     Ok(scheduled)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum O3WritebackWakeSchedule {
+    Runtime,
+    CheckpointRebound,
 }
 
 pub(crate) fn schedule_o3_writeback_wake(
@@ -802,11 +814,18 @@ pub(crate) fn schedule_o3_writeback_wake(
     scheduler: &mut SchedulerCheckpointAccess<'_>,
     tick: Tick,
     kind: ScheduledEventKind,
+    schedule: O3WritebackWakeSchedule,
 ) -> Result<PartitionEventId, SchedulerError> {
     let fired = core.clone();
-    let event_id = scheduler.schedule_at_kind(core.partition(), tick, kind, move |now| {
-        fired.mark_o3_writeback_wake_fired(now);
-    })?;
+    let callback = move |now| fired.mark_o3_writeback_wake_fired(now);
+    let event_id = match schedule {
+        O3WritebackWakeSchedule::Runtime => {
+            scheduler.schedule_at_kind(core.partition(), tick, kind, callback)
+        }
+        O3WritebackWakeSchedule::CheckpointRebound => {
+            scheduler.schedule_rebound_at_kind(core.partition(), tick, kind, callback)
+        }
+    }?;
     let event = scheduler
         .pending_event_snapshot(event_id)
         .expect("new O3 writeback wake is pending");

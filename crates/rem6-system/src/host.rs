@@ -14,8 +14,10 @@ use rem6_checkpoint::{
 use rem6_cpu::RiscvO3WritebackDebugState;
 use rem6_kernel::Tick;
 use rem6_stats::{StatDumpRecord, StatsRegistry, StatsResetRecord};
+use rem6_transport::{MemoryTrace, MemoryTraceEvent};
 
 use crate::riscv_checkpoint::RiscvCoreCheckerSnapshotSummary;
+use crate::riscv_data_access_stats::RiscvDataAccessProbeCheckpoint;
 use crate::scheduler_checkpoint::SchedulerCheckpointBankGuard;
 use crate::{
     AcceleratorCheckpointBank, ClintCheckpointBank, CpuLocalTimerCheckpointBank,
@@ -27,7 +29,7 @@ use crate::{
     MsiBankCheckpointBank, PciHostCheckpointBank, PciHostCheckpointPort,
     PciLegacyInterruptRouterCheckpointBank, PciLegacyInterruptRouterCheckpointPort,
     Pl011UartCheckpointBank, Pl031CheckpointBank, PlicCheckpointBank, ReadfileCheckpointBank,
-    RiscvCoreCheckpointBank, RiscvInstructionStats, RiscvO3RuntimeStats,
+    RiscvCoreCheckpointBank, RiscvDataAccessStats, RiscvInstructionStats, RiscvO3RuntimeStats,
     RiscvRetiredInstructionProbeSnapshot, RtcCheckpointBank, SchedulerCheckpointBank,
     SchedulerCheckpointError, SinicFifoCheckpointBank, SinicFifoCheckpointPort,
     SinicRegisterCheckpointBank, SinicRegisterCheckpointPort, Sp804CheckpointBank,
@@ -50,6 +52,17 @@ use stats_sync::StatsSyncHook;
 pub(crate) use stats_sync::StatsSyncPhase;
 
 const EXECUTION_MODE_SWITCH_STATE_TRANSFER_LABEL_PREFIX: &str = "execution-mode-switch-";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MemoryTraceCheckpoint {
+    fetch: Vec<MemoryTraceEvent>,
+    data: Vec<MemoryTraceEvent>,
+}
+
+struct PreparedMemoryTraceRestore {
+    fetch: Vec<MemoryTraceEvent>,
+    data: Vec<MemoryTraceEvent>,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExecutionModeSwitchStateTransfer {
@@ -311,6 +324,10 @@ pub struct SystemActionExecutor {
     riscv_instruction_stats: Option<Arc<RiscvInstructionStats>>,
     riscv_instruction_probe_checkpoints:
         Vec<(CheckpointManifest, RiscvRetiredInstructionProbeSnapshot)>,
+    riscv_data_access_stats: Option<Arc<RiscvDataAccessStats>>,
+    riscv_data_access_probe_checkpoints: Vec<(CheckpointManifest, RiscvDataAccessProbeCheckpoint)>,
+    memory_traces: Option<(MemoryTrace, MemoryTrace)>,
+    memory_trace_checkpoints: Vec<(CheckpointManifest, MemoryTraceCheckpoint)>,
     riscv_o3_runtime_stats: Option<RiscvO3RuntimeStats>,
     pre_stats_sync: Option<StatsSyncHook>,
     accelerator_checkpoints: Option<AcceleratorCheckpointBank>,
@@ -391,6 +408,10 @@ impl SystemActionExecutor {
             captured_manifests: BTreeMap::new(),
             riscv_instruction_stats: None,
             riscv_instruction_probe_checkpoints: Vec::new(),
+            riscv_data_access_stats: None,
+            riscv_data_access_probe_checkpoints: Vec::new(),
+            memory_traces: None,
+            memory_trace_checkpoints: Vec::new(),
             riscv_o3_runtime_stats: None,
             pre_stats_sync: None,
             accelerator_checkpoints: None,

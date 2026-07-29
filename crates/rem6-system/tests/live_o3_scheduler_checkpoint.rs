@@ -146,6 +146,42 @@ fn live_o3_restore_discards_destination_wake_and_rebinds_once() {
 }
 
 #[test]
+fn live_o3_due_now_parallel_rebind_holds_restored_scheduler_frontier() {
+    let scheduler = Arc::new(Mutex::new(PartitionedScheduler::new(1).unwrap()));
+    scheduler
+        .lock()
+        .unwrap()
+        .schedule_at(PartitionId::new(0), LIVE_TICK, |_| {})
+        .unwrap();
+    scheduler.lock().unwrap().run_until_idle();
+    let seeded = seed(&scheduler, 0, ScheduledEventKind::Parallel);
+    let (mut executor, cpus, _) = attached_executor(&[&seeded.core], &scheduler);
+    let manifest = captured_manifest(executor.apply(&checkpoint_record("due-now")).unwrap());
+
+    let outcome = executor.apply(&restore_record(manifest)).unwrap();
+
+    let SystemActionOutcome::CheckpointRestored {
+        rebound_o3_wake_components,
+        ..
+    } = outcome
+    else {
+        panic!("unexpected restore outcome: {outcome:?}");
+    };
+    assert_eq!(
+        rebound_o3_wake_components,
+        std::collections::BTreeSet::from([cpus[0].clone()])
+    );
+    let mut scheduler = scheduler.lock().unwrap();
+    let pending = scheduler.snapshot().partitions()[0].pending_events()[0];
+    assert_eq!(pending.tick(), LIVE_TICK);
+    assert_eq!(pending.kind(), ScheduledEventKind::Parallel);
+    let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+    assert_eq!(plan.horizon(), LIVE_TICK);
+    let run = scheduler.run_next_epoch_parallel_recorded().unwrap();
+    assert_eq!(run.summary().final_tick(), LIVE_TICK);
+}
+
+#[test]
 #[rustfmt::skip]
 fn live_o3_restore_validates_saved_scheduler_order_and_preserves_kind() {
     let (scheduler, seeded, mut executor, cpu, _, manifest) = live_fixture(ScheduledEventKind::Parallel, "order");

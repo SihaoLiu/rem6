@@ -108,6 +108,44 @@ pub struct RiscvDataAccessStats {
     probes: Arc<Mutex<RiscvDataAccessProbeRecorder>>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RiscvDataAccessProbeCheckpoint {
+    recorder: RiscvDataAccessProbeRecorder,
+}
+
+impl RiscvDataAccessProbeCheckpoint {
+    pub(crate) fn cursors(&self) -> &BTreeMap<CpuId, usize> {
+        &self.recorder.cursors
+    }
+
+    pub(crate) fn record_data_access_events<I>(
+        &mut self,
+        events_by_cpu: I,
+    ) -> Result<(), StatsError>
+    where
+        I: IntoIterator<Item = (CpuId, usize, Vec<RiscvDataAccessEvent>)>,
+    {
+        self.recorder.record_data_access_events(events_by_cpu)
+    }
+}
+
+pub(crate) struct PreparedRiscvDataAccessProbeRestore {
+    recorder: RiscvDataAccessProbeRecorder,
+}
+
+impl PreparedRiscvDataAccessProbeRestore {
+    pub(crate) fn rebase_cursors<I>(&mut self, source_cursors: I)
+    where
+        I: IntoIterator<Item = (CpuId, usize)>,
+    {
+        for (cpu, cursor) in source_cursors {
+            if let Some(restored_cursor) = self.recorder.cursors.get_mut(&cpu) {
+                *restored_cursor = cursor;
+            }
+        }
+    }
+}
+
 impl Clone for RiscvDataAccessStats {
     fn clone(&self) -> Self {
         let recorder = self.probes.lock().expect("data access probe recorder lock");
@@ -131,6 +169,12 @@ impl Clone for RiscvDataAccessStats {
 }
 
 impl RiscvDataAccessStats {
+    pub(crate) fn shared(&self) -> Self {
+        Self {
+            probes: Arc::clone(&self.probes),
+        }
+    }
+
     pub fn with_stack_distance(config: StackDistProbeConfig) -> Self {
         Self::with_stack_distance_line_layouts(config, [])
     }
@@ -213,6 +257,32 @@ impl RiscvDataAccessStats {
             .snapshot()
     }
 
+    pub(crate) fn data_access_probe_checkpoint(&self) -> RiscvDataAccessProbeCheckpoint {
+        RiscvDataAccessProbeCheckpoint {
+            recorder: self
+                .probes
+                .lock()
+                .expect("data access probe recorder lock")
+                .clone(),
+        }
+    }
+
+    pub(crate) fn prepare_data_access_probe_restore(
+        &self,
+        checkpoint: &RiscvDataAccessProbeCheckpoint,
+    ) -> PreparedRiscvDataAccessProbeRestore {
+        PreparedRiscvDataAccessProbeRestore {
+            recorder: checkpoint.recorder.clone(),
+        }
+    }
+
+    pub(crate) fn install_prepared_data_access_probe_restore(
+        &self,
+        prepared: PreparedRiscvDataAccessProbeRestore,
+    ) {
+        *self.probes.lock().expect("data access probe recorder lock") = prepared.recorder;
+    }
+
     pub(crate) fn cursors(&self) -> BTreeMap<CpuId, usize> {
         self.probes
             .lock()
@@ -237,6 +307,12 @@ impl RiscvSystemRun {
 
 impl RiscvSystemRunDriver {
     pub fn with_data_access_stats(mut self, data_access_stats: RiscvDataAccessStats) -> Self {
+        self.trap_port
+            .controller()
+            .lock()
+            .expect("system host controller lock")
+            .executor_mut()
+            .attach_riscv_data_access_stats(&data_access_stats);
         self.data_access_stats = Some(data_access_stats);
         self
     }
@@ -849,9 +925,9 @@ mod tests {
         )
     }
 
-    fn load_event(sequence: u64) -> RiscvDataAccessEvent {
+    fn load_event_at(tick: u64, sequence: u64) -> RiscvDataAccessEvent {
         RiscvDataAccessEvent::issued(RiscvDataAccessRecord::new(
-            sequence,
+            tick,
             PartitionId::new(0),
             RiscvDataAccessTarget::Memory {
                 route: MemoryRouteId::new(0),
@@ -868,6 +944,10 @@ mod tests {
             AccessSize::new(8).unwrap(),
             Address::new(0x9000 + sequence),
         ))
+    }
+
+    fn load_event(sequence: u64) -> RiscvDataAccessEvent {
+        load_event_at(sequence, sequence)
     }
 
     #[test]
@@ -922,5 +1002,88 @@ mod tests {
             1,
             "stale cursor replay must not duplicate probe events"
         );
+    }
+
+    #[test]
+    fn data_access_probe_checkpoint_rewinds_source_progress_before_replay() {
+        let cpu = CpuId::new(0);
+        let stats = RiscvDataAccessStats::with_stack_distance(stack_distance_config())
+            .with_mem_trace(mem_trace_config());
+        stats
+            .record_data_access_events([(cpu, 1, vec![load_event_at(289, 0)])])
+            .unwrap();
+        let checkpoint = stats.data_access_probe_checkpoint();
+        stats
+            .record_data_access_events([(cpu, 2, vec![load_event_at(291, 1)])])
+            .unwrap();
+        let progressed = stats.data_access_probe_checkpoint();
+
+        let prepared = stats.prepare_data_access_probe_restore(&checkpoint);
+        assert_eq!(stats.data_access_probe_checkpoint(), progressed);
+        stats.install_prepared_data_access_probe_restore(prepared);
+        stats
+            .record_data_access_events([(cpu, 2, vec![load_event_at(290, 2)])])
+            .unwrap();
+
+        let expected = RiscvDataAccessStats::with_stack_distance(stack_distance_config())
+            .with_mem_trace(mem_trace_config());
+        expected
+            .record_data_access_events([(
+                cpu,
+                2,
+                vec![load_event_at(289, 0), load_event_at(290, 2)],
+            )])
+            .unwrap();
+        assert_eq!(
+            stats.data_access_probe_snapshot(),
+            expected.data_access_probe_snapshot()
+        );
+        assert_eq!(stats.cursors(), BTreeMap::from([(cpu, 2)]));
+    }
+
+    #[test]
+    fn prepared_data_access_probe_checkpoint_advances_only_the_clone() {
+        let cpu = CpuId::new(0);
+        let stats = RiscvDataAccessStats::with_stack_distance(stack_distance_config())
+            .with_mem_trace(mem_trace_config());
+        stats
+            .record_data_access_events([(cpu, 1, vec![load_event_at(10, 0)])])
+            .unwrap();
+        let live = stats.data_access_probe_checkpoint();
+
+        let mut prepared = stats.data_access_probe_checkpoint();
+        prepared
+            .record_data_access_events([(cpu, 2, vec![load_event_at(11, 1)])])
+            .unwrap();
+
+        assert_eq!(stats.data_access_probe_checkpoint(), live);
+        assert_ne!(prepared, live);
+        assert_eq!(prepared.recorder.cursors(), BTreeMap::from([(cpu, 2)]));
+        assert_eq!(prepared.recorder.snapshot().probes().events().len(), 2);
+    }
+
+    #[test]
+    fn failed_data_access_probe_checkpoint_preparation_preserves_live_recorder() {
+        let cpu = CpuId::new(0);
+        let stats = RiscvDataAccessStats::with_stack_distance(stack_distance_config())
+            .with_mem_trace(mem_trace_config());
+        stats
+            .record_data_access_events([(cpu, 1, vec![load_event_at(10, 0)])])
+            .unwrap();
+        let live = stats.data_access_probe_checkpoint();
+
+        let mut prepared = stats.data_access_probe_checkpoint();
+        let error = prepared
+            .record_data_access_events([(cpu, 2, vec![load_event_at(9, 1)])])
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            StatsError::ProbeEventTimeWentBack {
+                previous_tick: 10,
+                current_tick: 9,
+            }
+        );
+        assert_eq!(stats.data_access_probe_checkpoint(), live);
     }
 }

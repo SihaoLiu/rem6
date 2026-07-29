@@ -5,10 +5,11 @@ use crate::{
     AcceleratorCheckpointBank, ClintCheckpointBank, CpuLocalTimerCheckpointBank,
     DramMemoryCheckpointBank, FabricCheckpointBank, GpuCheckpointBank, GuestFdCheckpointBank,
     GuestFutexCheckpointBank, GuestWaitCheckpointBank, IdeControllerCheckpointBank,
-    InterruptControllerCheckpointBank, MemoryStoreCheckpointBank, MsiBankCheckpointBank,
-    PciHostCheckpointBank, PciLegacyInterruptRouterCheckpointBank, Pl011UartCheckpointBank,
-    Pl031CheckpointBank, PlicCheckpointBank, ReadfileCheckpointBank, RiscvCoreCheckpointBank,
-    RiscvInstructionStats, RtcCheckpointBank, SchedulerCheckpointBank, SinicFifoCheckpointBank,
+    InterruptControllerCheckpointBank, MemoryStoreCheckpointBank, MemoryTrace,
+    MsiBankCheckpointBank, PciHostCheckpointBank, PciLegacyInterruptRouterCheckpointBank,
+    Pl011UartCheckpointBank, Pl031CheckpointBank, PlicCheckpointBank, ReadfileCheckpointBank,
+    RiscvCoreCheckpointBank, RiscvDataAccessStats, RiscvInstructionStats, RiscvSystemRunDriver,
+    RtcCheckpointBank, SchedulerCheckpointBank, SinicFifoCheckpointBank,
     SinicRegisterCheckpointBank, Sp804CheckpointBank, Sp805CheckpointBank,
     StorageImageCheckpointBank, TimerCheckpointBank, UartCheckpointBank,
     VirtioPciCommonCheckpointBank, VirtioPciDeviceConfigCheckpointBank, VirtioPciIsrCheckpointBank,
@@ -43,6 +44,17 @@ impl SystemActionExecutor {
         instruction_stats: &RiscvInstructionStats,
     ) {
         self.riscv_instruction_stats = Some(Arc::new(instruction_stats.shared()));
+    }
+
+    pub(crate) fn attach_riscv_data_access_stats(
+        &mut self,
+        data_access_stats: &RiscvDataAccessStats,
+    ) {
+        self.riscv_data_access_stats = Some(Arc::new(data_access_stats.shared()));
+    }
+
+    pub(crate) fn attach_memory_traces(&mut self, fetch: &MemoryTrace, data: &MemoryTrace) {
+        self.memory_traces = Some((fetch.clone(), data.clone()));
     }
 
     pub const fn accelerator_checkpoint_bank(&self) -> Option<&AcceleratorCheckpointBank> {
@@ -187,5 +199,17 @@ impl SystemActionExecutor {
         &self,
     ) -> Option<&VirtioPciDeviceConfigCheckpointBank> {
         self.virtio_pci_device_config_checkpoints.as_ref()
+    }
+}
+
+impl RiscvSystemRunDriver {
+    #[doc(hidden)]
+    pub fn attach_memory_traces_for_checkpoint(&self, fetch: &MemoryTrace, data: &MemoryTrace) {
+        self.trap_port()
+            .controller()
+            .lock()
+            .expect("system host controller lock")
+            .executor_mut()
+            .attach_memory_traces(fetch, data);
     }
 }

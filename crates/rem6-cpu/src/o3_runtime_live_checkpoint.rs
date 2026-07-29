@@ -15,10 +15,13 @@ use crate::{
     riscv_fetch_ahead::O3MemoryResultWindowAuthorization, RiscvCpuExecutionEvent,
     RiscvO3LiveCheckpointCompletedFpLoad, RiscvO3LiveCheckpointError as Error,
     RiscvO3LiveCheckpointFinalizedWriteback, RiscvO3LiveCheckpointIssueRow,
-    RiscvO3LiveCheckpointPayload, RiscvO3LiveCheckpointProfile, RiscvO3LiveCheckpointReservation,
-    RiscvO3LiveCheckpointService, RiscvO3LiveCheckpointTelemetry,
-    RiscvO3LiveCheckpointWritebackSource,
+    RiscvO3LiveCheckpointPayload, RiscvO3LiveCheckpointPendingDataAddress,
+    RiscvO3LiveCheckpointProfile, RiscvO3LiveCheckpointReservation, RiscvO3LiveCheckpointService,
+    RiscvO3LiveCheckpointTelemetry, RiscvO3LiveCheckpointWritebackSource,
 };
+
+#[path = "o3_runtime_live_checkpoint/pending_address.rs"]
+mod pending_address;
 
 pub(crate) struct O3LiveCheckpointRuntimeProjection {
     pub(crate) stable: O3RuntimeCheckpointPayload,
@@ -32,6 +35,7 @@ pub(crate) struct O3LiveCheckpointRuntimeProjection {
     pub(crate) writeback_published_sequences: Vec<u64>,
     pub(crate) reservation: Option<RiscvO3LiveCheckpointReservation>,
     pub(crate) completed_result: Option<RiscvO3LiveCheckpointCompletedFpLoad>,
+    pub(crate) pending_address: Option<RiscvO3LiveCheckpointPendingDataAddress>,
     pub(crate) finalized_rows: Vec<RiscvO3LiveCheckpointIssueRow>,
 }
 
@@ -180,6 +184,8 @@ impl O3RuntimeState {
         captured_tick: u64,
     ) -> Result<Option<O3LiveCheckpointRuntimeProjection>, Error> {
         let resident_sequences = self.live_issue.resident_sequences().to_vec();
+        let pending_address = pending_address::capture(self, captured_tick, &resident_sequences)?;
+        let pending_profile = pending_address.is_some();
         let completed_fp = self.checkpoint_completed_fp_load(captured_tick, &resident_sequences)?;
         let completed_profile = completed_fp.is_some();
         if let Some(completed) = &completed_fp {
@@ -206,6 +212,8 @@ impl O3RuntimeState {
                 .map(|row| row.sequence);
             self.live_data_access_younger_sequences
                 == resident_set.iter().copied().chain(finalized_set).collect()
+        } else if pending_profile {
+            self.live_data_access_younger_sequences == resident_set
         } else {
             self.live_data_access_younger_sequences.is_empty()
                 || self.live_data_access_younger_sequences == resident_set
@@ -220,7 +228,7 @@ impl O3RuntimeState {
             || !self.invalidated_live_staged_fetch_identities.is_empty()
             || !self.committed_live_staged_fetch_identities.is_empty()
             || self.deferred_live_data_access_execution.is_some()
-            || self.has_pending_data_address()
+            || (self.has_pending_data_address() && !pending_profile)
             || !normalized_data_provenance
             || (!completed_profile && !self.live_data_accesses.is_empty())
         {
@@ -260,10 +268,40 @@ impl O3RuntimeState {
                     .remove(&row.sequence);
             }
         }
+        if let Some(pending) = &pending_address {
+            let reservations = finalized_writeback
+                .writeback_calendar
+                .by_tick
+                .values()
+                .flatten()
+                .copied()
+                .collect::<Vec<_>>();
+            match reservations.as_slice() {
+                [] if finalized_writeback.published_writeback_sequences.is_empty() => {}
+                [reservation]
+                    if reservation.sequence() == pending.producer_sequence
+                        && reservation.admitted_tick() <= captured_tick
+                        && finalized_writeback.published_writeback_sequences
+                            == BTreeSet::from([pending.producer_sequence]) =>
+                {
+                    finalized_writeback
+                        .writeback_calendar
+                        .remove_sequence(pending.producer_sequence);
+                    finalized_writeback
+                        .published_writeback_sequences
+                        .remove(&pending.producer_sequence);
+                }
+                _ => {
+                    return Err(invalid(
+                        "pending store retains unsupported writeback ownership",
+                    ));
+                }
+            }
+        }
         let prune_tick = if completed_profile {
             captured_tick
                 .checked_add(1)
-                .ok_or(invalid("completed FP capture tick overflows"))?
+                .ok_or(invalid("live capture tick overflows"))?
         } else {
             captured_tick
         };
@@ -301,6 +339,7 @@ impl O3RuntimeState {
         if self.live_issue.resident_sequences().is_empty()
             && self.live_issue.requested_service_tick().is_none()
             && !completed_profile
+            && !pending_profile
         {
             return Ok(None);
         }
@@ -345,6 +384,12 @@ impl O3RuntimeState {
                     completed.finalized_rows,
                 )
             }
+            None if pending_profile => (
+                RiscvO3LiveCheckpointProfile::PendingDataAddress,
+                None,
+                None,
+                Vec::new(),
+            ),
             None => (
                 RiscvO3LiveCheckpointProfile::ComputeQueue,
                 None,
@@ -356,7 +401,11 @@ impl O3RuntimeState {
             stable: finalized_writeback.checkpoint_payload_with_projected_stats(self.stats()),
             profile,
             issue_rows,
-            rename_rows: self.snapshot().rename_map().to_vec(),
+            rename_rows: if pending_profile {
+                Vec::new()
+            } else {
+                self.snapshot().rename_map().to_vec()
+            },
             resident_sequences,
             service: RiscvO3LiveCheckpointService {
                 requested_tick,
@@ -377,6 +426,7 @@ impl O3RuntimeState {
             writeback_published_sequences: Vec::new(),
             reservation,
             completed_result,
+            pending_address,
             finalized_rows,
         }))
     }
@@ -628,6 +678,11 @@ impl O3RuntimeState {
         stable: O3RuntimeCheckpointPayload,
         live: &RiscvO3LiveCheckpointPayload,
     ) -> Result<PreparedRiscvO3LiveRestore, Error> {
+        let pending = if live.profile == RiscvO3LiveCheckpointProfile::PendingDataAddress {
+            Some(pending_address::validate_restore_payload(live)?)
+        } else {
+            None
+        };
         let completed = match live.profile {
             RiscvO3LiveCheckpointProfile::ComputeQueue => {
                 if live.reservation.is_some()
@@ -664,11 +719,7 @@ impl O3RuntimeState {
                 }
                 Some((result, reservation))
             }
-            RiscvO3LiveCheckpointProfile::PendingDataAddress => {
-                return Err(invalid(
-                    "pending-address live checkpoint restore is not implemented",
-                ));
-            }
+            RiscvO3LiveCheckpointProfile::PendingDataAddress => None,
         };
         if stable.pending_live_retire_gate().is_some() {
             return Err(invalid(
@@ -685,7 +736,9 @@ impl O3RuntimeState {
             RiscvO3LiveCheckpointProfile::CompletedFpLoad => live
                 .finalized_writeback
                 .is_valid_without_live_calendar_closed_through(live.captured_tick),
-            RiscvO3LiveCheckpointProfile::PendingDataAddress => false,
+            RiscvO3LiveCheckpointProfile::PendingDataAddress => live
+                .finalized_writeback
+                .is_valid_without_live_calendar_at(live.captured_tick),
         };
         if !finalized_writeback_is_valid {
             return Err(invalid("finalized writeback ownership is inconsistent"));
@@ -774,7 +827,7 @@ impl O3RuntimeState {
         runtime
             .restore_checkpoint_payload(stable)
             .map_err(|_| invalid("stable O3 runtime is invalid"))?;
-        if runtime.snapshot().rename_map() != live.rename_rows.as_slice() {
+        if pending.is_none() && runtime.snapshot().rename_map() != live.rename_rows.as_slice() {
             return Err(invalid("live rename projection disagrees with O3RT"));
         }
         let stable_live_rows = runtime
@@ -788,7 +841,10 @@ impl O3RuntimeState {
             .iter()
             .map(|row| (row.sequence, row.fetch_request))
             .collect::<BTreeMap<_, _>>();
-        let finalized_rows = if let Some((result, reservation)) = completed {
+        let finalized_rows = if let Some(pending) = pending {
+            pending_address::validate_stable_owner_set(&runtime, live, pending)?;
+            Vec::new()
+        } else if let Some((result, reservation)) = completed {
             if stable_live_rows.len() != live.events.len()
                 || stable_live_rows.first().map(|row| row.sequence()) != Some(result.sequence)
                 || stable_live_rows.last().map(|row| row.sequence())
@@ -1039,63 +1095,67 @@ impl O3RuntimeState {
                     execution: event.execution().clone(),
                 });
         }
-        for row in &live.issue_rows {
-            let owner = rob
-                .get(&row.sequence)
-                .filter(|entry| entry.is_live_staged())
-                .ok_or(invalid("issue row has no live-staged O3RT owner"))?;
-            let event = rebuilt_by_request
-                .get(&row.fetch_request)
-                .ok_or(invalid("issue row has no replayable event"))?;
-            if owner.pc().get() != event.execution().pc() {
-                return Err(invalid("issue event PC disagrees with O3RT owner"));
+        if let Some(pending) = pending {
+            pending_address::restore(&mut runtime, live, pending)?;
+        } else {
+            for row in &live.issue_rows {
+                let owner = rob
+                    .get(&row.sequence)
+                    .filter(|entry| entry.is_live_staged())
+                    .ok_or(invalid("issue row has no live-staged O3RT owner"))?;
+                let event = rebuilt_by_request
+                    .get(&row.fetch_request)
+                    .ok_or(invalid("issue row has no replayable event"))?;
+                if owner.pc().get() != event.execution().pc() {
+                    return Err(invalid("issue event PC disagrees with O3RT owner"));
+                }
+                let raw = event
+                    .fetch()
+                    .data()
+                    .ok_or(invalid("replayable event has no fetched bytes"))?;
+                let mut bytes = [0_u8; 4];
+                bytes[..raw.len()].copy_from_slice(raw);
+                let decoded = RiscvInstruction::decode_with_length(u32::from_le_bytes(bytes))
+                    .map_err(|_| invalid("replayable event instruction does not decode"))?;
+                runtime.live_staged_fetch_identities.insert(
+                    row.sequence,
+                    O3LiveStagedFetchIdentity::new(event.instruction()),
+                );
+                if !runtime.bind_live_staged_issue_packet_at_sequence(
+                    row.sequence,
+                    decoded,
+                    &[row.fetch_request],
+                    live.service.requested_tick,
+                ) {
+                    return Err(invalid("production issue binder rejected restored row"));
+                }
             }
-            let raw = event
-                .fetch()
-                .data()
-                .ok_or(invalid("replayable event has no fetched bytes"))?;
-            let mut bytes = [0_u8; 4];
-            bytes[..raw.len()].copy_from_slice(raw);
-            let decoded = RiscvInstruction::decode_with_length(u32::from_le_bytes(bytes))
-                .map_err(|_| invalid("replayable event instruction does not decode"))?;
-            runtime.live_staged_fetch_identities.insert(
-                row.sequence,
-                O3LiveStagedFetchIdentity::new(event.instruction()),
-            );
-            if !runtime.bind_live_staged_issue_packet_at_sequence(
-                row.sequence,
-                decoded,
-                &[row.fetch_request],
+            runtime.live_issue.install_checkpoint_projection(
+                live.resident_sequences.clone(),
                 live.service.requested_tick,
-            ) {
-                return Err(invalid("production issue binder rejected restored row"));
+                live.service.mutation_generation,
+                live.service.last_service_generation,
+                restore_telemetry(live.service.telemetry),
+            );
+            match O3LiveIssueQueue::materialize(&runtime, &live.resident_sequences)
+                .map_err(|_| invalid("restored issue queue does not materialize"))?
+            {
+                O3LiveIssueQueueCapture::Ready(queue)
+                    if queue
+                        .entries()
+                        .iter()
+                        .map(|row| row.sequence())
+                        .eq(live.resident_sequences.iter().copied())
+                        && completed.is_none_or(|(result, _)| {
+                            exact_completed_fp_dependent(
+                                &queue,
+                                result.sequence,
+                                result.destination,
+                                result.width,
+                            )
+                        }) => {}
+                _ => return Err(invalid("restored issue queue membership changed")),
             }
-        }
-        runtime.live_issue.install_checkpoint_projection(
-            live.resident_sequences.clone(),
-            live.service.requested_tick,
-            live.service.mutation_generation,
-            live.service.last_service_generation,
-            restore_telemetry(live.service.telemetry),
-        );
-        match O3LiveIssueQueue::materialize(&runtime, &live.resident_sequences)
-            .map_err(|_| invalid("restored issue queue does not materialize"))?
-        {
-            O3LiveIssueQueueCapture::Ready(queue)
-                if queue
-                    .entries()
-                    .iter()
-                    .map(|row| row.sequence())
-                    .eq(live.resident_sequences.iter().copied())
-                    && completed.is_none_or(|(result, _)| {
-                        exact_completed_fp_dependent(
-                            &queue,
-                            result.sequence,
-                            result.destination,
-                            result.width,
-                        )
-                    }) => {}
-            _ => return Err(invalid("restored issue queue membership changed")),
         }
         rebuilt_events.retain(|event| executed_requests.contains(&event.fetch().request_id()));
         Ok(PreparedRiscvO3LiveRestore {

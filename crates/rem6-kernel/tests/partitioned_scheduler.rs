@@ -416,6 +416,30 @@ fn checkpoint_projection_restore_discards_and_preserves_exact_owned_events() {
 }
 
 #[test]
+fn checkpoint_rebound_parallel_event_at_current_tick_holds_epoch_frontier() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let partition = PartitionId::new(0);
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+    scheduler.schedule_at(partition, 10, |_| {}).unwrap();
+    scheduler.run_until_idle();
+
+    let observed_at = Arc::clone(&observed);
+    scheduler
+        .checkpoint_access()
+        .schedule_rebound_at_kind(partition, 10, ScheduledEventKind::Parallel, move |now| {
+            observed_at.lock().unwrap().push(now);
+        })
+        .unwrap();
+
+    let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+    assert_eq!(plan.horizon(), 10);
+    assert!(plan.serial_blockers().is_empty());
+    let run = scheduler.run_next_epoch_parallel_recorded().unwrap();
+    assert_eq!(run.summary().final_tick(), 10);
+    assert_eq!(observed.lock().unwrap().as_slice(), &[10]);
+}
+
+#[test]
 fn checkpoint_projection_validation_rejects_past_preserved_event_without_mutation() {
     let mut source = PartitionedScheduler::new(1).unwrap();
     source.schedule_at(PartitionId::new(0), 10, |_| {}).unwrap();

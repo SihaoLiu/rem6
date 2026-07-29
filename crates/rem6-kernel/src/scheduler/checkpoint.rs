@@ -131,6 +131,35 @@ impl SchedulerCheckpointAccess<'_> {
         }
     }
 
+    pub fn schedule_rebound_at_kind<F>(
+        &mut self,
+        partition: PartitionId,
+        tick: Tick,
+        kind: ScheduledEventKind,
+        callback: F,
+    ) -> Result<PartitionEventId, SchedulerError>
+    where
+        F: FnOnce(Tick) + Send + 'static,
+    {
+        let partition_count = self.scheduler.partition_count();
+        let queue =
+            self.scheduler
+                .partition_mut(partition)
+                .ok_or(SchedulerError::UnknownPartition {
+                    partition,
+                    partitions: partition_count,
+                })?;
+        let callback = match kind {
+            ScheduledEventKind::Serial => {
+                PartitionEventCallback::Serial(Box::new(move |context| callback(context.now())))
+            }
+            ScheduledEventKind::Parallel => {
+                PartitionEventCallback::Parallel(Box::new(move |context| callback(context.now())))
+            }
+        };
+        queue.schedule_checkpoint_rebound_event_at(partition, tick, callback)
+    }
+
     pub fn validate_quiescent_snapshot_compatibility(
         &self,
         snapshot: &SchedulerSnapshot,

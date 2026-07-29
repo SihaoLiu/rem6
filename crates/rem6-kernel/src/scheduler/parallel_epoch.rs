@@ -181,6 +181,12 @@ impl PartitionedScheduler {
         let horizon = horizon_limit
             .map(|limit| horizon.min(limit))
             .unwrap_or(horizon);
+        let horizon = self
+            .partitions
+            .iter()
+            .filter_map(|queue| queue.checkpoint_rebound_boundary_at_or_before(horizon))
+            .min()
+            .unwrap_or(horizon);
         let ready_partitions = frontiers
             .iter()
             .filter_map(|frontier| {

@@ -199,7 +199,7 @@ fn assert_live_chunk(
         .expect("O3LC payload bytes");
     assert!(payload_bytes > 0);
     for (field, expected) in [
-        ("version", 1),
+        ("version", 2),
         ("payload_bytes", payload_bytes),
         ("event_count", 2),
         ("resident_rows", 2),
@@ -234,7 +234,7 @@ fn assert_o3_live_stats(json: &Value, action: &Value, action_path: &str, rebound
         "sim.host_actions.{action_path}.component.cpu0.chunk.o3_live_checkpoint.o3_live_checkpoint"
     );
     for (field, unit, expected) in [
-        ("version", "Count", 1),
+        ("version", "Count", 2),
         (
             "payload_bytes",
             "Byte",

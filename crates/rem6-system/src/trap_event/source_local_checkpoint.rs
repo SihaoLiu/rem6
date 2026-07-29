@@ -153,16 +153,17 @@ impl RiscvTrapEventPort {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     use rem6_checkpoint::CheckpointComponentId;
     use rem6_cpu::{
-        CpuCore, CpuFetchConfig, CpuFetchEventKind, CpuId, CpuResetState, RiscvCore,
-        RiscvCoreDriveAction,
+        CpuCore, CpuDataConfig, CpuFetchConfig, CpuFetchEventKind, CpuId, CpuResetState,
+        RiscvCluster, RiscvCore, RiscvCoreDriveAction, RiscvDataAccessEventKind,
     };
     use rem6_kernel::{PartitionId, PartitionedScheduler};
     use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryResponse};
-    use rem6_stats::StatsRegistry;
+    use rem6_stats::{CommMonitorConfig, ProbePayload, StackDistProbeConfig, StatsRegistry};
     use rem6_transport::{
         MemoryRoute, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
     };
@@ -170,7 +171,8 @@ mod tests {
     use crate::scheduler_checkpoint::{SchedulerCheckpointBank, SchedulerCheckpointPort};
     use crate::{
         GuestEventId, GuestSourceId, HostEventPolicy, RiscvCoreCheckpointBank,
-        RiscvCoreCheckpointPort, SystemError, SystemHostController,
+        RiscvCoreCheckpointPort, RiscvDataAccessStats, RiscvSystemRunDriver, SystemActionOutcome,
+        SystemError, SystemHostController,
     };
 
     use super::*;
@@ -462,5 +464,240 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![CpuFetchEventKind::Issued, CpuFetchEventKind::Completed]
         );
+    }
+
+    #[test]
+    fn serial_checkpoint_captures_unsynchronized_data_completion_before_restore_replay() {
+        let source = PartitionId::new(0);
+        let target = PartitionId::new(1);
+        let cpu = CpuId::new(0);
+        let fetch_endpoint = endpoint("cpu0.ifetch");
+        let data_endpoint = endpoint("cpu0.dmem");
+        let mut transport = MemoryTransport::new();
+        let fetch_route = transport
+            .add_route(
+                MemoryRoute::new(
+                    fetch_endpoint.clone(),
+                    source,
+                    endpoint("l1i"),
+                    target,
+                    2,
+                    3,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let data_route = transport
+            .add_route(
+                MemoryRoute::new(data_endpoint.clone(), source, endpoint("l1d"), target, 2, 3)
+                    .unwrap(),
+            )
+            .unwrap();
+        let core = RiscvCore::with_data(
+            CpuCore::new(
+                CpuResetState::new(cpu, source, AgentId::new(7), Address::new(0x8000)),
+                CpuFetchConfig::new(
+                    fetch_endpoint,
+                    fetch_route,
+                    CacheLineLayout::new(16).unwrap(),
+                    AccessSize::new(4).unwrap(),
+                ),
+            )
+            .unwrap(),
+            CpuDataConfig::new(data_endpoint, data_route, CacheLineLayout::new(16).unwrap()),
+        );
+        core.write_register(rem6_isa_riscv::Register::new(2).unwrap(), 0x9000);
+        let cluster = RiscvCluster::new([core.clone()]).unwrap();
+        let scheduler_component = CheckpointComponentId::new("scheduler0").unwrap();
+        let scheduler = Arc::new(Mutex::new(
+            PartitionedScheduler::with_min_remote_delay(2, 2).unwrap(),
+        ));
+        let controller = Arc::new(Mutex::new(SystemHostController::new(
+            HostEventPolicy,
+            StatsRegistry::new(),
+        )));
+        {
+            let mut controller = controller.lock().unwrap();
+            controller
+                .executor_mut()
+                .attach_riscv_checkpoint_bank(
+                    RiscvCoreCheckpointBank::new([RiscvCoreCheckpointPort::new(
+                        CheckpointComponentId::new("cpu0").unwrap(),
+                        core.clone(),
+                    )])
+                    .unwrap(),
+                )
+                .unwrap();
+            controller
+                .executor_mut()
+                .attach_scheduler_checkpoint_bank(
+                    SchedulerCheckpointBank::new([SchedulerCheckpointPort::new(
+                        scheduler_component.clone(),
+                        Arc::clone(&scheduler),
+                    )])
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+        let trap = RiscvTrapEventPort::new(
+            SystemHostEventPort::with_controller(source, 1, Arc::clone(&controller)).unwrap(),
+            GuestSourceId::new(1),
+        )
+        .with_scheduler_checkpoint_component(scheduler_component);
+        let driver = RiscvSystemRunDriver::new(trap.clone()).with_data_access_stats(
+            RiscvDataAccessStats::with_stack_distance(
+                StackDistProbeConfig::builder(16, 16).build().unwrap(),
+            )
+            .with_comm_monitor(CommMonitorConfig::builder(100).build().unwrap()),
+        );
+        let data_requests = Arc::new(AtomicUsize::new(0));
+        let mut scheduler = scheduler.lock().unwrap();
+
+        let run = driver
+            .drive_until_host_stop(
+                &cluster,
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                |_cpu| {
+                    move |delivery, _context| {
+                        let instruction: u32 = match delivery.request().range().start().get() {
+                            0x8000 => 0x0001_2283,
+                            0x8004 => 0x0041_2303,
+                            0x8008 => 0x0000_0073,
+                            address => panic!("unexpected fetch address {address:#x}"),
+                        };
+                        TargetOutcome::Respond(
+                            MemoryResponse::completed(
+                                delivery.request(),
+                                Some(instruction.to_le_bytes().to_vec()),
+                            )
+                            .unwrap(),
+                        )
+                    }
+                },
+                |_cpu| {
+                    let data_requests = Arc::clone(&data_requests);
+                    let trap = trap.clone();
+                    move |delivery, context| {
+                        let request_index = data_requests.fetch_add(1, Ordering::SeqCst);
+                        let control = match request_index {
+                            0 => Some((
+                                GuestEventId::new(1),
+                                GuestEventKind::Checkpoint {
+                                    label: "data-boundary".to_string(),
+                                },
+                            )),
+                            1 => Some((
+                                GuestEventId::new(2),
+                                GuestEventKind::RestoreCheckpoint {
+                                    label: "data-boundary".to_string(),
+                                },
+                            )),
+                            _ => None,
+                        };
+                        if let Some((event, kind)) = control {
+                            context
+                                .schedule_remote_after(source, 2, move |context| {
+                                    trap
+                                        .emit_guest_event_kind_with_source_local_scheduler_checkpoint(
+                                            context, event, kind,
+                                        )
+                                        .unwrap();
+                                })
+                                .unwrap();
+                        }
+                        TargetOutcome::Respond(
+                            MemoryResponse::completed(
+                                delivery.request(),
+                                Some(vec![request_index as u8 + 1, 0, 0, 0]),
+                            )
+                            .unwrap(),
+                        )
+                    }
+                },
+                100,
+                |_cpu| GuestEventId::new(100),
+            )
+            .unwrap();
+
+        assert_eq!(data_requests.load(Ordering::SeqCst), 3);
+        let history = core.data_access_events();
+        assert_eq!(
+            history
+                .iter()
+                .filter(|event| event.kind() == RiscvDataAccessEventKind::Issued)
+                .count(),
+            3
+        );
+        assert_eq!(
+            history
+                .iter()
+                .filter(|event| event.kind() == RiscvDataAccessEventKind::Completed)
+                .count(),
+            3
+        );
+        let checkpoint_tick = controller
+            .lock()
+            .unwrap()
+            .run()
+            .action_outcomes()
+            .iter()
+            .find_map(|outcome| match outcome {
+                SystemActionOutcome::Checkpoint { tick, .. } => Some(*tick),
+                _ => None,
+            })
+            .expect("checkpoint outcome");
+        assert_eq!(
+            history
+                .iter()
+                .find(|event| event.kind() == RiscvDataAccessEventKind::Completed)
+                .unwrap()
+                .tick(),
+            checkpoint_tick
+        );
+        assert!(run
+            .turns()
+            .iter()
+            .filter_map(rem6_cpu::RiscvClusterTurn::serial_scheduler_summary)
+            .any(
+                |summary| summary.final_tick() == checkpoint_tick && summary.executed_events() >= 2
+            ));
+        assert!(controller.lock().unwrap().action_errors().is_empty());
+
+        let probes = driver
+            .data_access_stats()
+            .unwrap()
+            .data_access_probe_snapshot();
+        let request_point = probes.request_point();
+        let response_point = probes.response_point().unwrap();
+        let observed = probes
+            .probes()
+            .events()
+            .iter()
+            .map(|event| {
+                let ProbePayload::MemoryPacket(packet) = event.payload() else {
+                    panic!("unexpected data probe payload: {:?}", event.payload());
+                };
+                (event.point(), packet.packet_id())
+            })
+            .collect::<Vec<_>>();
+        let issued_packet_ids = history
+            .iter()
+            .filter(|event| event.kind() == RiscvDataAccessEventKind::Issued)
+            .map(|event| {
+                (u64::from(event.request_id().agent().get()) << 32)
+                    | (event.request_id().sequence() & u64::from(u32::MAX))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(observed.len(), 4, "{observed:?}");
+        assert_eq!(observed[0], (request_point, issued_packet_ids[0]));
+        assert_eq!(observed[1], (response_point, issued_packet_ids[0]));
+        assert!(!observed
+            .iter()
+            .any(|(_point, packet_id)| *packet_id == issued_packet_ids[1]));
+        assert_eq!(observed[2], (request_point, issued_packet_ids[2]));
+        assert_eq!(observed[3], (response_point, issued_packet_ids[2]));
     }
 }

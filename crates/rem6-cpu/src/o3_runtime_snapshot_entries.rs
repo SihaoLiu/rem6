@@ -60,6 +60,12 @@ impl O3ReorderBufferEntry {
         self
     }
 
+    #[doc(hidden)]
+    pub const fn with_live_staged_for_checkpoint(mut self) -> Self {
+        self.live_staged = true;
+        self
+    }
+
     pub(super) fn mark_ready(&mut self) {
         self.ready = true;
     }

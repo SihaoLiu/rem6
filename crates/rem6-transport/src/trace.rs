@@ -170,7 +170,7 @@ impl MemoryTraceEvent {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct MemoryTrace {
     events: Arc<Mutex<Vec<MemoryTraceEvent>>>,
 }
@@ -210,6 +210,11 @@ impl MemoryTrace {
             .lock()
             .map(|events| events.clone())
             .map_err(|_| MemoryTraceSnapshotError)
+    }
+
+    #[doc(hidden)]
+    pub fn restore_checkpoint_events(&self, events: Vec<MemoryTraceEvent>) {
+        *self.events.lock().expect("memory trace lock") = events;
     }
 
     pub fn len(&self) -> usize {

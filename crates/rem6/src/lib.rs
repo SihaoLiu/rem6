@@ -924,6 +924,7 @@ fn execute_riscv(
     }
     let fetch_trace = MemoryTrace::new();
     let data_trace = MemoryTrace::new();
+    driver.attach_memory_traces_for_checkpoint(&fetch_trace, &data_trace);
     let fabric_wait_for_start = transport.mark_fabric_wait_for();
     let (mut gdb_outcome, gdb_run_error) = if let Some(listen) = config.gdb_listen() {
         match serve_riscv_gdb_with_run_control(

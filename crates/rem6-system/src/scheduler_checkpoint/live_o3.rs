@@ -7,7 +7,7 @@ use rem6_kernel::{
 };
 
 use crate::riscv_checkpoint::RiscvO3LiveSchedulerRestore;
-use crate::schedule_o3_writeback_wake;
+use crate::{schedule_o3_writeback_wake, O3WritebackWakeSchedule};
 
 use super::{
     decode_registered_snapshot, resolve_owned_events_for_scheduler, LiveO3SchedulerValidationMode,
@@ -192,8 +192,14 @@ pub(super) fn rebind_live_o3_for_scheduler(
             Some(wake.tick),
             "validated O3 wake deadline changed"
         );
-        schedule_o3_writeback_wake(restore.core(), scheduler, wake.tick, wake.kind)
-            .expect("validated O3 wake schedule succeeds");
+        schedule_o3_writeback_wake(
+            restore.core(),
+            scheduler,
+            wake.tick,
+            wake.kind,
+            O3WritebackWakeSchedule::CheckpointRebound,
+        )
+        .expect("validated O3 wake schedule succeeds");
         rebound.insert(restore.component().clone());
     }
     rebound

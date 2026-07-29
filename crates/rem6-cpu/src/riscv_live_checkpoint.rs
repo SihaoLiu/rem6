@@ -3,7 +3,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use rem6_isa_riscv::{FloatRegister, MemoryResponseWritebackTarget, MemoryWidth, RiscvInstruction};
+use rem6_isa_riscv::{FloatRegister, MemoryWidth};
 use rem6_kernel::{PartitionId, ScheduledEventKind, Tick};
 use rem6_memory::{AccessSize, Address, AddressRange, MemoryRequestId};
 
@@ -19,7 +19,7 @@ mod fetch;
 mod pending_address;
 
 pub use event::RiscvO3LiveCheckpointEvent;
-use fetch::select_live_completed_fetches;
+use fetch::project_live_fetches;
 pub use pending_address::RiscvO3LiveCheckpointPendingDataAddress;
 
 pub const RISCV_O3_LIVE_CHECKPOINT_CHUNK: &str = "o3-live-checkpoint";
@@ -355,11 +355,30 @@ impl RiscvCore {
         let core_agent = self.agent();
         let cpu_state = self.core.state.lock().expect("cpu core lock");
         let riscv_state = self.state.lock().expect("riscv core lock");
-        let mut projected_state = riscv_state.clone();
+        let projected_cpu = crate::CpuCore::from_checkpoint_state(
+            crate::CpuCore::checkpoint_state_from_guard(&cpu_state),
+        );
+        let projected = RiscvCore {
+            core: projected_cpu,
+            state: Arc::new(Mutex::new(riscv_state.clone())),
+        };
+        drop(riscv_state);
+        drop(cpu_state);
+        let has_pending_address = projected
+            .state
+            .lock()
+            .expect("riscv core lock")
+            .o3_runtime
+            .has_pending_data_address();
+        if has_pending_address {
+            projected.record_ready_o3_data_access_event_with_trace(captured_tick, false);
+        }
+        let projected_cpu_state = projected.core.state.lock().expect("cpu core lock");
+        let mut projected_state = projected.state.lock().expect("riscv core lock").clone();
         projected_state.finalize_quiescent_o3_writeback_state_for_checkpoint();
         capture_checkpoint_projection_from_guards(
-            self,
-            &cpu_state,
+            &projected,
+            &projected_cpu_state,
             &projected_state,
             core_agent,
             captured_tick,
@@ -633,17 +652,11 @@ fn capture_live_from_guards(
     }) {
         return Err(invalid("completed FP data request identity is invalid"));
     }
-    let completed_fetches =
-        select_live_completed_fetches(cpu.events(), &state.executed_fetches, &expected_requests)?;
     let wake = state
         .o3_writeback_wake
         .checkpoint_scheduled_wake()
         .ok_or(invalid("live queue does not own exactly one attached wake"))?;
-    if wake.tick() != runtime.service.requested_tick
-        || completed_fetches
-            .iter()
-            .any(|event| event.partition() != wake.event().partition())
-    {
+    if wake.tick() != runtime.service.requested_tick {
         return Err(invalid("scheduled wake does not match queue service"));
     }
     if expected_requests
@@ -654,163 +667,47 @@ fn capture_live_from_guards(
             "next fetch sequence does not follow restored requests",
         ));
     }
-    let mut events = Vec::with_capacity(expected_requests.len());
-    let mut replay_hart = state.hart.clone();
-    for ((sequence, request), completed_fetch) in owner_rows.iter().zip(completed_fetches) {
-        let raw_bytes = completed_fetch
-            .data()
-            .ok_or(invalid("live issue fetch has no instruction bytes"))?;
-        let mut padded = [0_u8; 4];
-        padded[..raw_bytes.len()].copy_from_slice(raw_bytes);
-        let decoded = RiscvInstruction::decode_with_length(u32::from_le_bytes(padded))
-            .map_err(|_| invalid("live issue instruction does not decode"))?;
-        if usize::from(decoded.bytes()) != raw_bytes.len()
-            || !state
-                .o3_runtime
-                .checkpoint_live_instruction_matches(*sequence, decoded.instruction())
-        {
-            return Err(invalid("live issue instruction disagrees with O3 owner"));
-        }
-        let source_events = state
-            .events
-            .iter()
-            .filter(|event| event.fetch().request_id() == *request)
-            .collect::<Vec<_>>();
-        let event = if state.executed_fetches.contains(request) {
-            let [source_event] = source_events.as_slice() else {
-                return Err(invalid(
-                    "executed live issue row lacks one canonical execution event",
-                ));
-            };
-            if source_event.fetch() != completed_fetch
-                || source_event.instruction() != decoded.instruction()
-            {
-                return Err(invalid("live issue source event disagrees with fetch"));
-            }
-            (*source_event).clone()
-        } else if projected_pending_terminal_fetch == Some(*request) {
-            if !source_events.is_empty() {
-                return Err(invalid(
-                    "pending terminal live issue row retains an execution history event",
-                ));
-            }
-            state
-                .pending_terminal_memory_result
-                .as_ref()
-                .expect("matched pending terminal result exists")
-                .execution()
-                .clone()
-        } else {
-            if !source_events.is_empty() {
-                return Err(invalid(
-                    "pending live issue row retains an execution history event",
-                ));
-            }
-            replay_hart.set_pc(completed_fetch.pc().get());
-            let execution = replay_hart
-                .execute_decoded(decoded)
-                .map_err(|_| invalid("live issue instruction does not replay"))?;
-            crate::RiscvCpuExecutionEvent::new(
-                completed_fetch.clone(),
-                decoded.instruction(),
-                execution,
-            )
-        };
-        let projected = project_event(&event);
-        let completed_load = completed_result.filter(|result| result.fetch_request == *request);
-        let transient_matches = if let Some(result) = completed_load {
-            projected.memory_access
-                == Some(rem6_isa_riscv::MemoryAccessKind::FloatLoad {
-                    rd: result.destination,
-                    address: result.physical_address.get(),
-                    width: result.width,
-                })
-                && projected.data_access_event_kind
-                    == Some(crate::RiscvDataAccessEventKind::Completed)
-        } else {
-            projected.memory_access.is_none() && projected.data_access_event_kind.is_none()
-        };
-        if !transient_matches || projected.rebuild().as_ref() != Ok(&event) {
-            return Err(invalid(
-                "execution event contains unsupported transient state",
-            ));
-        }
-        for write in &projected.register_writes {
-            replay_hart.write(write.register(), write.value());
-        }
-        for write in &projected.float_register_writes {
-            replay_hart.write_float(write.register(), write.value());
-        }
-        if let Some(result) = completed_load {
-            let writeback = projected
-                .memory_access
-                .as_ref()
-                .expect("validated completed FP memory access")
-                .read_response_writeback(&result.response_bytes)
-                .map_err(|_| invalid("completed FP response bytes do not match the load"))?
-                .ok_or(invalid("completed FP load has no writeback"))?;
-            if writeback.target() != MemoryResponseWritebackTarget::Float(result.destination) {
-                return Err(invalid("completed FP response has the wrong typed target"));
-            }
-            replay_hart.write_float(result.destination, writeback.value());
-        }
-        replay_hart.set_pc(projected.next_pc);
-        events.push(projected);
+    if runtime.pending_address.as_ref().is_some_and(|pending| {
+        pending.requested_wake_tick != runtime.service.requested_tick
+            || pending.requested_wake_tick != wake.tick()
+    }) {
+        return Err(invalid("pending store wake authority is inconsistent"));
     }
-    let executed_fetch_requests = expected_requests
-        .iter()
-        .filter(|request| {
-            state.executed_fetches.contains(request)
-                || projected_pending_terminal_fetch == Some(**request)
-        })
-        .copied()
-        .collect::<Vec<_>>();
-    let live_issued_requests = expected_requests
-        .iter()
-        .filter(|request| state.issued_data_for_fetches.contains(request))
-        .copied()
-        .collect::<Vec<_>>();
-    if let Some(result) = completed_result {
-        if executed_fetch_requests != [result.fetch_request]
-            || live_issued_requests != [result.fetch_request]
-        {
-            return Err(invalid(
-                "completed FP result does not retain exact execution/data issue membership",
-            ));
-        }
-    } else if !live_issued_requests.is_empty() {
-        return Err(invalid("live replay carries unsupported data issue state"));
-    }
+    let fetch_projection = project_live_fetches(
+        cpu.events(),
+        state,
+        &owner_rows,
+        &expected_requests,
+        completed_result,
+        projected_pending_terminal_fetch,
+        runtime.pending_address.as_ref(),
+        wake.event().partition(),
+    )?;
     let projected_stable = runtime.stable.clone();
-    let projected_hart = projected_pending_terminal_fetch.map(|request| {
-        let pending = state
-            .pending_terminal_memory_result
-            .as_ref()
-            .filter(|pending| pending.owns_fetch(request))
-            .expect("matched pending terminal result exists");
-        let mut hart = state.hart.clone();
-        hart.set_pc(pending.execution().execution().next_pc());
-        hart
-    });
+    let next_fetch_pc = runtime
+        .pending_address
+        .as_ref()
+        .map(|pending| Address::new(pending.fetch.pc().get().saturating_add(4)))
+        .unwrap_or_else(|| cpu.pc());
     Ok(Some((
         RiscvO3LiveCheckpointPayload {
             profile: runtime.profile,
             captured_tick,
-            next_fetch_pc: cpu.pc(),
+            next_fetch_pc,
             next_fetch_request_sequence: cpu.next_sequence(),
-            events,
+            events: fetch_projection.events,
             issue_rows: runtime.issue_rows,
             rename_rows: runtime.rename_rows,
             resident_sequences: runtime.resident_sequences,
-            executed_fetch_requests,
-            issued_fetch_requests: live_issued_requests,
+            executed_fetch_requests: fetch_projection.executed_fetch_requests,
+            issued_fetch_requests: fetch_projection.issued_fetch_requests,
             service: runtime.service,
             finalized_writeback: runtime.finalized_writeback,
             writeback_counted_sequences: runtime.writeback_counted_sequences,
             writeback_published_sequences: runtime.writeback_published_sequences,
             reservation: runtime.reservation,
             completed_result: runtime.completed_result,
-            pending_address: None,
+            pending_address: runtime.pending_address,
             wake: RiscvO3LiveCheckpointWake {
                 scheduler_instance_raw: wake.scheduler().checkpoint_raw(),
                 partition: wake.event().partition(),
@@ -820,7 +717,7 @@ fn capture_live_from_guards(
             },
         },
         projected_stable,
-        projected_hart,
+        fetch_projection.projected_hart,
     )))
 }
 

@@ -1,6 +1,9 @@
 use rem6_checkpoint::CheckpointComponentId;
 use rem6_kernel::SchedulerCheckpointAccess;
 
+use crate::riscv_data_access_stats::{
+    PreparedRiscvDataAccessProbeRestore, RiscvDataAccessProbeCheckpoint,
+};
 use crate::riscv_instruction_stats::PreparedRiscvRetiredInstructionProbeRestore;
 use crate::scheduler_checkpoint::{SchedulerCheckpointBankGuard, SchedulerCheckpointContext};
 
@@ -167,6 +170,15 @@ impl SystemActionExecutor {
                     .riscv_instruction_stats
                     .as_ref()
                     .map(|stats| stats.retired_instruction_probe_snapshot());
+                let data_access_probe_checkpoint =
+                    self.prepare_riscv_data_access_probes_for_capture()?;
+                let memory_trace_checkpoint =
+                    self.memory_traces
+                        .as_ref()
+                        .map(|(fetch, data)| MemoryTraceCheckpoint {
+                            fetch: fetch.snapshot(),
+                            data: data.snapshot(),
+                        });
                 let mut staged_checkpoints = self.checkpoints.clone();
                 let capture = self.capture_attached_checkpoint_banks_into_with_scheduler(
                     &mut staged_checkpoints,
@@ -188,6 +200,14 @@ impl SystemActionExecutor {
                     self.riscv_instruction_probe_checkpoints
                         .push((manifest.clone(), snapshot));
                 }
+                if let Some(checkpoint) = data_access_probe_checkpoint {
+                    self.riscv_data_access_probe_checkpoints
+                        .push((manifest.clone(), checkpoint));
+                }
+                if let Some(checkpoint) = memory_trace_checkpoint {
+                    self.memory_trace_checkpoints
+                        .push((manifest.clone(), checkpoint));
+                }
                 Ok(SystemActionOutcome::Checkpoint {
                     tick: record.tick(),
                     event: record.event(),
@@ -203,12 +223,17 @@ impl SystemActionExecutor {
                 })?;
                 let instruction_probe_restore =
                     self.prepare_riscv_instruction_probes_for_manifest(&manifest)?;
+                let data_access_probe_restore =
+                    self.prepare_riscv_data_access_probes_for_manifest(&manifest);
+                let memory_trace_restore = self.prepare_memory_traces_for_manifest(&manifest);
                 let rebound_o3_wake_components = self.restore_checkpoint_manifest_with_scheduler(
                     &manifest,
                     scheduler_checkpoint,
                     scheduler_checkpoint_bank,
                 )?;
                 self.install_prepared_riscv_instruction_probe_restore(instruction_probe_restore);
+                self.install_prepared_riscv_data_access_probe_restore(data_access_probe_restore);
+                self.install_prepared_memory_trace_restore(memory_trace_restore);
                 Ok(SystemActionOutcome::CheckpointRestored {
                     tick: record.tick(),
                     event: record.event(),
@@ -220,12 +245,17 @@ impl SystemActionExecutor {
             HostAction::RestoreCheckpoint { manifest } => {
                 let instruction_probe_restore =
                     self.prepare_riscv_instruction_probes_for_manifest(manifest)?;
+                let data_access_probe_restore =
+                    self.prepare_riscv_data_access_probes_for_manifest(manifest);
+                let memory_trace_restore = self.prepare_memory_traces_for_manifest(manifest);
                 let rebound_o3_wake_components = self.restore_checkpoint_manifest_with_scheduler(
                     manifest,
                     scheduler_checkpoint,
                     scheduler_checkpoint_bank,
                 )?;
                 self.install_prepared_riscv_instruction_probe_restore(instruction_probe_restore);
+                self.install_prepared_riscv_data_access_probe_restore(data_access_probe_restore);
+                self.install_prepared_memory_trace_restore(memory_trace_restore);
                 Ok(SystemActionOutcome::CheckpointRestored {
                     tick: record.tick(),
                     event: record.event(),
@@ -263,6 +293,25 @@ impl SystemActionExecutor {
             .map_err(SystemError::Stats)
     }
 
+    fn prepare_riscv_data_access_probes_for_capture(
+        &self,
+    ) -> Result<Option<RiscvDataAccessProbeCheckpoint>, SystemError> {
+        let Some(data_access_stats) = self.riscv_data_access_stats.as_ref() else {
+            return Ok(None);
+        };
+        let Some(riscv_checkpoints) = self.riscv_checkpoints.as_ref() else {
+            return Ok(Some(data_access_stats.data_access_probe_checkpoint()));
+        };
+        let mut checkpoint = data_access_stats.data_access_probe_checkpoint();
+        let events = riscv_checkpoints
+            .data_access_event_snapshots_from_cursors(checkpoint.cursors())
+            .map_err(SystemError::RiscvCheckpoint)?;
+        checkpoint
+            .record_data_access_events(events)
+            .map_err(SystemError::Stats)?;
+        Ok(Some(checkpoint))
+    }
+
     fn install_prepared_riscv_instruction_probe_restore(
         &self,
         prepared: Option<PreparedRiscvRetiredInstructionProbeRestore>,
@@ -271,6 +320,64 @@ impl SystemActionExecutor {
             (self.riscv_instruction_stats.as_ref(), prepared)
         {
             instruction_stats.install_prepared_retired_instruction_probe_restore(prepared);
+        }
+    }
+
+    fn prepare_riscv_data_access_probes_for_manifest(
+        &self,
+        manifest: &rem6_checkpoint::CheckpointManifest,
+    ) -> Option<PreparedRiscvDataAccessProbeRestore> {
+        let (Some(data_access_stats), Some(checkpoint)) = (
+            self.riscv_data_access_stats.as_ref(),
+            self.riscv_data_access_probe_checkpoints
+                .iter()
+                .rev()
+                .find(|(captured, _checkpoint)| captured == manifest)
+                .map(|(_captured, checkpoint)| checkpoint),
+        ) else {
+            return None;
+        };
+        Some(data_access_stats.prepare_data_access_probe_restore(checkpoint))
+    }
+
+    fn install_prepared_riscv_data_access_probe_restore(
+        &self,
+        mut prepared: Option<PreparedRiscvDataAccessProbeRestore>,
+    ) {
+        if let (Some(prepared), Some(riscv_checkpoints)) =
+            (prepared.as_mut(), self.riscv_checkpoints.as_ref())
+        {
+            prepared.rebase_cursors(riscv_checkpoints.data_access_event_cursors());
+        }
+        if let (Some(data_access_stats), Some(prepared)) =
+            (self.riscv_data_access_stats.as_ref(), prepared)
+        {
+            data_access_stats.install_prepared_data_access_probe_restore(prepared);
+        }
+    }
+
+    fn prepare_memory_traces_for_manifest(
+        &self,
+        manifest: &rem6_checkpoint::CheckpointManifest,
+    ) -> Option<PreparedMemoryTraceRestore> {
+        let checkpoint = self
+            .memory_trace_checkpoints
+            .iter()
+            .rev()
+            .find(|(captured, _checkpoint)| captured == manifest)
+            .map(|(_captured, checkpoint)| checkpoint)?;
+        self.memory_traces
+            .as_ref()
+            .map(|_| PreparedMemoryTraceRestore {
+                fetch: checkpoint.fetch.clone(),
+                data: checkpoint.data.clone(),
+            })
+    }
+
+    fn install_prepared_memory_trace_restore(&self, prepared: Option<PreparedMemoryTraceRestore>) {
+        if let (Some((fetch, data)), Some(prepared)) = (&self.memory_traces, prepared) {
+            fetch.restore_checkpoint_events(prepared.fetch);
+            data.restore_checkpoint_events(prepared.data);
         }
     }
 }
@@ -292,27 +399,37 @@ mod tests {
     use std::time::Duration;
 
     use rem6_checkpoint::CheckpointState;
-    use rem6_cpu::CpuId;
+    use rem6_cpu::{
+        CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster,
+        RiscvClusterTurn, RiscvCore,
+    };
     use rem6_isa_riscv::Register;
     use rem6_kernel::{
         PartitionId, PartitionSnapshot, PartitionedScheduler, ScheduledEventKind, SchedulerError,
         SchedulerSnapshot,
     };
-    use rem6_memory::PartitionedMemoryStore;
-    use rem6_stats::{
-        GlobalInstTrackerSnapshot, PcCountPair, ProbePointId, ProbeSnapshot, StatsRegistry,
+    use rem6_memory::{
+        AccessSize, Address, AgentId, CacheLineLayout, MemoryRequestId, MemoryResponse,
+        PartitionedMemoryStore,
     };
-    use rem6_transport::{MemoryRoute, MemoryTrace, MemoryTransport, TargetOutcome};
+    use rem6_stats::{
+        GlobalInstTrackerSnapshot, PcCountPair, ProbePointId, ProbeSnapshot, StackDistProbeConfig,
+        StatsRegistry,
+    };
+    use rem6_transport::{
+        MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind,
+        MemoryTransport, TargetOutcome, TransportEndpointId,
+    };
 
     use crate::scheduler_checkpoint::{
         SchedulerCheckpointBank, SchedulerCheckpointOwnedEvent, SchedulerCheckpointPort,
     };
     use crate::{
         GuestEventId, GuestSourceId, HostAction, MemoryStoreCheckpointBank,
-        MemoryStoreCheckpointPort, RiscvCoreCheckpointBank, RiscvCoreCheckpointPort,
-        RiscvInstructionStats, RiscvO3RuntimeStats, RiscvRetiredInstructionProbeSnapshot,
-        RiscvSystemRunDriver, RiscvTrapEventPort, SchedulerCheckpointError, SystemHostController,
-        SystemHostEventPort,
+        MemoryStoreCheckpointPort, RiscvCoreCheckpointBank, RiscvCoreCheckpointError,
+        RiscvCoreCheckpointPort, RiscvDataAccessStats, RiscvInstructionStats, RiscvO3RuntimeStats,
+        RiscvRetiredInstructionProbeSnapshot, RiscvSystemRunDriver, RiscvTrapEventPort,
+        SchedulerCheckpointError, SystemHostController, SystemHostEventPort,
     };
 
     use super::*;
@@ -342,6 +459,128 @@ mod tests {
                 label: label.to_string(),
             },
         )
+    }
+
+    fn checkpoint_test_core(cpu: CpuId) -> RiscvCore {
+        RiscvCore::new(
+            CpuCore::new(
+                CpuResetState::new(
+                    cpu,
+                    PartitionId::new(0),
+                    AgentId::new(0),
+                    Address::new(0x8000),
+                ),
+                CpuFetchConfig::new(
+                    TransportEndpointId::new("cpu.ifetch").unwrap(),
+                    MemoryRouteId::new(0),
+                    CacheLineLayout::new(16).unwrap(),
+                    AccessSize::new(4).unwrap(),
+                ),
+            )
+            .unwrap(),
+        )
+    }
+
+    fn executor_with_data_probe_checkpoint(
+        core: RiscvCore,
+        data_stats: &RiscvDataAccessStats,
+    ) -> SystemActionExecutor {
+        let mut executor =
+            SystemActionExecutor::with_checkpoint(StatsRegistry::new(), CheckpointRegistry::new());
+        executor
+            .attach_riscv_checkpoint_bank(
+                RiscvCoreCheckpointBank::new([RiscvCoreCheckpointPort::new(
+                    CheckpointComponentId::new("cpu0").unwrap(),
+                    core,
+                )])
+                .unwrap(),
+            )
+            .unwrap();
+        executor.attach_riscv_data_access_stats(data_stats);
+        executor
+    }
+
+    #[test]
+    fn checkpoint_data_probe_capture_rejects_missing_attached_cpu() {
+        let cpu = CpuId::new(0);
+        let core = checkpoint_test_core(cpu);
+        let data_stats = RiscvDataAccessStats::with_stack_distance(
+            StackDistProbeConfig::builder(16, 16).build().unwrap(),
+        );
+        data_stats.reset_for_run([]);
+        let live = data_stats.data_access_probe_checkpoint();
+        let mut executor = executor_with_data_probe_checkpoint(core, &data_stats);
+        let registry = executor.checkpoints.clone();
+
+        let error = executor
+            .apply(&checkpoint_record("missing-cpu"))
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            SystemError::RiscvCheckpoint(RiscvCoreCheckpointError::MissingDataAccessRecorderCpu {
+                cpu
+            })
+        );
+        assert_eq!(data_stats.data_access_probe_checkpoint(), live);
+        assert!(executor.captured_manifests.is_empty());
+        assert!(executor.riscv_data_access_probe_checkpoints.is_empty());
+        assert_eq!(executor.checkpoints, registry);
+    }
+
+    #[test]
+    fn checkpoint_data_probe_capture_rejects_extra_recorder_cpu() {
+        let cpu = CpuId::new(0);
+        let extra = CpuId::new(1);
+        let core = checkpoint_test_core(cpu);
+        let data_stats = RiscvDataAccessStats::with_stack_distance(
+            StackDistProbeConfig::builder(16, 16).build().unwrap(),
+        );
+        data_stats.reset_for_run([(cpu, 0), (extra, 0)]);
+        let live = data_stats.data_access_probe_checkpoint();
+        let mut executor = executor_with_data_probe_checkpoint(core, &data_stats);
+
+        let error = executor.apply(&checkpoint_record("extra-cpu")).unwrap_err();
+
+        assert_eq!(
+            error,
+            SystemError::RiscvCheckpoint(
+                RiscvCoreCheckpointError::UnexpectedDataAccessRecorderCpu { cpu: extra }
+            )
+        );
+        assert_eq!(data_stats.data_access_probe_checkpoint(), live);
+        assert!(executor.captured_manifests.is_empty());
+        assert!(executor.riscv_data_access_probe_checkpoints.is_empty());
+    }
+
+    #[test]
+    fn checkpoint_data_probe_capture_rejects_cursor_past_core_history() {
+        let cpu = CpuId::new(0);
+        let core = checkpoint_test_core(cpu);
+        let data_stats = RiscvDataAccessStats::with_stack_distance(
+            StackDistProbeConfig::builder(16, 16).build().unwrap(),
+        );
+        data_stats.reset_for_run([(cpu, 1)]);
+        let live = data_stats.data_access_probe_checkpoint();
+        let mut executor = executor_with_data_probe_checkpoint(core, &data_stats);
+
+        let error = executor
+            .apply(&checkpoint_record("cursor-past-history"))
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            SystemError::RiscvCheckpoint(
+                RiscvCoreCheckpointError::DataAccessRecorderCursorOutOfRange {
+                    cpu,
+                    cursor: 1,
+                    event_count: 0,
+                }
+            )
+        );
+        assert_eq!(data_stats.data_access_probe_checkpoint(), live);
+        assert!(executor.captured_manifests.is_empty());
+        assert!(executor.riscv_data_access_probe_checkpoints.is_empty());
     }
 
     #[test]
@@ -406,6 +645,335 @@ mod tests {
                 .len(),
             6
         );
+    }
+
+    #[test]
+    fn checkpoint_restore_rewinds_post_capture_memory_trace_events() {
+        let fetch = MemoryTrace::new();
+        let data = MemoryTrace::new();
+        let mut executor =
+            SystemActionExecutor::with_checkpoint(StatsRegistry::new(), CheckpointRegistry::new());
+        executor.attach_memory_traces(&fetch, &data);
+        let endpoint = TransportEndpointId::new("cpu0.dmem").unwrap();
+        let before = MemoryTraceEvent::request(
+            289,
+            MemoryRouteId::new(1),
+            endpoint.clone(),
+            MemoryTraceKind::RequestSent,
+            MemoryRequestId::new(AgentId::new(0), 15),
+        );
+        data.record(before.clone());
+        executor.apply(&checkpoint_record("memory-traces")).unwrap();
+        data.record(MemoryTraceEvent::request(
+            291,
+            MemoryRouteId::new(1),
+            endpoint.clone(),
+            MemoryTraceKind::RequestSent,
+            MemoryRequestId::new(AgentId::new(0), 16),
+        ));
+
+        executor
+            .apply(&HostActionRecord::new(
+                292,
+                PartitionId::new(0),
+                PartitionId::new(0),
+                GuestEventId::new(2),
+                GuestSourceId::new(1),
+                HostAction::RestoreCheckpointByLabel {
+                    label: "memory-traces".to_string(),
+                },
+            ))
+            .unwrap();
+        let replay = MemoryTraceEvent::request(
+            290,
+            MemoryRouteId::new(1),
+            endpoint,
+            MemoryTraceKind::RequestSent,
+            MemoryRequestId::new(AgentId::new(0), 16),
+        );
+        data.record(replay.clone());
+
+        assert_eq!(data.snapshot(), vec![before, replay]);
+    }
+
+    #[test]
+    fn stable_checkpoint_restore_does_not_replay_discarded_data_probe_source_history() {
+        let cpu = CpuId::new(0);
+        let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+        let mut transport = MemoryTransport::new();
+        let fetch_route = transport
+            .add_route(
+                MemoryRoute::new(
+                    TransportEndpointId::new("cpu0.ifetch").unwrap(),
+                    PartitionId::new(0),
+                    TransportEndpointId::new("memory.ifetch").unwrap(),
+                    PartitionId::new(1),
+                    2,
+                    3,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let data_route = transport
+            .add_route(
+                MemoryRoute::new(
+                    TransportEndpointId::new("cpu0.dmem").unwrap(),
+                    PartitionId::new(0),
+                    TransportEndpointId::new("memory.dmem").unwrap(),
+                    PartitionId::new(1),
+                    2,
+                    3,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let core = RiscvCore::with_data(
+            CpuCore::new(
+                CpuResetState::new(
+                    cpu,
+                    PartitionId::new(0),
+                    AgentId::new(7),
+                    Address::new(0x8000_0000),
+                ),
+                CpuFetchConfig::new(
+                    TransportEndpointId::new("cpu0.ifetch").unwrap(),
+                    fetch_route,
+                    CacheLineLayout::new(16).unwrap(),
+                    AccessSize::new(4).unwrap(),
+                ),
+            )
+            .unwrap(),
+            CpuDataConfig::new(
+                TransportEndpointId::new("cpu0.dmem").unwrap(),
+                data_route,
+                CacheLineLayout::new(16).unwrap(),
+            ),
+        );
+        core.write_register(Register::new(2).unwrap(), 0x9000);
+        let cluster = RiscvCluster::new([core.clone()]).unwrap();
+        let controller = Arc::new(Mutex::new(SystemHostController::new(
+            crate::HostEventPolicy,
+            StatsRegistry::new(),
+        )));
+        let trap_port = RiscvTrapEventPort::new(
+            SystemHostEventPort::with_controller(PartitionId::new(1), 2, Arc::clone(&controller))
+                .unwrap(),
+            GuestSourceId::new(1),
+        );
+        let driver = RiscvSystemRunDriver::new(trap_port).with_data_access_stats(
+            RiscvDataAccessStats::with_stack_distance(
+                StackDistProbeConfig::builder(16, 16).build().unwrap(),
+            ),
+        );
+        controller
+            .lock()
+            .unwrap()
+            .executor_mut()
+            .attach_riscv_checkpoint_bank(
+                RiscvCoreCheckpointBank::new([RiscvCoreCheckpointPort::new(
+                    CheckpointComponentId::new("cpu0").unwrap(),
+                    core.clone(),
+                )])
+                .unwrap(),
+            )
+            .unwrap();
+
+        issue_test_load(&core, &mut scheduler, &transport, true);
+        driver
+            .record_run_stats(
+                &cluster,
+                scheduler.now(),
+                &RiscvClusterTurn::idle(scheduler.now()),
+            )
+            .unwrap();
+        let checkpoint_history = core.data_access_events();
+        let checkpoint_probes = driver
+            .data_access_stats()
+            .unwrap()
+            .data_access_probe_snapshot();
+        let checkpoint_tick = scheduler.now();
+        controller
+            .lock()
+            .unwrap()
+            .executor_mut()
+            .apply(&HostActionRecord::new(
+                checkpoint_tick,
+                PartitionId::new(0),
+                PartitionId::new(0),
+                GuestEventId::new(1),
+                GuestSourceId::new(1),
+                HostAction::Checkpoint {
+                    label: "stable-data-history".to_string(),
+                },
+            ))
+            .unwrap();
+
+        issue_test_load(&core, &mut scheduler, &transport, false);
+        assert_eq!(core.data_access_event_count(), checkpoint_history.len() + 1);
+        let progressed_history = core.data_access_events();
+        driver
+            .record_run_stats(
+                &cluster,
+                scheduler.now(),
+                &RiscvClusterTurn::idle(scheduler.now()),
+            )
+            .unwrap();
+        controller
+            .lock()
+            .unwrap()
+            .executor_mut()
+            .apply(&HostActionRecord::new(
+                scheduler.now(),
+                PartitionId::new(0),
+                PartitionId::new(0),
+                GuestEventId::new(2),
+                GuestSourceId::new(1),
+                HostAction::RestoreCheckpointByLabel {
+                    label: "stable-data-history".to_string(),
+                },
+            ))
+            .unwrap();
+
+        driver
+            .record_run_stats(
+                &cluster,
+                scheduler.now(),
+                &RiscvClusterTurn::idle(scheduler.now()),
+            )
+            .unwrap();
+
+        assert_eq!(
+            driver
+                .data_access_stats()
+                .unwrap()
+                .data_access_probe_snapshot(),
+            checkpoint_probes
+        );
+        assert_eq!(core.data_access_events(), progressed_history);
+
+        let replay_history_start = core.data_access_event_count();
+        issue_test_load(&core, &mut scheduler, &transport, true);
+        assert_eq!(core.data_access_event_count(), replay_history_start + 2);
+        driver
+            .record_run_stats(
+                &cluster,
+                scheduler.now(),
+                &RiscvClusterTurn::idle(scheduler.now()),
+            )
+            .unwrap();
+
+        let replayed_probes = driver
+            .data_access_stats()
+            .unwrap()
+            .data_access_probe_snapshot();
+        assert_eq!(
+            replayed_probes.probes().events().len(),
+            checkpoint_probes.probes().events().len() + 1
+        );
+    }
+
+    fn issue_test_load(
+        core: &RiscvCore,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        complete: bool,
+    ) {
+        core.issue_next_fetch(
+            scheduler,
+            transport,
+            MemoryTrace::new(),
+            |delivery, _context| {
+                TargetOutcome::Respond(
+                    MemoryResponse::completed(
+                        delivery.request(),
+                        Some(0x0000_2603_u32.to_le_bytes().to_vec()),
+                    )
+                    .unwrap(),
+                )
+            },
+        )
+        .unwrap();
+        scheduler.run_until_idle();
+        core.execute_next_completed_fetch().unwrap().unwrap();
+        core.issue_next_data_access(
+            scheduler,
+            transport,
+            MemoryTrace::new(),
+            move |delivery, _context| {
+                if complete {
+                    TargetOutcome::Respond(
+                        MemoryResponse::completed(delivery.request(), Some(vec![0x2a, 0, 0, 0]))
+                            .unwrap(),
+                    )
+                } else {
+                    TargetOutcome::NoResponse
+                }
+            },
+        )
+        .unwrap()
+        .unwrap();
+        if complete {
+            scheduler.run_until_idle();
+        }
+    }
+
+    #[test]
+    fn failed_restore_does_not_install_prepared_probe_or_memory_trace_state() {
+        let cpu = CpuId::new(0);
+        let data_stats = RiscvDataAccessStats::with_stack_distance(
+            StackDistProbeConfig::builder(16, 16).build().unwrap(),
+        );
+        data_stats.reset_for_run([(cpu, 0)]);
+        let fetch = MemoryTrace::new();
+        let data = MemoryTrace::new();
+        let component = CheckpointComponentId::new("late-memory").unwrap();
+        let memory = Arc::new(Mutex::new(PartitionedMemoryStore::new()));
+        let mut executor =
+            SystemActionExecutor::with_checkpoint(StatsRegistry::new(), CheckpointRegistry::new());
+        executor.attach_riscv_data_access_stats(&data_stats);
+        executor.attach_memory_traces(&fetch, &data);
+        executor
+            .attach_memory_checkpoint_bank(
+                MemoryStoreCheckpointBank::new([MemoryStoreCheckpointPort::new(
+                    component.clone(),
+                    memory,
+                )])
+                .unwrap(),
+            )
+            .unwrap();
+        executor.apply(&checkpoint_record("derived-state")).unwrap();
+
+        data_stats.reset_for_run([(cpu, 7)]);
+        let progressed_probe = data_stats.data_access_probe_checkpoint();
+        let progressed_trace = MemoryTraceEvent::request(
+            291,
+            MemoryRouteId::new(1),
+            TransportEndpointId::new("cpu0.dmem").unwrap(),
+            MemoryTraceKind::RequestSent,
+            MemoryRequestId::new(AgentId::new(0), 16),
+        );
+        data.record(progressed_trace.clone());
+        executor.checkpoints.remove_component(&component);
+
+        let error = executor
+            .apply(&HostActionRecord::new(
+                292,
+                PartitionId::new(0),
+                PartitionId::new(0),
+                GuestEventId::new(2),
+                GuestSourceId::new(1),
+                HostAction::RestoreCheckpointByLabel {
+                    label: "derived-state".to_string(),
+                },
+            ))
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            SystemError::Checkpoint(rem6_checkpoint::CheckpointError::UnknownComponent { .. })
+        ));
+        assert_eq!(data_stats.data_access_probe_checkpoint(), progressed_probe);
+        assert_eq!(data.snapshot(), [progressed_trace]);
     }
 
     #[test]

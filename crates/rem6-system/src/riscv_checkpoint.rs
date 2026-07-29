@@ -11,12 +11,13 @@ use rem6_cpu::{
     MultiperspectivePerceptronCheckpointPayload, MultiperspectivePerceptronError,
     O3LiveIssueTelemetry, O3PipelineError, O3RuntimeCheckpointPayload, O3RuntimeError,
     O3RuntimeSnapshot, O3RuntimeStats, PreparedRiscvCoreRestore, RiscvCore,
-    RiscvCoreCheckpointRestoreError, RiscvCoreCheckpointRestoreInput, RiscvHartRunState,
-    RiscvO3LiveCheckpointCapture, RiscvO3LiveCheckpointError, RiscvO3LiveCheckpointPayload,
-    RiscvO3LiveCheckpointWake, RiscvO3LiveDataHandoffCapture, RiscvO3WritebackDebugState,
-    TageScLBranchPredictorCheckpointPayload, TageScLBranchPredictorError,
-    TournamentBranchPredictorCheckpointPayload, TournamentBranchPredictorError,
-    RISCV_O3_LIVE_CHECKPOINT_CHUNK, RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,
+    RiscvCoreCheckpointRestoreError, RiscvCoreCheckpointRestoreInput, RiscvDataAccessEvent,
+    RiscvHartRunState, RiscvO3LiveCheckpointCapture, RiscvO3LiveCheckpointError,
+    RiscvO3LiveCheckpointPayload, RiscvO3LiveCheckpointWake, RiscvO3LiveDataHandoffCapture,
+    RiscvO3WritebackDebugState, TageScLBranchPredictorCheckpointPayload,
+    TageScLBranchPredictorError, TournamentBranchPredictorCheckpointPayload,
+    TournamentBranchPredictorError, RISCV_O3_LIVE_CHECKPOINT_CHUNK,
+    RISCV_O3_LIVE_DATA_HANDOFF_CHUNK,
 };
 use rem6_isa_riscv::{
     FloatRegister, Register, RiscvHartState, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot,
@@ -853,6 +854,61 @@ impl RiscvCoreCheckpointBank {
         self.ports.keys().cloned().collect()
     }
 
+    pub(crate) fn data_access_event_cursors(&self) -> Vec<(CpuId, usize)> {
+        self.ports
+            .values()
+            .map(|port| {
+                let core = port.core();
+                (core.id(), core.data_access_event_count())
+            })
+            .collect()
+    }
+
+    pub(crate) fn data_access_event_snapshots_from_cursors(
+        &self,
+        cursors: &BTreeMap<CpuId, usize>,
+    ) -> Result<Vec<(CpuId, usize, Vec<RiscvDataAccessEvent>)>, RiscvCoreCheckpointError> {
+        let mut cores = BTreeMap::new();
+        for port in self.ports.values() {
+            let core = port.core();
+            let cpu = core.id();
+            if cores.insert(cpu, core).is_some() {
+                return Err(RiscvCoreCheckpointError::DuplicateDataAccessCheckpointCpu { cpu });
+            }
+        }
+        for cpu in cores.keys() {
+            if !cursors.contains_key(cpu) {
+                return Err(RiscvCoreCheckpointError::MissingDataAccessRecorderCpu { cpu: *cpu });
+            }
+        }
+        for cpu in cursors.keys() {
+            if !cores.contains_key(cpu) {
+                return Err(RiscvCoreCheckpointError::UnexpectedDataAccessRecorderCpu {
+                    cpu: *cpu,
+                });
+            }
+        }
+
+        cores
+            .into_iter()
+            .map(|(cpu, core)| {
+                let events = core.data_access_events();
+                let event_count = events.len();
+                let cursor = cursors[&cpu];
+                if cursor > event_count {
+                    return Err(
+                        RiscvCoreCheckpointError::DataAccessRecorderCursorOutOfRange {
+                            cpu,
+                            cursor,
+                            event_count,
+                        },
+                    );
+                }
+                Ok((cpu, event_count, events[cursor..].to_vec()))
+            })
+            .collect()
+    }
+
     pub(crate) fn prepare_source_local_checkpoint_capture(&self, deadline: u64) {
         for port in self.ports.values() {
             port.core()
@@ -1102,6 +1158,20 @@ impl RiscvCoreCheckpointBank {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RiscvCoreCheckpointError {
+    DuplicateDataAccessCheckpointCpu {
+        cpu: CpuId,
+    },
+    MissingDataAccessRecorderCpu {
+        cpu: CpuId,
+    },
+    UnexpectedDataAccessRecorderCpu {
+        cpu: CpuId,
+    },
+    DataAccessRecorderCursorOutOfRange {
+        cpu: CpuId,
+        cursor: usize,
+        event_count: usize,
+    },
     MissingChunk {
         component: CheckpointComponentId,
         name: String,
@@ -1214,6 +1284,30 @@ pub enum RiscvCoreCheckpointError {
 impl fmt::Display for RiscvCoreCheckpointError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::DuplicateDataAccessCheckpointCpu { cpu } => write!(
+                formatter,
+                "RISC-V checkpoint bank contains duplicate data-access CPU {}",
+                cpu.get()
+            ),
+            Self::MissingDataAccessRecorderCpu { cpu } => write!(
+                formatter,
+                "RISC-V data-access recorder is missing checkpoint CPU {}",
+                cpu.get()
+            ),
+            Self::UnexpectedDataAccessRecorderCpu { cpu } => write!(
+                formatter,
+                "RISC-V data-access recorder contains CPU {} that is absent from the checkpoint bank",
+                cpu.get()
+            ),
+            Self::DataAccessRecorderCursorOutOfRange {
+                cpu,
+                cursor,
+                event_count,
+            } => write!(
+                formatter,
+                "RISC-V data-access recorder cursor {cursor} for CPU {} exceeds checkpoint history length {event_count}",
+                cpu.get()
+            ),
             Self::MissingChunk { component, name } => write!(
                 formatter,
                 "RISC-V core checkpoint component {} is missing chunk {name}",

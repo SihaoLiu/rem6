@@ -385,13 +385,16 @@ impl RiscvWorkloadReplay {
             schedule_gpu_kernel_launches(topology, &gpu_devices, &mut scheduler)?;
         let accelerator_command_count =
             schedule_accelerator_commands(topology, &accelerator_devices, &mut scheduler)?;
+        let fetch_trace = MemoryTrace::new();
+        let data_trace = MemoryTrace::new();
+        driver.attach_memory_traces_for_checkpoint(&fetch_trace, &data_trace);
         let run_result = if let Some(page_map) = data_translation_page_map.as_ref() {
             driver.drive_until_host_stop_parallel_with_data_translation(
                 &cluster,
                 &mut scheduler,
                 &transport,
-                MemoryTrace::new(),
-                MemoryTrace::new(),
+                fetch_trace,
+                data_trace,
                 page_map,
                 |cpu| trace_fetch_responder(&cluster, &fetch_bindings, memory.clone(), cpu),
                 |_cpu| {
@@ -413,8 +416,8 @@ impl RiscvWorkloadReplay {
                 &cluster,
                 &mut scheduler,
                 &transport,
-                MemoryTrace::new(),
-                MemoryTrace::new(),
+                fetch_trace,
+                data_trace,
                 |cpu| trace_fetch_responder(&cluster, &fetch_bindings, memory.clone(), cpu),
                 |_cpu| {
                     let memory = memory.clone();

@@ -16,6 +16,9 @@ use crate::{
     TageScLBranchPredictorCheckpointPayload, TournamentBranchPredictorCheckpointPayload,
 };
 
+#[path = "riscv_core_checkpoint_restore/pending_address.rs"]
+mod pending_address;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvCoreCheckpointRestoreInput {
     pub hart: RiscvHartState,
@@ -202,40 +205,15 @@ fn prepare_and_install_live(
     {
         return Err(live_error("live wake authority is inconsistent"));
     }
-    let event_requests = live
-        .events
-        .iter()
-        .map(|event| event.fetch.request_id())
-        .collect::<BTreeSet<_>>();
-    let fetch_partition = core.partition();
+    let operational_fetch = pending_address::operational_fetch_projection(core, live)?;
     let fetch_agent = core.agent();
-    let fetch_route = core.inner().fetch_route();
-    let fetch_endpoint = core.inner().fetch_endpoint();
     let completed_data_request_invalid = live.completed_result.as_ref().is_some_and(|result| {
         result.data_request.agent() != fetch_agent
             || result.data_request.sequence() <= result.fetch_request.sequence()
             || result.data_request.sequence() >= live.next_fetch_request_sequence
-            || event_requests.contains(&result.data_request)
+            || operational_fetch.requests.contains(&result.data_request)
     });
-    if event_requests.len() != live.events.len()
-        || completed_data_request_invalid
-        || event_requests
-            .iter()
-            .any(|request| request.sequence() >= live.next_fetch_request_sequence)
-        || live.events.iter().any(|event| {
-            event.fetch.partition() != fetch_partition
-                || event.fetch.request_id().agent() != fetch_agent
-                || event.fetch.route() != fetch_route
-                || event.fetch.endpoint() != &fetch_endpoint
-                || event.fetch.pc().get() != event.execution_pc
-        })
-        || live.events.windows(2).any(|events| {
-            events[0].next_pc != events[1].execution_pc
-                || events[0].fetch.request_id().sequence()
-                    >= events[1].fetch.request_id().sequence()
-        })
-        || live.events.last().map(|event| event.next_pc) != Some(live.next_fetch_pc.get())
-    {
+    if completed_data_request_invalid {
         return Err(live_error("live fetch membership is inconsistent"));
     }
 
@@ -247,19 +225,31 @@ fn prepare_and_install_live(
     let (runtime, restored_events, memory_result_authorization) = prepared_live.into_parts();
     replacement_riscv.events.retain(|event| {
         event.fetch().request_id().sequence() < live.next_fetch_request_sequence
-            && !event_requests.contains(&event.fetch().request_id())
+            && !operational_fetch
+                .requests
+                .contains(&event.fetch().request_id())
     });
     replacement_riscv.events.extend(restored_events);
+    let retain_operational_data_history =
+        live.profile == crate::RiscvO3LiveCheckpointProfile::CompletedFpLoad;
+    replacement_riscv.data_events.retain(|event| {
+        event.tick() <= live.captured_tick
+            && event.fetch_request_id().sequence() < live.next_fetch_request_sequence
+            && (retain_operational_data_history
+                || !operational_fetch
+                    .requests
+                    .contains(&event.fetch_request_id()))
+    });
     trim_and_extend_requests(
         &mut replacement_riscv.executed_fetches,
         live.next_fetch_request_sequence,
-        &event_requests,
+        &operational_fetch.requests,
         &live.executed_fetch_requests,
     );
     trim_and_extend_requests(
         &mut replacement_riscv.issued_data_for_fetches,
         live.next_fetch_request_sequence,
-        &event_requests,
+        &operational_fetch.requests,
         &live.issued_fetch_requests,
     );
     if let Some((request, authorization)) = memory_result_authorization {
@@ -289,10 +279,7 @@ fn prepare_and_install_live(
     replacement_cpu.replace_operational_fetch(
         live.next_fetch_pc,
         live.next_fetch_request_sequence,
-        live.events
-            .iter()
-            .map(|event| event.fetch.clone())
-            .collect(),
+        operational_fetch.fetches,
     );
     core.core.install_checkpoint_state(replacement_cpu);
     *core.state.lock().expect("riscv core lock") = replacement_riscv;

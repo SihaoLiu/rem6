@@ -1314,6 +1314,14 @@ impl PartitionQueue {
             .min()
     }
 
+    fn checkpoint_rebound_boundary_at_or_before(&self, horizon: Tick) -> Option<Tick> {
+        self.pending
+            .iter()
+            .filter(|event| event.checkpoint_rebound_boundary && event.tick <= horizon)
+            .map(|event| event.tick)
+            .min()
+    }
+
     fn serial_blockers_with_tokens_at_or_before(
         &self,
         partition: PartitionId,
@@ -1353,6 +1361,32 @@ impl PartitionQueue {
         tick: Tick,
         callback: PartitionEventCallback,
     ) -> Result<PartitionEventId, SchedulerError> {
+        self.schedule_event_at_with_checkpoint_boundary(partition, tick, callback, false)
+    }
+
+    fn schedule_checkpoint_rebound_event_at(
+        &mut self,
+        partition: PartitionId,
+        tick: Tick,
+        callback: PartitionEventCallback,
+    ) -> Result<PartitionEventId, SchedulerError> {
+        let checkpoint_rebound_boundary =
+            tick == self.now && matches!(&callback, PartitionEventCallback::Parallel(_));
+        self.schedule_event_at_with_checkpoint_boundary(
+            partition,
+            tick,
+            callback,
+            checkpoint_rebound_boundary,
+        )
+    }
+
+    fn schedule_event_at_with_checkpoint_boundary(
+        &mut self,
+        partition: PartitionId,
+        tick: Tick,
+        callback: PartitionEventCallback,
+        checkpoint_rebound_boundary: bool,
+    ) -> Result<PartitionEventId, SchedulerError> {
         if tick < self.now {
             return Err(SchedulerError::InThePast {
                 partition,
@@ -1379,6 +1413,7 @@ impl PartitionQueue {
             id,
             token,
             callback: Some(callback),
+            checkpoint_rebound_boundary,
         });
 
         Ok(id)
@@ -1433,6 +1468,7 @@ struct PartitionEvent {
     id: PartitionEventId,
     token: SchedulerEventToken,
     callback: Option<PartitionEventCallback>,
+    checkpoint_rebound_boundary: bool,
 }
 
 impl PartitionEvent {
