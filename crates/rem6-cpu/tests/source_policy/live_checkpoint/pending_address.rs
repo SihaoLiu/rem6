@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "pending_address_graph.rs"]
+mod pending_address_graph;
+
 const POLICY: &str = "tests/source_policy/live_checkpoint/pending_address.rs";
 const CODEC: &str = "src/riscv_live_checkpoint/codec.rs";
 const FETCH: &str = "src/riscv_live_checkpoint/fetch/pending_address.rs";

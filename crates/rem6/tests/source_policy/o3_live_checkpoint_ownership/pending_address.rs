@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "pending_address_graph.rs"]
+mod pending_address_graph;
+
 const POLICY: &str = "tests/source_policy/o3_live_checkpoint_ownership/pending_address.rs";
 const DEPENDENT_OWNER: &str =
     "tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/dependent_store.rs";
@@ -147,7 +150,7 @@ fn pending_address_live_checkpoint_cli_proves_hierarchy_timing_and_boundaries() 
         "assert!(event_u64(restored_store,\"issue_tick\")<event_u64(restored_store,\"lsq_data_response_tick\"))",
         "assert_eq!(requests,data_requests_sent(baseline))",
         "Some(\"pending_data_address\")",
-        "Some(2)",
+        "live.pointer(\"/version\").and_then(Value::as_u64),Some(3)",
         "Some(0)",
         "Some(1)",
         "assert_eq!(restored.pointer(\"/memory\"),baseline.pointer(\"/memory\"))",
@@ -321,7 +324,8 @@ fn ledger_contract(ledger: &str) -> bool {
     let cpu = component_section(ledger, "### CPU Execution Models - 74% representative");
     cpu.contains("**Score calculation:** 8 of 10 items have executable evidence, or 80% raw, capped at the 74% representative bucket cap.")
         && cpu.contains("exactly one post-publication, committed-producer, unmaterialized dependent `SD`")
-        && cpu.contains("Pre-response producer transport, general IQ shapes, multiple pending-address rows, materialized or submitted stores, dependent atomics, translated/MMIO memory, broader memory/result state, broad O3 restoration, and a general O3 engine remain non-restorable.")
+        && cpu.contains("an exact capacity-three post-publication addressless scalar-load graph across sibling, chain, and mixed-fanout topologies")
+        && cpu.contains("Pre-response producer transport, materialized or submitted pending-address rows, dependent atomics, translated/MMIO pending-address rows, nonadjacent or fourth-and-deeper pending-address graphs, broader memory/result state, broad O3 restoration, restorable live transport ownership, and a general O3 engine remain non-restorable.")
         && ANCHORS.iter().all(|anchor| cpu.contains(anchor))
         && !ledger.contains(", and addressless pending-state serialization")
         && !normalized_policy_text(cpu).contains("checkpoint restorable pre response producer transport")

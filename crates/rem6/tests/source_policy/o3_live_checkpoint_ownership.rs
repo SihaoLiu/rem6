@@ -324,8 +324,8 @@ fn o3_live_checkpoint_ledger_claim_is_bounded_and_score_neutral() {
         .contains("**Score calculation:** 24 of 26 items have executable evidence, or 92% raw."));
 
     for claim in [
-        "checkpoint-restorable compute IQ window, exactly one response-admitted scalar FLW/FLD result, and exactly one post-publication, committed-producer, unmaterialized dependent `SD`",
-        "Pre-response producer transport, general IQ shapes, multiple pending-address rows, materialized or submitted stores, dependent atomics, translated/MMIO memory, broader memory/result state, broad O3 restoration, and a general O3 engine remain non-restorable.",
+        "checkpoint-restorable compute IQ window, exactly one response-admitted scalar FLW/FLD result, exactly one post-publication, committed-producer, unmaterialized dependent `SD`, and an exact capacity-three post-publication addressless scalar-load graph across sibling, chain, and mixed-fanout topologies",
+        "Pre-response producer transport, materialized or submitted pending-address rows, dependent atomics, translated/MMIO pending-address rows, nonadjacent or fourth-and-deeper pending-address graphs, broader memory/result state, broad O3 restoration, restorable live transport ownership, and a general O3 engine remain non-restorable.",
     ] {
         assert!(cpu.contains(claim), "CPU ledger is missing `{claim}`");
     }

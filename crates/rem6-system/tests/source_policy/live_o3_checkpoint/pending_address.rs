@@ -1,12 +1,11 @@
 use super::*;
+#[path = "pending_address_graph.rs"]
+mod pending_address_graph;
 #[path = "pending_address/reachability.rs"]
 mod reachability;
 const POLICY: &str = "tests/source_policy/live_o3_checkpoint/pending_address.rs";
 const REACHABILITY: &str = "tests/source_policy/live_o3_checkpoint/pending_address/reachability.rs";
 const CAPTURE: &str = "src/riscv_checkpoint/capture.rs";
-const SCHEDULER_TESTS: &str = "tests/live_o3_scheduler_checkpoint/pending_address.rs";
-const ATOMICITY_TESTS: &str = "tests/live_o3_scheduler_checkpoint/pending_address/atomicity.rs";
-const BANK_TESTS: &str = "tests/riscv_checkpoint/o3_live.rs";
 
 #[test]
 fn pending_address_live_o3_system_sources_are_attached_and_focused() {
@@ -41,9 +40,6 @@ fn pending_address_live_o3_system_sources_are_attached_and_focused() {
         ("src/riscv_checkpoint/live_wake.rs", 100),
         ("src/riscv_checkpoint/restore_authority.rs", 180),
         ("tests/support/live_o3_pending_address.rs", 350),
-        (SCHEDULER_TESTS, 300),
-        (ATOMICITY_TESTS, 140),
-        (BANK_TESTS, 700),
     ] {
         let path = crate_dir.join(relative);
         let lines = line_count(&path);
@@ -74,38 +70,6 @@ fn pending_address_stable_checkpoint_and_mode_switch_rejections_are_locked() {
     );
     assert_ne!(mode_switch, capture, "mode-switch mutation must apply");
     assert!(!stable_boundary_contract(&riscv, &mode_switch));
-}
-
-#[test]
-fn pending_address_scheduler_authority_and_atomicity_are_locked() {
-    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let scheduler = read(crate_dir, SCHEDULER_TESTS);
-    let atomicity = read(crate_dir, ATOMICITY_TESTS);
-    let banks = read(crate_dir, BANK_TESTS);
-    assert!(scheduler_proof_contract(&scheduler, &atomicity, &banks));
-    let missing_authority = atomicity.replacen(
-        "executor.apply(&restore_record(without_scheduler)).is_err()",
-        "executor.apply(&restore_record(without_scheduler)).is_ok()",
-        1,
-    );
-    assert_ne!(missing_authority, atomicity);
-    assert!(!scheduler_proof_contract(
-        &scheduler,
-        &missing_authority,
-        &banks,
-    ));
-
-    let partial_mutation = atomicity.replacen(
-        "assert_eq!(memory.lock().unwrap().snapshot(), memory_before);",
-        "assert_ne!(memory.lock().unwrap().snapshot(), memory_before);",
-        1,
-    );
-    assert_ne!(partial_mutation, atomicity);
-    assert!(!scheduler_proof_contract(
-        &scheduler,
-        &partial_mutation,
-        &banks,
-    ));
 }
 
 #[test]
@@ -181,43 +145,6 @@ fn stable_boundary_contract(riscv: &str, capture: &str) -> bool {
         && mode
             .contains("Ok(record)ifrecord.o3_live_checkpoint().is_none()=>Ok((port,record,true))")
         && mode.contains("Ok(_)=>Err(CheckpointError::ComponentNotQuiescent")
-}
-
-fn scheduler_proof_contract(scheduler: &str, atomicity: &str, banks: &str) -> bool {
-    let required = unconditional_function_body(
-        atomicity,
-        "pending_address_restore_requires_full_scheduler_snapshot",
-    );
-    let corrupt = unconditional_function_body(
-        atomicity,
-        "pending_address_corrupt_live_chunk_is_full_executor_atomic",
-    );
-    let bank_atomic = unconditional_function_body(
-        banks,
-        "pending_address_second_bank_corruption_mutates_no_core_or_scheduler",
-    );
-    parsed_unconditional_external_module_count(
-        scheduler,
-        "atomicity",
-        "pending_address/atomicity.rs",
-    ) == 1
-        && required.contains("state.component()!=&scheduler_component")
-        && required.contains("executor.apply(&restore_record(without_scheduler)).is_err()")
-        && required.contains("seeded.core.owned_o3_writeback_wakes(),wakes_before")
-        && required.contains("seeded.core.inner().fetch_events(),fetches_before")
-        && required.contains("scheduler.lock().unwrap().snapshot(),scheduler_before")
-        && required.contains("assert_eq!(memory.lock().unwrap().snapshot(),memory_before)")
-        && required.contains("assert_eq!(executor.checkpoints(),&registry_before)")
-        && required.contains(
-            "assert_eq!(executor.execution_mode(&mode_target),Some(ExecutionMode::Timing))",
-        )
-        && corrupt.contains("executor.apply(&restore_record(corrupt)).is_err()")
-        && corrupt.contains("seeded.core.checkpoint_hart_state(),core_before")
-        && corrupt.contains("scheduler.lock().unwrap().snapshot(),scheduler_before")
-        && corrupt.contains("assert_eq!(memory.lock().unwrap().snapshot(),memory_before)")
-        && corrupt.contains("assert_eq!(executor.checkpoints(),&registry_before)")
-        && bank_atomic.contains("destination_bank.restore_all_from(&registry).is_err()")
-        && bank_atomic.contains("assert_eq!(scheduler.snapshot(),scheduler_before)")
 }
 
 fn probe_finalization_contract(

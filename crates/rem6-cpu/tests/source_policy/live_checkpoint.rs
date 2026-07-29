@@ -7,8 +7,8 @@ const POLICY: &str = "tests/source_policy/live_checkpoint.rs";
 const LEDGER: &str = "docs/architecture/gem5-to-rem6-migration.md";
 const CPU_HEADING: &str = "### CPU Execution Models - 74% representative";
 const CPU_SCORE: &str = "**Score calculation:** 8 of 10 items have executable evidence, or 80% raw, capped at the 74% representative bucket cap.";
-const BOUNDED_CLAIM: &str = "checkpoint-restorable compute IQ window, exactly one response-admitted scalar FLW/FLD result, and exactly one post-publication, committed-producer, unmaterialized dependent `SD`";
-const RETAINED_GAPS: &str = "Pre-response producer transport, general IQ shapes, multiple pending-address rows, materialized or submitted stores, dependent atomics, translated/MMIO memory, broader memory/result state, broad O3 restoration, and a general O3 engine remain non-restorable.";
+const BOUNDED_CLAIM: &str = "checkpoint-restorable compute IQ window, exactly one response-admitted scalar FLW/FLD result, exactly one post-publication, committed-producer, unmaterialized dependent `SD`, and an exact capacity-three post-publication addressless scalar-load graph across sibling, chain, and mixed-fanout topologies";
+const RETAINED_GAPS: &str = "Pre-response producer transport, materialized or submitted pending-address rows, dependent atomics, translated/MMIO pending-address rows, nonadjacent or fourth-and-deeper pending-address graphs, broader memory/result state, broad O3 restoration, restorable live transport ownership, and a general O3 engine remain non-restorable.";
 
 #[test]
 fn live_checkpoint_cpu_owners_are_unconditional_and_bounded() {
