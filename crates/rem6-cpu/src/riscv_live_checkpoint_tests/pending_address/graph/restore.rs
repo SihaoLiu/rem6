@@ -5,6 +5,9 @@ use rem6_kernel::{PartitionedScheduler, PendingEventSnapshot, SchedulerInstanceI
 use rem6_memory::CacheLineLayout;
 
 use crate::o3_runtime::{O3DataAccessWindowPolicy, O3PendingDataAddressRequest};
+use crate::riscv_fetch_ahead::{
+    O3MemoryResultWindowAuthorization, O3MemoryResultWindowRole, O3MemoryResultWindowRoute,
+};
 use crate::{
     CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore, RiscvCoreCheckpointRestoreInput,
 };
@@ -224,6 +227,59 @@ fn pending_load_graph_capture_projects_all_addressless_owners() {
 }
 
 #[test]
+fn pending_load_graph_capture_normalizes_only_matching_fetch_authorizations() {
+    let fixture = PendingLoadGraphCheckpointFixture::new([5, 6, 7], 4);
+    install_graph_authorizations(&fixture.core, [5, 6, 7]);
+
+    let projection = fixture.capture();
+    assert_eq!(captured_graph(&projection).pending_addresses.len(), 3);
+    let destination = graph_core(fixture.issue_width);
+    install_graph_projection(&destination, &fixture.core, &projection);
+    assert!(destination
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .memory_result_window_authorizations
+        .is_empty());
+
+    let extra = PendingLoadGraphCheckpointFixture::new([5, 6, 7], 4);
+    install_graph_authorizations(&extra.core, [5, 6, 7]);
+    {
+        let mut state = extra.core.state.lock().expect("riscv core lock");
+        let authorization = state.memory_result_window_authorizations[&request(1)];
+        state
+            .memory_result_window_authorizations
+            .insert(request(99), authorization);
+    }
+    assert!(matches!(
+        extra.capture().live_capture(),
+        RiscvO3LiveCheckpointCapture::Rejected
+    ));
+
+    let mismatched = PendingLoadGraphCheckpointFixture::new([5, 6, 7], 4);
+    install_graph_authorizations(&mismatched.core, [5, 6, 7]);
+    mismatched
+        .core
+        .state
+        .lock()
+        .expect("riscv core lock")
+        .memory_result_window_authorizations
+        .insert(
+            request(2),
+            O3MemoryResultWindowAuthorization::dependent_for_test(
+                Some(reg(7)),
+                reg(5),
+                MemoryWidth::Doubleword,
+                Immediate::new(0),
+            ),
+        );
+    assert!(matches!(
+        mismatched.capture().live_capture(),
+        RiscvO3LiveCheckpointCapture::Rejected
+    ));
+}
+
+#[test]
 fn pending_load_graph_restore_rebuilds_rob_rename_lsq_and_fetches() {
     let fixture = PendingLoadGraphCheckpointFixture::new([5, 5, 7], 2);
     let projection = fixture.capture();
@@ -385,6 +441,30 @@ fn pending_requests(producers: [u8; 3]) -> Vec<O3PendingDataAddressRequest> {
             )
         })
         .collect()
+}
+
+fn install_graph_authorizations(core: &RiscvCore, producers: [u8; 3]) {
+    let mut state = core.state.lock().expect("riscv core lock");
+    let first = O3MemoryResultWindowAuthorization::resolved_for_test(
+        Some(reg(FIRST_DESTINATION_REGISTER)),
+        O3MemoryResultWindowRoute::Memory,
+        AddressRange::new(Address::new(21), AccessSize::new(8).unwrap()).unwrap(),
+        O3MemoryResultWindowRole::Head,
+    );
+    state
+        .memory_result_window_authorizations
+        .insert(request(FIRST_LOAD_SEQUENCE), first);
+    for (index, producer) in producers.into_iter().enumerate().skip(1) {
+        state.memory_result_window_authorizations.insert(
+            request(FIRST_LOAD_SEQUENCE + index as u64),
+            O3MemoryResultWindowAuthorization::dependent_for_test(
+                Some(reg(FIRST_DESTINATION_REGISTER + index as u8)),
+                reg(producer),
+                MemoryWidth::Doubleword,
+                Immediate::new(0),
+            ),
+        );
+    }
 }
 
 fn root_event() -> RiscvCpuExecutionEvent {

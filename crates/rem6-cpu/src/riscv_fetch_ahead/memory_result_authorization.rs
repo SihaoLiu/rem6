@@ -54,6 +54,26 @@ pub(crate) struct O3MemoryResultWindowAuthorization {
 }
 
 impl O3MemoryResultWindowAuthorization {
+    #[cfg(test)]
+    pub(crate) const fn resolved_for_test(
+        integer_destination: Option<Register>,
+        route: O3MemoryResultWindowRoute,
+        physical_range: AddressRange,
+        role: O3MemoryResultWindowRole,
+    ) -> Self {
+        Self::resolved(integer_destination, route, physical_range, role)
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn dependent_for_test(
+        integer_destination: Option<Register>,
+        register: Register,
+        width: MemoryWidth,
+        immediate: Immediate,
+    ) -> Self {
+        Self::dependent(integer_destination, register, width, immediate)
+    }
+
     pub(in crate::riscv_fetch_ahead) const fn resolved(
         integer_destination: Option<Register>,
         route: O3MemoryResultWindowRoute,
