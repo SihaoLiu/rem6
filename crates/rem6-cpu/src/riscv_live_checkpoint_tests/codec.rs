@@ -5,13 +5,14 @@ const FIRST_EVENT_OFFSET: usize = EVENT_COUNT_OFFSET + 4;
 
 #[test]
 #[rustfmt::skip]
-fn o3_live_checkpoint_v1_round_trips_compute_and_rejects_future_watermark() {
+fn o3_live_checkpoint_v2_round_trips_compute_and_rejects_future_watermark() {
     let mut expected = compute_payload();
     expected.finalized_writeback.partial_cycle_ticks.clear();
     expected.finalized_writeback.partial_ready_rows_by_tick.clear();
     expected.finalized_writeback.partial_deferred_rows_by_tick.clear();
     expected.finalized_writeback.closed_before_tick = 100;
     let encoded = expected.encode().unwrap();
+    assert_eq!(encoded[4], 2);
     assert_eq!(RiscvO3LiveCheckpointPayload::decode(&encoded), Ok(expected.clone()));
     expected.finalized_writeback.closed_before_tick = 101;
     assert!(matches!(expected.encode(), Err(RiscvO3LiveCheckpointError::InvalidProfileShape { .. })));
@@ -20,7 +21,7 @@ fn o3_live_checkpoint_v1_round_trips_compute_and_rejects_future_watermark() {
 }
 
 #[test]
-fn o3_live_checkpoint_v1_distinguishes_absent_and_zero_service_identity() {
+fn o3_live_checkpoint_v2_distinguishes_absent_and_zero_service_identity() {
     let mut absent = compute_payload();
     absent.service.last_service_generation = None;
     let mut zero = absent.clone();
@@ -66,10 +67,11 @@ fn self_suppressing_compute_payload() -> RiscvO3LiveCheckpointPayload {
 
 #[test]
 #[rustfmt::skip]
-fn o3_live_checkpoint_v1_round_trips_completed_fp_projection() {
+fn o3_live_checkpoint_v2_round_trips_completed_fp_projection() {
     for width in [MemoryWidth::Word, MemoryWidth::Doubleword] {
         let expected = completed_fp_payload(width);
         let encoded = expected.encode().unwrap();
+        assert_eq!(encoded[4], 2);
         assert_eq!(RiscvO3LiveCheckpointPayload::decode(&encoded), Ok(expected), "{width:?}");
     }
 }
@@ -124,7 +126,7 @@ fn o3_live_checkpoint_rejects_unknown_magic_version_and_profile() {
     let encoded = compute_payload().encode().unwrap();
     for (offset, value, expected) in [
         (0, b'X', RiscvO3LiveCheckpointError::InvalidMagic),
-        (4, 2, RiscvO3LiveCheckpointError::UnsupportedVersion { version: 2 }),
+        (4, 3, RiscvO3LiveCheckpointError::UnsupportedVersion { version: 3 }),
         (5, 9, RiscvO3LiveCheckpointError::UnsupportedProfile { profile: 9 }),
     ] {
         assert_byte_error(&encoded, offset, value, expected);

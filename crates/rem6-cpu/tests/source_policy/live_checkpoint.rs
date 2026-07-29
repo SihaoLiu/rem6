@@ -63,11 +63,35 @@ fn live_checkpoint_cpu_wire_contracts_are_distinct_and_versioned() {
 
     assert!(wire_contract(&live, &codec, &runtime, &pipeline, &handoff));
 
-    let wrong_o3lc = codec.replacen("const VERSION: u8 = 1;", "const VERSION: u8 = 2;", 1);
-    assert_ne!(wrong_o3lc, codec, "O3LC version mutation must apply");
+    let wrong_o3lc_legacy = codec.replacen(
+        "const VERSION_LEGACY: u8 = 1;",
+        "const VERSION_LEGACY: u8 = 0;",
+        1,
+    );
+    assert_ne!(
+        wrong_o3lc_legacy, codec,
+        "O3LC legacy-version mutation must apply"
+    );
     assert!(!wire_contract(
         &live,
-        &wrong_o3lc,
+        &wrong_o3lc_legacy,
+        &runtime,
+        &pipeline,
+        &handoff,
+    ));
+
+    let wrong_o3lc_current = codec.replacen(
+        "const VERSION_CURRENT: u8 = 2;",
+        "const VERSION_CURRENT: u8 = 3;",
+        1,
+    );
+    assert_ne!(
+        wrong_o3lc_current, codec,
+        "O3LC current-version mutation must apply"
+    );
+    assert!(!wire_contract(
+        &live,
+        &wrong_o3lc_current,
         &runtime,
         &pipeline,
         &handoff,
@@ -285,7 +309,8 @@ fn wire_contract(live: &str, codec: &str, runtime: &str, pipeline: &str, handoff
             == 1
         && active_codec.contains("constMAGIC:[u8;4]=*b;")
         && codec.matches("*b\"O3LC\"").count() == 1
-        && active_codec.contains("constVERSION:u8=1;")
+        && active_codec.contains("constVERSION_LEGACY:u8=1;")
+        && active_codec.contains("constVERSION_CURRENT:u8=2;")
         && active_runtime
             .contains("constO3_RUNTIME_CHECKPOINT_VERSION_WITH_WRITEBACK_PORT_STATS:u8=23;")
         && active_runtime.contains("constO3_RUNTIME_CHECKPOINT_VERSION:u8=O3_RUNTIME_CHECKPOINT_VERSION_WITH_WRITEBACK_PORT_STATS;")
@@ -294,7 +319,7 @@ fn wire_contract(live: &str, codec: &str, runtime: &str, pipeline: &str, handoff
         && !active_codec.contains("riscv_execution_mode_handoff")
         && !active_codec.contains("RISCV_O3_LIVE_DATA_HANDOFF_CHUNK")
         && !active_codec.contains("RiscvO3LiveDataHandoff")
-        && !active_codec.contains("VERSION_CURRENT")
+        && !active_codec.contains("constVERSION:u8=")
         && !codec.contains("*b\"O3DH\"")
 }
 

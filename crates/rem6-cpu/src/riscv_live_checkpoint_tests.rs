@@ -5,7 +5,7 @@ use rem6_isa_riscv::{
     RiscvInstruction,
 };
 use rem6_kernel::{PartitionId, ScheduledEventKind};
-use rem6_memory::{AccessSize, Address, AgentId, MemoryRequestId};
+use rem6_memory::{AccessSize, Address, AddressRange, AgentId, MemoryRequestId};
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
 use super::*;
@@ -16,6 +16,8 @@ mod codec;
 mod compute;
 #[path = "riscv_live_checkpoint_tests/fp_result.rs"]
 mod fp_result;
+#[path = "riscv_live_checkpoint_tests/pending_address.rs"]
+mod pending_address;
 #[path = "riscv_live_checkpoint_tests/rejections.rs"]
 mod rejections;
 
@@ -123,7 +125,7 @@ fn base_payload(
         },
         finalized_writeback: finalized_writeback(),
         writeback_counted_sequences: if profile == RiscvO3LiveCheckpointProfile::ComputeQueue { Vec::new() } else { vec![71] }, writeback_published_sequences: if profile == RiscvO3LiveCheckpointProfile::ComputeQueue { Vec::new() } else { vec![70] },
-        reservation, completed_result,
+        reservation, completed_result, pending_address: None,
         wake: RiscvO3LiveCheckpointWake {
             scheduler_instance_raw: 0x4455_6677_8899_aabb, partition: PartitionId::new(2),
             tick: 108, scheduler_order: 77, kind: ScheduledEventKind::Parallel,

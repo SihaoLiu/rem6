@@ -86,6 +86,7 @@ pub fn seed_live_core_at(
             closed_before_tick: captured_tick,
         },
         writeback_counted_sequences: Vec::new(), writeback_published_sequences: Vec::new(), reservation: None, completed_result: None,
+        pending_address: None,
         wake: RiscvO3LiveCheckpointWake {
             scheduler_instance_raw: scheduler.instance_id().checkpoint_raw(),
             partition: PartitionId::new(0), tick: wake_tick, scheduler_order: wake.order(), kind,

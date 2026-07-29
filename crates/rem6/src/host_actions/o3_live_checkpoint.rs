@@ -23,15 +23,17 @@ pub(crate) struct Rem6HostO3LiveCheckpointChunkSummary {
 impl Rem6HostO3LiveCheckpointChunkSummary {
     fn decoded(
         payload_bytes: u64,
+        wire_version: u8,
         payload: &RiscvO3LiveCheckpointPayload,
         wake_rebound: bool,
     ) -> Self {
         Self {
             decode_error: false,
-            version: Some(1),
+            version: Some(u64::from(wire_version)),
             profile: Some(match payload.profile {
                 RiscvO3LiveCheckpointProfile::ComputeQueue => "compute_queue",
                 RiscvO3LiveCheckpointProfile::CompletedFpLoad => "completed_fp_load",
+                RiscvO3LiveCheckpointProfile::PendingDataAddress => "pending_data_address",
             }),
             payload_bytes,
             event_count: Some(payload.events.len() as u64),
@@ -116,12 +118,17 @@ pub(super) fn decode_o3_live_checkpoint_chunk(
         return None;
     }
     let payload_bytes = payload.len() as u64;
-    Some(match RiscvO3LiveCheckpointPayload::decode(payload) {
-        Ok(decoded) => {
-            Rem6HostO3LiveCheckpointChunkSummary::decoded(payload_bytes, &decoded, wake_rebound)
-        }
-        Err(_) => Rem6HostO3LiveCheckpointChunkSummary::decode_error(payload_bytes),
-    })
+    Some(
+        match RiscvO3LiveCheckpointPayload::decode_versioned(payload) {
+            Ok((wire_version, decoded)) => Rem6HostO3LiveCheckpointChunkSummary::decoded(
+                payload_bytes,
+                wire_version,
+                &decoded,
+                wake_rebound,
+            ),
+            Err(_) => Rem6HostO3LiveCheckpointChunkSummary::decode_error(payload_bytes),
+        },
+    )
 }
 
 fn optional_u64_json(value: Option<u64>) -> String {

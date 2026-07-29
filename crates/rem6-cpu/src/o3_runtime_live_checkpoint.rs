@@ -664,6 +664,11 @@ impl O3RuntimeState {
                 }
                 Some((result, reservation))
             }
+            RiscvO3LiveCheckpointProfile::PendingDataAddress => {
+                return Err(invalid(
+                    "pending-address live checkpoint restore is not implemented",
+                ));
+            }
         };
         if stable.pending_live_retire_gate().is_some() {
             return Err(invalid(
@@ -680,6 +685,7 @@ impl O3RuntimeState {
             RiscvO3LiveCheckpointProfile::CompletedFpLoad => live
                 .finalized_writeback
                 .is_valid_without_live_calendar_closed_through(live.captured_tick),
+            RiscvO3LiveCheckpointProfile::PendingDataAddress => false,
         };
         if !finalized_writeback_is_valid {
             return Err(invalid("finalized writeback ownership is inconsistent"));

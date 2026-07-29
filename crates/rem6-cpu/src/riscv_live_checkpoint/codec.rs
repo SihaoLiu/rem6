@@ -14,15 +14,20 @@ use crate::{
 };
 
 use super::{
-    RiscvO3LiveCheckpointCompletedFpLoad, RiscvO3LiveCheckpointError as Error,
-    RiscvO3LiveCheckpointEvent, RiscvO3LiveCheckpointFinalizedWriteback,
-    RiscvO3LiveCheckpointIssueRow, RiscvO3LiveCheckpointPayload, RiscvO3LiveCheckpointProfile,
-    RiscvO3LiveCheckpointReservation, RiscvO3LiveCheckpointService, RiscvO3LiveCheckpointTelemetry,
-    RiscvO3LiveCheckpointWake, RiscvO3LiveCheckpointWritebackSource,
+    pending_address::validate_pending_profile, RiscvO3LiveCheckpointCompletedFpLoad,
+    RiscvO3LiveCheckpointError as Error, RiscvO3LiveCheckpointEvent,
+    RiscvO3LiveCheckpointFinalizedWriteback, RiscvO3LiveCheckpointIssueRow,
+    RiscvO3LiveCheckpointPayload, RiscvO3LiveCheckpointProfile, RiscvO3LiveCheckpointReservation,
+    RiscvO3LiveCheckpointService, RiscvO3LiveCheckpointTelemetry, RiscvO3LiveCheckpointWake,
+    RiscvO3LiveCheckpointWritebackSource,
 };
 
+#[path = "codec/pending_address.rs"]
+mod pending_address;
+
 const MAGIC: [u8; 4] = *b"O3LC";
-const VERSION: u8 = 1;
+const VERSION_LEGACY: u8 = 1;
+const VERSION_CURRENT: u8 = 2;
 const MAX_ROWS: usize = 65_536;
 const MAX_EVENTS: usize = 4_096;
 const MAX_ENDPOINT_BYTES: usize = 1_024;
@@ -76,7 +81,7 @@ fn encode_impl(
     }
     let mut out = Vec::new();
     out.extend_from_slice(&MAGIC);
-    byte(&mut out, VERSION);
+    byte(&mut out, VERSION_CURRENT);
     byte(&mut out, profile_tag(checkpoint.profile));
     u64v(&mut out, checkpoint.captured_tick);
     u64v(&mut out, checkpoint.next_fetch_pc.get());
@@ -135,23 +140,27 @@ fn encode_impl(
     )?;
     write_reservation(&mut out, checkpoint.reservation);
     write_completed_result(&mut out, checkpoint.completed_result.as_ref())?;
+    pending_address::write(&mut out, checkpoint.pending_address.as_ref())?;
     write_wake(&mut out, checkpoint.wake);
     Ok(out)
 }
 
-pub(super) fn decode(payload: &[u8]) -> Result<RiscvO3LiveCheckpointPayload, Error> {
+pub(super) fn decode_versioned(
+    payload: &[u8],
+) -> Result<(u8, RiscvO3LiveCheckpointPayload), Error> {
     let mut reader = Reader::new(payload);
     if reader.bytes("magic", MAGIC.len())? != MAGIC {
         return Err(Error::InvalidMagic);
     }
     let version = reader.byte("version")?;
-    if version != VERSION {
+    if !matches!(version, VERSION_LEGACY | VERSION_CURRENT) {
         return Err(Error::UnsupportedVersion { version });
     }
-    let profile = match reader.byte("profile")? {
-        0 => RiscvO3LiveCheckpointProfile::ComputeQueue,
-        1 => RiscvO3LiveCheckpointProfile::CompletedFpLoad,
-        profile => return Err(Error::UnsupportedProfile { profile }),
+    let profile = match (version, reader.byte("profile")?) {
+        (_, 0) => RiscvO3LiveCheckpointProfile::ComputeQueue,
+        (_, 1) => RiscvO3LiveCheckpointProfile::CompletedFpLoad,
+        (VERSION_CURRENT, 2) => RiscvO3LiveCheckpointProfile::PendingDataAddress,
+        (_, profile) => return Err(Error::UnsupportedProfile { profile }),
     };
     let captured_tick = reader.u64("captured tick")?;
     let next_fetch_pc = Address::new(reader.u64("next fetch PC")?);
@@ -179,6 +188,11 @@ pub(super) fn decode(payload: &[u8]) -> Result<RiscvO3LiveCheckpointPayload, Err
     let writeback_published_sequences = read_u64_vec(&mut reader, "writeback published sequences")?;
     let reservation = read_reservation(&mut reader)?;
     let completed_result = read_completed_result(&mut reader)?;
+    let pending_address = if version == VERSION_CURRENT {
+        pending_address::read(&mut reader)?
+    } else {
+        None
+    };
     let wake = read_wake(&mut reader)?;
     if reader.remaining() != 0 {
         return Err(Error::TrailingBytes {
@@ -202,32 +216,65 @@ pub(super) fn decode(payload: &[u8]) -> Result<RiscvO3LiveCheckpointPayload, Err
         writeback_published_sequences,
         reservation,
         completed_result,
+        pending_address,
         wake,
     };
     validate(&checkpoint)?;
-    Ok(checkpoint)
+    Ok((version, checkpoint))
 }
 
-fn write_event(out: &mut Vec<u8>, event: &RiscvO3LiveCheckpointEvent) -> Result<(), Error> {
-    u64v(out, event.fetch.tick());
-    u32v(out, event.fetch.partition().index());
-    u64v(out, event.fetch.route().get());
+fn write_fetch(out: &mut Vec<u8>, fetch: &CpuFetchEvent) -> Result<(), Error> {
+    u64v(out, fetch.tick());
+    u32v(out, fetch.partition().index());
+    u64v(out, fetch.route().get());
     blob(
         out,
         "fetch endpoint",
-        event.fetch.endpoint().as_str().as_bytes(),
+        fetch.endpoint().as_str().as_bytes(),
         MAX_ENDPOINT_BYTES,
     )?;
-    write_request(out, event.fetch.request_id());
-    u64v(out, event.fetch.pc().get());
-    u64v(out, event.fetch.size().bytes());
-    byte(out, event.fetch.kind().wire_tag());
+    write_request(out, fetch.request_id());
+    write_address(out, fetch.pc());
+    u64v(out, fetch.size().bytes());
+    byte(out, fetch.kind().wire_tag());
     blob(
         out,
         "fetch data",
-        event.fetch.data().unwrap_or_default(),
+        fetch.data().unwrap_or_default(),
         MAX_FETCH_BYTES,
     )?;
+    Ok(())
+}
+
+fn read_fetch(reader: &mut Reader<'_>) -> Result<CpuFetchEvent, Error> {
+    let tick = reader.u64("fetch tick")?;
+    let partition = PartitionId::new(reader.u32("fetch partition")?);
+    let route = MemoryRouteId::new(reader.u64("fetch route")?);
+    let endpoint_bytes = reader.blob("fetch endpoint", MAX_ENDPOINT_BYTES)?;
+    let endpoint = std::str::from_utf8(endpoint_bytes)
+        .ok()
+        .and_then(|value| TransportEndpointId::new(value).ok())
+        .ok_or(Error::InvalidEndpoint)?;
+    let request = read_request(reader, "fetch request")?;
+    let pc = read_address(reader, "fetch PC")?;
+    let size_value = reader.u64("fetch access size")?;
+    let size =
+        AccessSize::new(size_value).map_err(|_| invalid_field("fetch access size", size_value))?;
+    let kind =
+        CpuFetchEventKind::from_wire_tag(reader.byte("fetch event kind")?, "fetch event kind")?;
+    let data = reader.blob("fetch data", MAX_FETCH_BYTES)?.to_vec();
+    let record = CpuFetchRecord::new(tick, partition, route, endpoint, request, pc, size);
+    match kind {
+        CpuFetchEventKind::Completed => Ok(CpuFetchEvent::completed(record, data)),
+        CpuFetchEventKind::Issued if data.is_empty() => Ok(CpuFetchEvent::issued(record)),
+        CpuFetchEventKind::Retry if data.is_empty() => Ok(CpuFetchEvent::retry(record)),
+        CpuFetchEventKind::Failed if data.is_empty() => Ok(CpuFetchEvent::failed(record)),
+        _ => Err(unsupported("non-completed fetch carries bytes")),
+    }
+}
+
+fn write_event(out: &mut Vec<u8>, event: &RiscvO3LiveCheckpointEvent) -> Result<(), Error> {
+    write_fetch(out, &event.fetch)?;
     u64v(out, event.execution_pc);
     u64v(out, event.next_pc);
     byte(out, event.instruction_bytes);
@@ -238,7 +285,7 @@ fn write_event(out: &mut Vec<u8>, event: &RiscvO3LiveCheckpointEvent) -> Result<
         MAX_WRITES,
     )?;
     for write in &event.register_writes {
-        byte(out, write.register().index());
+        write_register(out, write.register());
         u64v(out, write.value());
     }
     count(
@@ -274,37 +321,12 @@ fn write_event(out: &mut Vec<u8>, event: &RiscvO3LiveCheckpointEvent) -> Result<
 }
 
 fn read_event(reader: &mut Reader<'_>) -> Result<RiscvO3LiveCheckpointEvent, Error> {
-    let tick = reader.u64("fetch tick")?;
-    let partition = PartitionId::new(reader.u32("fetch partition")?);
-    let route = MemoryRouteId::new(reader.u64("fetch route")?);
-    let endpoint_bytes = reader.blob("fetch endpoint", MAX_ENDPOINT_BYTES)?;
-    let endpoint = std::str::from_utf8(endpoint_bytes)
-        .ok()
-        .and_then(|value| TransportEndpointId::new(value).ok())
-        .ok_or(Error::InvalidEndpoint)?;
-    let request = read_request(reader, "fetch request")?;
-    let pc = Address::new(reader.u64("fetch PC")?);
-    let size_value = reader.u64("fetch access size")?;
-    let size =
-        AccessSize::new(size_value).map_err(|_| invalid_field("fetch access size", size_value))?;
-    let kind =
-        CpuFetchEventKind::from_wire_tag(reader.byte("fetch event kind")?, "fetch event kind")?;
-    let data = reader.blob("fetch data", MAX_FETCH_BYTES)?.to_vec();
-    let record = CpuFetchRecord::new(tick, partition, route, endpoint, request, pc, size);
-    let fetch = match kind {
-        CpuFetchEventKind::Completed => CpuFetchEvent::completed(record, data),
-        CpuFetchEventKind::Issued if data.is_empty() => CpuFetchEvent::issued(record),
-        CpuFetchEventKind::Retry if data.is_empty() => CpuFetchEvent::retry(record),
-        CpuFetchEventKind::Failed if data.is_empty() => CpuFetchEvent::failed(record),
-        _ => return Err(unsupported("non-completed fetch carries bytes")),
-    };
+    let fetch = read_fetch(reader)?;
     let execution_pc = reader.u64("event execution PC")?;
     let next_pc = reader.u64("event next PC")?;
     let instruction_bytes = reader.byte("event instruction width")?;
     let register_writes = reader.vec("integer writes", MAX_WRITES, |reader| {
-        let index = reader.byte("integer write register")?;
-        let register =
-            Register::new(index).map_err(|_| invalid_register("integer write", index))?;
+        let register = read_register(reader, "integer write")?;
         Ok(RegisterWrite::new(
             register,
             reader.u64("integer write value")?,
@@ -526,11 +548,11 @@ fn write_completed_result(
         value.raw_ready_tick,
         value.admitted_tick,
         value.latency_ticks,
-        value.physical_address.get(),
-        value.access_size.bytes(),
     ] {
         u64v(out, field);
     }
+    write_address(out, value.physical_address);
+    u64v(out, value.access_size.bytes());
     u32v(out, value.request_byte_offset);
     blob(
         out,
@@ -560,7 +582,7 @@ fn read_completed_result(
     let raw_ready_tick = reader.u64("completed raw-ready tick")?;
     let admitted_tick = reader.u64("completed admitted tick")?;
     let latency_ticks = reader.u64("completed latency ticks")?;
-    let physical_address = Address::new(reader.u64("completed physical address")?);
+    let physical_address = read_address(reader, "completed physical address")?;
     let size_value = reader.u64("completed access size")?;
     let access_size = AccessSize::new(size_value)
         .map_err(|_| invalid_field("completed access size", size_value))?;
@@ -616,7 +638,8 @@ fn validate(value: &RiscvO3LiveCheckpointPayload) -> Result<(), Error> {
     if value.wake.scheduler_instance_raw == 0 {
         return Err(invalid_field("wake scheduler instance", 0));
     }
-    if value.events.is_empty() {
+    if value.events.is_empty() && value.profile != RiscvO3LiveCheckpointProfile::PendingDataAddress
+    {
         return Err(invalid_shape("live event list is empty"));
     }
     if value.service.has_invalid_identity_at(value.captured_tick) {
@@ -638,9 +661,7 @@ fn validate(value: &RiscvO3LiveCheckpointPayload) -> Result<(), Error> {
                 O3RegisterClass::Integer | O3RegisterClass::FloatingPoint
             )
         {
-            return Err(invalid_shape(
-                "rename row is not a version-1 scalar register",
-            ));
+            return Err(invalid_shape("rename row is not a scalar register"));
         }
     }
     match value.profile {
@@ -657,6 +678,7 @@ fn validate(value: &RiscvO3LiveCheckpointPayload) -> Result<(), Error> {
                 .collect::<BTreeSet<_>>();
             if value.reservation.is_some()
                 || value.completed_result.is_some()
+                || value.pending_address.is_some()
                 || !value.issued_fetch_requests.is_empty()
                 || !value.writeback_counted_sequences.is_empty()
                 || !value.writeback_published_sequences.is_empty()
@@ -672,6 +694,11 @@ fn validate(value: &RiscvO3LiveCheckpointPayload) -> Result<(), Error> {
             }
         }
         RiscvO3LiveCheckpointProfile::CompletedFpLoad => {
+            if value.pending_address.is_some() {
+                return Err(invalid_shape(
+                    "completed FP load carries a pending-address row",
+                ));
+            }
             let (Some(reservation), Some(result)) =
                 (value.reservation, value.completed_result.as_ref())
             else {
@@ -680,6 +707,9 @@ fn validate(value: &RiscvO3LiveCheckpointPayload) -> Result<(), Error> {
                 ));
             };
             validate_completed_fp_load(value, reservation, result)?;
+        }
+        RiscvO3LiveCheckpointProfile::PendingDataAddress => {
+            validate_pending_profile(value)?;
         }
     }
     ensure_unique(
@@ -736,6 +766,7 @@ fn preflight(value: &RiscvO3LiveCheckpointPayload) -> Result<(), Error> {
     if let Some(result) = &value.completed_result {
         check_lengths!(MAX_RESPONSE_BYTES; "completed response bytes" => result.response_bytes);
     }
+    pending_address::preflight(value.pending_address.as_ref())?;
     Ok(())
 }
 
@@ -803,6 +834,23 @@ fn ensure_unique(field: &'static str, values: impl IntoIterator<Item = u64>) -> 
         }
     }
     Ok(())
+}
+
+fn write_register(out: &mut Vec<u8>, value: Register) {
+    byte(out, value.index());
+}
+
+fn read_register(reader: &mut Reader<'_>, field: &'static str) -> Result<Register, Error> {
+    let index = reader.byte(field)?;
+    Register::new(index).map_err(|_| invalid_register(field, index))
+}
+
+fn write_address(out: &mut Vec<u8>, value: Address) {
+    u64v(out, value.get());
+}
+
+fn read_address(reader: &mut Reader<'_>, field: &'static str) -> Result<Address, Error> {
+    Ok(Address::new(reader.u64(field)?))
 }
 
 fn write_request(out: &mut Vec<u8>, value: MemoryRequestId) {
@@ -910,6 +958,7 @@ fn profile_tag(value: RiscvO3LiveCheckpointProfile) -> u8 {
     match value {
         RiscvO3LiveCheckpointProfile::ComputeQueue => 0,
         RiscvO3LiveCheckpointProfile::CompletedFpLoad => 1,
+        RiscvO3LiveCheckpointProfile::PendingDataAddress => 2,
     }
 }
 fn invalid_tag(field: &'static str, value: u8) -> Error {

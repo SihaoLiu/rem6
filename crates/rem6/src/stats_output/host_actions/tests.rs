@@ -336,7 +336,7 @@ fn host_action_checkpoint_stats_expose_o3_live_checkpoint_numeric_fields() {
             "sim.host_actions.{action}.component.cpu0.chunk.o3_live_checkpoint.o3_live_checkpoint"
         );
         for (field, unit, value) in [
-            ("version", "Count", 1),
+            ("version", "Count", 2),
             ("payload_bytes", "Byte", 73),
             ("event_count", "Count", 2),
             ("resident_rows", "Count", 2),
@@ -532,7 +532,7 @@ fn restore_with_component_chunk(
 fn o3_live_checkpoint_summary(rebound_wakes: u64) -> Rem6HostO3LiveCheckpointChunkSummary {
     Rem6HostO3LiveCheckpointChunkSummary {
         decode_error: false,
-        version: Some(1),
+        version: Some(2),
         profile: Some("compute_queue"),
         payload_bytes: 73,
         event_count: Some(2),

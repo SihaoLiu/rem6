@@ -13,8 +13,14 @@ use crate::{O3RenameMapEntry, RiscvCore, RiscvCoreState};
 mod codec;
 #[path = "riscv_live_checkpoint/event.rs"]
 mod event;
+#[path = "riscv_live_checkpoint/fetch.rs"]
+mod fetch;
+#[path = "riscv_live_checkpoint/pending_address.rs"]
+mod pending_address;
 
 pub use event::RiscvO3LiveCheckpointEvent;
+use fetch::select_live_completed_fetches;
+pub use pending_address::RiscvO3LiveCheckpointPendingDataAddress;
 
 pub const RISCV_O3_LIVE_CHECKPOINT_CHUNK: &str = "o3-live-checkpoint";
 
@@ -57,6 +63,7 @@ impl RiscvO3CheckpointProjection {
 pub enum RiscvO3LiveCheckpointProfile {
     ComputeQueue,
     CompletedFpLoad,
+    PendingDataAddress,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -214,6 +221,7 @@ pub struct RiscvO3LiveCheckpointPayload {
     pub writeback_published_sequences: Vec<u64>,
     pub reservation: Option<RiscvO3LiveCheckpointReservation>,
     pub completed_result: Option<RiscvO3LiveCheckpointCompletedFpLoad>,
+    pub pending_address: Option<RiscvO3LiveCheckpointPendingDataAddress>,
     pub wake: RiscvO3LiveCheckpointWake,
 }
 
@@ -223,7 +231,11 @@ impl RiscvO3LiveCheckpointPayload {
     }
 
     pub fn decode(payload: &[u8]) -> Result<Self, RiscvO3LiveCheckpointError> {
-        codec::decode(payload)
+        Self::decode_versioned(payload).map(|(_, checkpoint)| checkpoint)
+    }
+
+    pub fn decode_versioned(payload: &[u8]) -> Result<(u8, Self), RiscvO3LiveCheckpointError> {
+        codec::decode_versioned(payload)
     }
 
     #[cfg(test)]
@@ -798,6 +810,7 @@ fn capture_live_from_guards(
             writeback_published_sequences: runtime.writeback_published_sequences,
             reservation: runtime.reservation,
             completed_result: runtime.completed_result,
+            pending_address: None,
             wake: RiscvO3LiveCheckpointWake {
                 scheduler_instance_raw: wake.scheduler().checkpoint_raw(),
                 partition: wake.event().partition(),
@@ -809,66 +822,6 @@ fn capture_live_from_guards(
         projected_stable,
         projected_hart,
     )))
-}
-
-fn select_live_completed_fetches<'a>(
-    cpu_events: &'a [crate::CpuFetchEvent],
-    executed_fetches: &BTreeSet<MemoryRequestId>,
-    expected_requests: &[MemoryRequestId],
-) -> Result<Vec<&'a crate::CpuFetchEvent>, RiscvO3LiveCheckpointError> {
-    let expected = expected_requests.iter().copied().collect::<BTreeSet<_>>();
-    if expected.len() != expected_requests.len() {
-        return Err(invalid("live issue rows repeat a fetch request"));
-    }
-
-    let mut issued = BTreeSet::new();
-    let mut completed = BTreeMap::new();
-    for event in cpu_events {
-        let request = event.request_id();
-        if !expected.contains(&request) && !executed_fetches.contains(&request) {
-            return Err(invalid(
-                "operational fetch stream contains an unexecuted fetch",
-            ));
-        }
-        match event.kind() {
-            crate::CpuFetchEventKind::Issued => {
-                if !issued.insert(request) {
-                    return Err(invalid("operational fetch stream repeats an issued fetch"));
-                }
-            }
-            crate::CpuFetchEventKind::Completed => {
-                if !matches!(event.data().map(<[u8]>::len), Some(2 | 4))
-                    || event.data().map(|bytes| bytes.len() as u64) != Some(event.size().bytes())
-                    || completed.insert(request, event).is_some()
-                {
-                    return Err(invalid(
-                        "operational fetch stream contains an invalid completed instruction",
-                    ));
-                }
-            }
-            crate::CpuFetchEventKind::Retry | crate::CpuFetchEventKind::Failed => {
-                return Err(invalid(
-                    "operational fetch stream contains an unsuccessful fetch",
-                ));
-            }
-        }
-    }
-    if issued
-        .iter()
-        .any(|request| !completed.contains_key(request))
-    {
-        return Err(invalid("operational fetch stream retains a pending fetch"));
-    }
-
-    expected_requests
-        .iter()
-        .map(|request| {
-            completed
-                .get(request)
-                .copied()
-                .ok_or(invalid("live issue row has no completed fetch"))
-        })
-        .collect()
 }
 
 fn project_event(event: &crate::RiscvCpuExecutionEvent) -> RiscvO3LiveCheckpointEvent {

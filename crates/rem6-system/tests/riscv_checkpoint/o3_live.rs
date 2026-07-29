@@ -278,6 +278,7 @@ fn valid_compute_o3lc() -> Vec<u8> {
         },
         writeback_counted_sequences: Vec::new(), writeback_published_sequences: Vec::new(),
         reservation: None, completed_result: None,
+        pending_address: None,
         wake: RiscvO3LiveCheckpointWake {
             scheduler_instance_raw: 1, partition: PartitionId::new(0),
             tick: 21, scheduler_order: 1, kind: ScheduledEventKind::Parallel,
