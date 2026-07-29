@@ -94,8 +94,12 @@ fn pending_address_wire_version_and_profile_are_mutation_locked() {
 
     for (from, to) in [
         (
-            "const VERSION_CURRENT: u8 = 2;",
             "const VERSION_CURRENT: u8 = 3;",
+            "const VERSION_CURRENT: u8 = 4;",
+        ),
+        (
+            "const VERSION_PENDING_SINGLE: u8 = 2;",
+            "const VERSION_PENDING_SINGLE: u8 = 4;",
         ),
         (
             "const VERSION_LEGACY: u8 = 1;",
@@ -104,6 +108,10 @@ fn pending_address_wire_version_and_profile_are_mutation_locked() {
         (
             "RiscvO3LiveCheckpointProfile::PendingDataAddress => 2,",
             "RiscvO3LiveCheckpointProfile::PendingDataAddress => 3,",
+        ),
+        (
+            "(VERSION_PENDING_SINGLE | VERSION_CURRENT, 2) => {",
+            "(VERSION_CURRENT, 2) => {",
         ),
     ] {
         let mutated = codec.replacen(from, to, 1);
@@ -137,14 +145,17 @@ fn pending_address_capture_and_fetch_ownership_are_mutation_locked() {
 fn wire_contract(codec: &str, tests: &str) -> bool {
     let active = compact_rust_code(&production_rust_source(codec));
     active.contains("constVERSION_LEGACY:u8=1;")
-        && active.contains("constVERSION_CURRENT:u8=2;")
+        && active.contains("constVERSION_PENDING_SINGLE:u8=2;")
+        && active.contains("constVERSION_CURRENT:u8=3;")
         && active.contains("byte(&mutout,VERSION_CURRENT);")
-        && active.contains("matches!(version,VERSION_LEGACY|VERSION_CURRENT)")
+        && active.contains("if!(VERSION_LEGACY..=VERSION_CURRENT).contains(&version)")
         && active.contains("(_,0)=>RiscvO3LiveCheckpointProfile::ComputeQueue")
         && active.contains("(_,1)=>RiscvO3LiveCheckpointProfile::CompletedFpLoad")
-        && active.contains("(VERSION_CURRENT,2)=>RiscvO3LiveCheckpointProfile::PendingDataAddress")
+        && active.contains("(VERSION_PENDING_SINGLE|VERSION_CURRENT,2)=>{RiscvO3LiveCheckpointProfile::PendingDataAddress}")
+        && active.contains("VERSION_PENDING_SINGLE=>pending_address::read_v2_single(&mutreader)?")
+        && active.contains("VERSION_CURRENT=>pending_address::read_v3_rows(&mutreader)?")
         && active.contains("RiscvO3LiveCheckpointProfile::PendingDataAddress=>2")
-        && tests.contains("o3_live_checkpoint_v2_round_trips_pending_store_and_decodes_v1")
+        && tests.contains("o3_live_checkpoint_v3_round_trips_pending_store_and_decodes_v1")
         && tests.contains("o3_live_checkpoint_v1_rejects_pending_profile_tag")
 }
 

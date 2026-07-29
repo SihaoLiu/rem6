@@ -77,9 +77,6 @@ pub(super) fn validate_pending_profile(
     }
     match rows {
         [pending] if pending.destination.is_none() => store::validate(value, pending),
-        rows if rows.iter().all(|pending| pending.destination.is_some()) => {
-            graph::validate(value, rows)
-        }
-        _ => Err(invalid("pending-address profile mixes stores and loads")),
+        rows => graph::validate(value, rows),
     }
 }

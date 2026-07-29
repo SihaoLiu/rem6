@@ -66,39 +66,34 @@ fn live_checkpoint_cpu_wire_contracts_are_distinct_and_versioned() {
 
     assert!(wire_contract(&live, &codec, &runtime, &pipeline, &handoff));
 
-    let wrong_o3lc_legacy = codec.replacen(
-        "const VERSION_LEGACY: u8 = 1;",
-        "const VERSION_LEGACY: u8 = 0;",
-        1,
-    );
-    assert_ne!(
-        wrong_o3lc_legacy, codec,
-        "O3LC legacy-version mutation must apply"
-    );
-    assert!(!wire_contract(
-        &live,
-        &wrong_o3lc_legacy,
-        &runtime,
-        &pipeline,
-        &handoff,
-    ));
-
-    let wrong_o3lc_current = codec.replacen(
-        "const VERSION_CURRENT: u8 = 2;",
-        "const VERSION_CURRENT: u8 = 3;",
-        1,
-    );
-    assert_ne!(
-        wrong_o3lc_current, codec,
-        "O3LC current-version mutation must apply"
-    );
-    assert!(!wire_contract(
-        &live,
-        &wrong_o3lc_current,
-        &runtime,
-        &pipeline,
-        &handoff,
-    ));
+    for (name, from, to) in [
+        (
+            "legacy version",
+            "const VERSION_LEGACY: u8 = 1;",
+            "const VERSION_LEGACY: u8 = 0;",
+        ),
+        (
+            "pending-single version",
+            "const VERSION_PENDING_SINGLE: u8 = 2;",
+            "const VERSION_PENDING_SINGLE: u8 = 4;",
+        ),
+        (
+            "current version",
+            "const VERSION_CURRENT: u8 = 3;",
+            "const VERSION_CURRENT: u8 = 4;",
+        ),
+        (
+            "pending-single profile",
+            "(VERSION_PENDING_SINGLE | VERSION_CURRENT, 2) => {",
+            "(VERSION_CURRENT, 2) => {",
+        ),
+    ] {
+        let mutated = codec.replacen(from, to, 1);
+        assert_ne!(mutated, codec, "O3LC {name} mutation must apply");
+        assert!(!wire_contract(
+            &live, &mutated, &runtime, &pipeline, &handoff,
+        ));
+    }
 
     let commented_magic = codec.replacen(
         "const MAGIC: [u8; 4] = *b\"O3LC\";",
@@ -318,7 +313,12 @@ fn wire_contract(live: &str, codec: &str, runtime: &str, pipeline: &str, handoff
         && active_codec.contains("constMAGIC:[u8;4]=*b;")
         && codec.matches("*b\"O3LC\"").count() == 1
         && active_codec.contains("constVERSION_LEGACY:u8=1;")
-        && active_codec.contains("constVERSION_CURRENT:u8=2;")
+        && active_codec.contains("constVERSION_PENDING_SINGLE:u8=2;")
+        && active_codec.contains("constVERSION_CURRENT:u8=3;")
+        && active_codec.contains("if!(VERSION_LEGACY..=VERSION_CURRENT).contains(&version)")
+        && active_codec.contains("(VERSION_PENDING_SINGLE|VERSION_CURRENT,2)=>{RiscvO3LiveCheckpointProfile::PendingDataAddress}")
+        && active_codec.contains("VERSION_PENDING_SINGLE=>pending_address::read_v2_single(&mutreader)?")
+        && active_codec.contains("VERSION_CURRENT=>pending_address::read_v3_rows(&mutreader)?")
         && active_runtime
             .contains("constO3_RUNTIME_CHECKPOINT_VERSION_WITH_WRITEBACK_PORT_STATS:u8=23;")
         && active_runtime.contains("constO3_RUNTIME_CHECKPOINT_VERSION:u8=O3_RUNTIME_CHECKPOINT_VERSION_WITH_WRITEBACK_PORT_STATS;")

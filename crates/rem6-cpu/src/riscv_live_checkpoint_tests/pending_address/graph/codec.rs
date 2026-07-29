@@ -48,109 +48,132 @@ fn pending_load_graph_v3_round_trips_sibling_chain_and_mixed() {
 }
 
 #[test]
+fn pending_load_graph_v3_round_trips_one_and_two_rows() {
+    assert_graph_round_trip(pending_load_graph([5]));
+    assert_graph_round_trip(pending_load_graph([5, 5]));
+}
+
+#[test]
+fn pending_load_graph_v3_rejects_corrupt_row_count_before_reading_rows() {
+    let expected = RiscvO3LiveCheckpointError::ExcessiveCount {
+        field: "pending address rows",
+        count: 4,
+        maximum: 3,
+    };
+    let mut encoded = pending_load_graph([5]).encode().unwrap();
+    let offset = pending_row_count_offset(&encoded);
+    encoded[offset..offset + 4].copy_from_slice(&4_u32.to_le_bytes());
+
+    assert_eq!(
+        RiscvO3LiveCheckpointPayload::decode(&encoded),
+        Err(expected)
+    );
+}
+
+#[test]
 fn pending_load_graph_v3_rejects_malformed_graph_cases() {
     let cases = [
-        MalformedCase::new("zero rows", zero_rows, ExpectedMalformed::InvalidShape),
+        MalformedCase::new("zero rows", zero_rows, ExpectedMalformed::AnyInvalidShape),
         MalformedCase::new("four rows", four_rows, ExpectedMalformed::ExcessiveCount),
         MalformedCase::new(
             "duplicate sequence",
             duplicate_sequence,
-            ExpectedMalformed::InvalidShape,
+            ExpectedMalformed::AnyInvalidShape,
         ),
         MalformedCase::new(
             "duplicate fetch",
             duplicate_fetch,
-            ExpectedMalformed::InvalidShape,
+            ExpectedMalformed::AnyInvalidShape,
         ),
         MalformedCase::new(
             "unordered PC",
             unordered_pc,
-            ExpectedMalformed::InvalidShape,
+            ExpectedMalformed::AnyInvalidShape,
         ),
         MalformedCase::new(
             "broken predecessor",
             broken_predecessor,
-            ExpectedMalformed::InvalidShape,
+            ExpectedMalformed::AnyInvalidShape,
         ),
         MalformedCase::new(
             "multi-row store",
             multi_row_store,
-            ExpectedMalformed::InvalidShape,
+            ExpectedMalformed::AnyInvalidShape,
         ),
         MalformedCase::new(
             "missing load destination",
             missing_load_destination,
-            ExpectedMalformed::InvalidShape,
+            ExpectedMalformed::InvalidShape("pending load lacks a destination"),
         ),
         MalformedCase::new(
             "duplicate destination identity",
             duplicate_destination_identity,
-            ExpectedMalformed::InvalidShape,
+            ExpectedMalformed::AnyInvalidShape,
         ),
         MalformedCase::new(
             "duplicate architectural destination",
             duplicate_architectural_destination,
-            ExpectedMalformed::InvalidShape,
+            ExpectedMalformed::AnyInvalidShape,
         ),
         MalformedCase::new(
             "duplicate physical destination",
             duplicate_physical_destination,
-            ExpectedMalformed::InvalidShape,
+            ExpectedMalformed::AnyInvalidShape,
         ),
         MalformedCase::new(
             "destination overwrites root source",
             destination_overwrites_root_source,
-            ExpectedMalformed::InvalidShape,
+            ExpectedMalformed::AnyInvalidShape,
         ),
         MalformedCase::new(
             "destination overwrites older destination",
             destination_overwrites_older_destination,
-            ExpectedMalformed::InvalidShape,
+            ExpectedMalformed::AnyInvalidShape,
         ),
         MalformedCase::new(
             "nonadjacent producer",
             nonadjacent_producer,
-            ExpectedMalformed::InvalidShape,
+            ExpectedMalformed::AnyInvalidShape,
         ),
         MalformedCase::new(
             "wrong source register",
             wrong_source_register,
-            ExpectedMalformed::InvalidShape,
+            ExpectedMalformed::AnyInvalidShape,
         ),
         MalformedCase::new(
             "self root sequence",
             self_root_sequence,
-            ExpectedMalformed::InvalidShape,
+            ExpectedMalformed::AnyInvalidShape,
         ),
         MalformedCase::new(
             "future root sequence",
             future_root_sequence,
-            ExpectedMalformed::InvalidShape,
+            ExpectedMalformed::AnyInvalidShape,
         ),
         MalformedCase::new(
             "publication after capture",
             publication_after_capture,
-            ExpectedMalformed::InvalidShape,
+            ExpectedMalformed::AnyInvalidShape,
         ),
         MalformedCase::new(
             "wake before capture",
             wake_before_capture,
-            ExpectedMalformed::InvalidShape,
+            ExpectedMalformed::AnyInvalidShape,
         ),
         MalformedCase::new(
             "wake before publication",
             wake_before_publication,
-            ExpectedMalformed::InvalidShape,
+            ExpectedMalformed::AnyInvalidShape,
         ),
         MalformedCase::new(
             "missing root wake",
             missing_root_wake,
-            ExpectedMalformed::InvalidShape,
+            ExpectedMalformed::AnyInvalidShape,
         ),
         MalformedCase::new(
             "internal wake present",
             internal_wake_present,
-            ExpectedMalformed::InvalidShape,
+            ExpectedMalformed::AnyInvalidShape,
         ),
     ];
 
@@ -181,14 +204,15 @@ impl MalformedCase {
 
 #[derive(Clone, Copy)]
 enum ExpectedMalformed {
-    InvalidShape,
+    AnyInvalidShape,
+    InvalidShape(&'static str),
     ExcessiveCount,
 }
 
 fn assert_malformed(case: MalformedCase) {
     let value = (case.build)();
     match case.expected {
-        ExpectedMalformed::InvalidShape => {
+        ExpectedMalformed::AnyInvalidShape => {
             assert!(
                 matches!(
                     value.encode(),
@@ -204,6 +228,17 @@ fn assert_malformed(case: MalformedCase) {
                     Err(RiscvO3LiveCheckpointError::InvalidProfileShape { .. })
                 ),
                 "{} decoded successfully",
+                case.name,
+            );
+        }
+        ExpectedMalformed::InvalidShape(reason) => {
+            let expected = RiscvO3LiveCheckpointError::InvalidProfileShape { reason };
+            assert_eq!(value.encode(), Err(expected.clone()), "{}", case.name);
+            let encoded = value.encode_without_validation_for_test().unwrap();
+            assert_eq!(
+                RiscvO3LiveCheckpointPayload::decode(&encoded),
+                Err(expected),
+                "{}",
                 case.name,
             );
         }
@@ -469,12 +504,13 @@ fn internal_wake_present() -> RiscvO3LiveCheckpointPayload {
     value
 }
 
-fn pending_load_graph(producers: [u8; 3]) -> RiscvO3LiveCheckpointPayload {
+fn pending_load_graph<const N: usize>(producers: [u8; N]) -> RiscvO3LiveCheckpointPayload {
+    assert!(matches!(N, 1..=3));
     let mut value = compute_payload();
     value.profile = RiscvO3LiveCheckpointProfile::PendingDataAddress;
     value.captured_tick = 100;
-    value.next_fetch_pc = Address::new(FIRST_LOAD_PC + 12);
-    value.next_fetch_request_sequence = FIRST_LOAD_SEQUENCE + 3;
+    value.next_fetch_pc = Address::new(FIRST_LOAD_PC + 4 * N as u64);
+    value.next_fetch_request_sequence = FIRST_LOAD_SEQUENCE + N as u64;
     value.events.clear();
     value.rename_rows.clear();
     value.executed_fetch_requests.clear();
@@ -484,8 +520,8 @@ fn pending_load_graph(producers: [u8; 3]) -> RiscvO3LiveCheckpointPayload {
     value.reservation = None;
     value.completed_result = None;
     value.service.requested_tick = WAKE_TICK;
-    value.service.telemetry.current_occupancy = 3;
-    value.service.telemetry.peak_occupancy = 3;
+    value.service.telemetry.current_occupancy = N as u64;
+    value.service.telemetry.peak_occupancy = N as u64;
     value.wake.tick = WAKE_TICK;
     value.wake.partition = PartitionId::new(2);
     value.finalized_writeback.partial_cycle_ticks.clear();
@@ -618,6 +654,20 @@ fn assert_graph_round_trip(expected: RiscvO3LiveCheckpointPayload) {
         Ok((3, expected.clone())),
     );
     assert_eq!(RiscvO3LiveCheckpointPayload::decode(&encoded), Ok(expected));
+}
+
+fn pending_row_count_offset(encoded: &[u8]) -> usize {
+    let mut no_rows = pending_load_graph([5]);
+    no_rows.pending_addresses.clear();
+    let no_rows_encoded = no_rows.encode_without_validation_for_test().unwrap();
+    let offset = encoded
+        .iter()
+        .zip(&no_rows_encoded)
+        .position(|(left, right)| left != right)
+        .expect("row count must alter wire encoding");
+    assert_eq!(&encoded[offset..offset + 4], &1_u32.to_le_bytes());
+    assert_eq!(&no_rows_encoded[offset..offset + 4], &0_u32.to_le_bytes());
+    offset
 }
 
 fn destination(architectural: u8, physical: u32) -> O3RenameMapEntry {
