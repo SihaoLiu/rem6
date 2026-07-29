@@ -46,6 +46,7 @@ struct O3LiveIssuePostService {
     resource_blocked_trace_rows: Vec<O3LiveIssueTraceRow>,
     dependency_blocked_trace_rows: Vec<O3LiveIssueTraceRow>,
     max_rows_at_tick: usize,
+    publication_reentry_fallback_tick: Option<u64>,
     next_service_tick: Option<u64>,
     replay_boundary: Option<u64>,
     no_wake_sequence: Option<u64>,
@@ -211,7 +212,9 @@ impl O3RuntimeState {
             .collect::<Vec<_>>();
         self.complete_committed_live_issue_removals_at(now, &issued_sequences);
         let max_rows_at_tick = reserved_width.saturating_add(issued_rows);
-        let post = self.classify_live_issue_queue_after_service(now)?;
+        let publication_tick_reentry =
+            self.pending_data_address_needs_publication_tick_reentry(&issued_sequences, now);
+        let post = self.classify_live_issue_queue_after_service(now, publication_tick_reentry)?;
         if let Some(sequence) = post.replay_boundary {
             return self.finish_live_issue_replay_at(
                 now,
@@ -243,7 +246,9 @@ impl O3RuntimeState {
         max_rows_at_tick: usize,
     ) -> Result<O3LiveIssueServiceOutcome, O3RuntimeError> {
         self.discard_pending_data_address_at_internal(sequence, Some(now));
-        let post = self.classify_live_issue_queue_after_service(now)?;
+        let publication_tick_reentry =
+            self.pending_data_address_needs_publication_tick_reentry(issued_sequences, now);
+        let post = self.classify_live_issue_queue_after_service(now, publication_tick_reentry)?;
         if let Some(sequence) = post.replay_boundary {
             return Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence });
         }
@@ -278,6 +283,9 @@ impl O3RuntimeState {
                 post.max_rows_at_tick,
             );
         }
+        if let Some(tick) = post.publication_reentry_fallback_tick {
+            self.live_issue.request_service_at(tick);
+        }
         if let Some(tick) = post.next_service_tick {
             self.live_issue.request_service_at(tick);
         }
@@ -303,6 +311,7 @@ impl O3RuntimeState {
     fn classify_live_issue_queue_after_service(
         &mut self,
         now: u64,
+        publication_tick_reentry: bool,
     ) -> Result<O3LiveIssuePostService, O3RuntimeError> {
         if self.live_issue.resident_sequences().is_empty() {
             self.live_issue.clear_requested_service_tick();
@@ -341,8 +350,13 @@ impl O3RuntimeState {
             .find_map(|row| self.pending_data_address_sequence_for_replay(row.sequence()))
             .and_then(|sequence| {
                 self.record_pending_data_address_resource_blocked(sequence, now);
-                self.pending_data_address_wake_tick()
+                publication_tick_reentry
+                    .then_some(now)
+                    .or_else(|| self.pending_data_address_wake_tick())
             });
+        let publication_reentry_fallback_tick = publication_tick_reentry
+            .then(|| pending_tick.and_then(|_| now.checked_add(1)))
+            .flatten();
         let only_dependency_blocked =
             post_plan.issued().is_empty() && post_plan.resource_blocked().is_empty();
         let waits_for_pending_dependency = only_dependency_blocked
@@ -405,6 +419,7 @@ impl O3RuntimeState {
             resource_blocked_trace_rows,
             dependency_blocked_trace_rows,
             max_rows_at_tick: post_plan.reserved_width(),
+            publication_reentry_fallback_tick,
             next_service_tick,
             replay_boundary: None,
             no_wake_sequence,

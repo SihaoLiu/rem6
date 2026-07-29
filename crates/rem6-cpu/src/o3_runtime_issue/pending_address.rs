@@ -126,6 +126,27 @@ impl O3RuntimeState {
             .map(O3PendingDataAddress::sequence)
     }
 
+    pub(super) fn pending_data_address_needs_publication_tick_reentry(
+        &self,
+        issued_sequences: &[u64],
+        actual_tick: u64,
+    ) -> bool {
+        let issued_pending = self.pending_data_addresses.iter().any(|pending| {
+            issued_sequences.contains(&pending.sequence)
+                && pending.selected_issue_tick == Some(actual_tick)
+                && pending.materialized.is_some()
+        });
+        issued_pending
+            && self.pending_data_addresses.iter().any(|pending| {
+                pending.materialized.is_none()
+                    && pending.selected_issue_tick.is_none()
+                    && pending.requested_wake_tick == Some(actual_tick)
+                    && pending
+                        .published_producer_ready_tick
+                        .is_some_and(|tick| tick <= actual_tick)
+            })
+    }
+
     #[cfg(test)]
     pub(in crate::o3_runtime) fn pending_data_address_has_producer_sequence(
         &self,
