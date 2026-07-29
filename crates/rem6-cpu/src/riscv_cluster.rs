@@ -289,6 +289,9 @@ impl RiscvCluster {
             if !core.is_hart_started() {
                 continue;
             }
+            if core.source_local_checkpoint_restore_blocks_drive(scheduler.now()) {
+                continue;
+            }
             if core.has_pending_data_access()
                 || core.has_unissued_data_access()
                 || core.has_pending_trap()
@@ -401,6 +404,9 @@ impl RiscvCluster {
         let mut transactions = Vec::new();
         for (cpu, core) in &self.cores {
             if !core.is_hart_started() {
+                continue;
+            }
+            if core.source_local_checkpoint_restore_blocks_drive(scheduler.now()) {
                 continue;
             }
             let pending_data_blocks = core.pending_data_access_blocks_new_work();
@@ -538,6 +544,9 @@ impl RiscvCluster {
         let mut committed_instructions = 0u64;
         for (cpu, core) in &self.cores {
             if !core.is_hart_started() {
+                continue;
+            }
+            if core.source_local_checkpoint_restore_blocks_drive(scheduler.now()) {
                 continue;
             }
             let pending_data_blocks = core.pending_data_access_blocks_new_work();
@@ -691,6 +700,9 @@ impl RiscvCluster {
         let mut transactions = Vec::new();
         for (cpu, core) in &self.cores {
             if !core.is_hart_started() {
+                continue;
+            }
+            if core.source_local_checkpoint_restore_blocks_drive(scheduler.now()) {
                 continue;
             }
             if let Some(event) = core.take_pending_trap_event() {
@@ -894,6 +906,9 @@ impl RiscvCluster {
         let mut transactions = Vec::new();
         for (cpu, core) in &self.cores {
             if !core.is_hart_started() {
+                continue;
+            }
+            if core.source_local_checkpoint_restore_blocks_drive(scheduler.now()) {
                 continue;
             }
             if let Some(event) = core.take_pending_trap_event() {
@@ -1115,6 +1130,9 @@ impl RiscvCluster {
             if !core.is_hart_started() {
                 continue;
             }
+            if core.source_local_checkpoint_restore_blocks_drive(scheduler.now()) {
+                continue;
+            }
             let pending_data_blocks = core.pending_data_access_blocks_new_work();
             if core.has_pending_trap() {
                 continue;
@@ -1241,6 +1259,9 @@ impl RiscvCluster {
         let mut committed_instructions = 0u64;
         for (cpu, core) in &self.cores {
             if !core.is_hart_started() {
+                continue;
+            }
+            if core.source_local_checkpoint_restore_blocks_drive(scheduler.now()) {
                 continue;
             }
             let pending_data_blocks = core.pending_data_access_blocks_new_work();

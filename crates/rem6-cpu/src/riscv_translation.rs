@@ -1064,6 +1064,9 @@ impl RiscvCore {
         if !self.is_hart_started() {
             return Ok(None);
         }
+        if self.source_local_checkpoint_restore_blocks_drive(scheduler.now()) {
+            return Ok(None);
+        }
         if let Some(event) = self.take_pending_trap_event() {
             return Ok(Some(RiscvCoreDriveAction::InstructionExecuted(Box::new(
                 event,
@@ -1072,7 +1075,8 @@ impl RiscvCore {
         if self.has_pending_trap() {
             return Ok(None);
         }
-        let fetch_blocked = self.source_local_checkpoint_capture_blocks_fetch(scheduler.now());
+        let fetch_blocked = self.source_local_checkpoint_capture_blocks_fetch(scheduler.now())
+            || self.o3_writeback_wake_blocks_fetch(scheduler.now());
         let translated_result_pair_ready = match self
             .translated_result_pair_progress(scheduler.now())
         {

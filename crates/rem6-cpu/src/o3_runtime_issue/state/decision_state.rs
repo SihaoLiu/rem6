@@ -62,6 +62,12 @@ impl O3LiveIssueState {
         }
     }
 
+    pub(in crate::o3_runtime) fn issue_was_observed_at(&self, tick: u64, sequence: u64) -> bool {
+        self.active_tick
+            .as_ref()
+            .is_some_and(|active| active.tick() == tick && active.has_issued_sequence(sequence))
+    }
+
     pub(in crate::o3_runtime) fn enter_scheduler_at(
         &mut self,
         earliest_tick: u64,

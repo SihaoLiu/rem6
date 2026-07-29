@@ -45,6 +45,10 @@ impl O3LiveIssueActiveTick {
         self.projected_delta
     }
 
+    pub(super) fn has_issued_sequence(&self, sequence: u64) -> bool {
+        self.issued_sequences.contains_key(&sequence)
+    }
+
     fn refresh_projection(&mut self) {
         self.projected_delta = self.observed_after_reset.then(|| O3LiveIssueDecisionDelta {
             new_cycle: self.new_cycle,

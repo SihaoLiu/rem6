@@ -1,9 +1,10 @@
 use rem6_isa_riscv::{Immediate, MemoryWidth, Register};
 use rem6_memory::{AccessSize, Address, AddressRange};
-
+#[cfg(test)]
+#[path = "memory_result_authorization/test_support.rs"]
+mod test_support;
 #[path = "memory_result_authorization/translated.rs"]
 mod translated;
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum O3MemoryResultWindowRoute {
     Memory,
@@ -19,7 +20,6 @@ pub(crate) enum O3MemoryResultWindowRole {
     YoungerDependentEffect,
     YoungerBufferedEffect,
 }
-
 impl O3MemoryResultWindowRole {
     pub(crate) const fn is_younger(self) -> bool {
         !matches!(self, Self::Head)
@@ -54,26 +54,6 @@ pub(crate) struct O3MemoryResultWindowAuthorization {
 }
 
 impl O3MemoryResultWindowAuthorization {
-    #[cfg(test)]
-    pub(crate) const fn resolved_for_test(
-        integer_destination: Option<Register>,
-        route: O3MemoryResultWindowRoute,
-        physical_range: AddressRange,
-        role: O3MemoryResultWindowRole,
-    ) -> Self {
-        Self::resolved(integer_destination, route, physical_range, role)
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn dependent_for_test(
-        integer_destination: Option<Register>,
-        register: Register,
-        width: MemoryWidth,
-        immediate: Immediate,
-    ) -> Self {
-        Self::dependent(integer_destination, register, width, immediate)
-    }
-
     pub(in crate::riscv_fetch_ahead) const fn resolved(
         integer_destination: Option<Register>,
         route: O3MemoryResultWindowRoute,

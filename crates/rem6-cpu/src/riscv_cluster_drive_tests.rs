@@ -5,7 +5,7 @@ use crate::{
     TransportEndpointId,
 };
 use rem6_isa_riscv::{Register, RiscvInstruction};
-use rem6_kernel::PartitionId;
+use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{Address, MemoryRequest};
 use rem6_transport::{MemoryTrace, ParallelMemoryTransaction, TargetOutcome, TransportError};
 
@@ -124,6 +124,33 @@ fn source_local_checkpoint_prepare_is_counted_released_and_expires() {
     core.prepare_source_local_checkpoint_capture(7);
     assert!(!fetch_before_pipeline_is_admitted(&core, 7));
     assert!(fetch_before_pipeline_is_admitted(&core, 8));
+}
+
+#[test]
+fn due_o3_writeback_wake_precedes_fetch_admission() {
+    let core = core_with_completed_fetch();
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        state.o3_writeback_wake.set_desired_tick(Some(5), 0);
+    }
+    let event = scheduler
+        .schedule_at(PartitionId::new(0), 5, |_| {})
+        .unwrap();
+    core.mark_o3_writeback_wake_scheduled(
+        scheduler.instance_id(),
+        scheduler.pending_event_snapshot(event).unwrap(),
+    );
+
+    assert!(fetch_before_pipeline_is_admitted(&core, 4));
+    assert!(!fetch_before_pipeline_is_admitted(&core, 5));
+
+    core.state
+        .lock()
+        .expect("riscv core lock")
+        .o3_writeback_wake
+        .mark_fired(5);
+    assert!(fetch_before_pipeline_is_admitted(&core, 5));
 }
 
 #[test]

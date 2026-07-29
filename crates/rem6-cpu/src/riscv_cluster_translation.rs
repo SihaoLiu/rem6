@@ -106,7 +106,9 @@ where
         + Send
         + 'static,
 {
-    if core.source_local_checkpoint_capture_blocks_fetch(scheduler.now()) {
+    if core.source_local_checkpoint_capture_blocks_fetch(scheduler.now())
+        || core.o3_writeback_wake_blocks_fetch(scheduler.now())
+    {
         return Ok(false);
     }
     let Some(fetch_request) = core

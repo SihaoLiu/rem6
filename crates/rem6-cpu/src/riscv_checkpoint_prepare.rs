@@ -37,4 +37,39 @@ impl RiscvCore {
             .retain(|deadline, references| *references > 0 && *deadline >= now);
         !state.source_local_checkpoint_capture_deadlines.is_empty()
     }
+
+    pub fn prepare_source_local_checkpoint_restore(&self, deadline: Tick) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        let references = state
+            .source_local_checkpoint_restore_deadlines
+            .entry(deadline)
+            .or_default();
+        *references = references
+            .checked_add(1)
+            .expect("source-local checkpoint restore reference overflow");
+    }
+
+    pub fn release_source_local_checkpoint_restore(&self, deadline: Tick) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        let Some(references) = state
+            .source_local_checkpoint_restore_deadlines
+            .get_mut(&deadline)
+        else {
+            return;
+        };
+        *references -= 1;
+        if *references == 0 {
+            state
+                .source_local_checkpoint_restore_deadlines
+                .remove(&deadline);
+        }
+    }
+
+    pub(crate) fn source_local_checkpoint_restore_blocks_drive(&self, now: Tick) -> bool {
+        let mut state = self.state.lock().expect("riscv core lock");
+        state
+            .source_local_checkpoint_restore_deadlines
+            .retain(|deadline, references| *references > 0 && *deadline >= now);
+        !state.source_local_checkpoint_restore_deadlines.is_empty()
+    }
 }

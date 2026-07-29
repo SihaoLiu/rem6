@@ -25,6 +25,9 @@ impl RiscvCore {
         if !self.is_hart_started() {
             return Ok(None);
         }
+        if self.source_local_checkpoint_restore_blocks_drive(scheduler.now()) {
+            return Ok(None);
+        }
         let pending_data_blocks = self.pending_data_access_blocks_new_work();
         if self.has_pending_trap() {
             return Ok(None);
@@ -54,7 +57,8 @@ impl RiscvCore {
             }
         }
 
-        let fetch_blocked = self.source_local_checkpoint_capture_blocks_fetch(scheduler.now());
+        let fetch_blocked = self.source_local_checkpoint_capture_blocks_fetch(scheduler.now())
+            || self.o3_writeback_wake_blocks_fetch(scheduler.now());
         let detailed_o3_fetch = self.detailed_o3_window_prefers_fetch_ahead();
         let inherited_o3_retirement = !detailed_o3_fetch
             && self.o3_retirement_suppresses_normal_pipeline()

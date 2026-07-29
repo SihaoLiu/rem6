@@ -290,6 +290,7 @@ impl RiscvCoreState {
     fn scrub_checkpoint_restore_transients(&mut self) {
         self.pending_fetch_prefix = None;
         self.source_local_checkpoint_capture_deadlines.clear();
+        self.source_local_checkpoint_restore_deadlines.clear();
         self.pending_terminal_memory_result = None;
         if let Some(frontend) = self.data_translation.as_mut() {
             frontend.clear_pending();

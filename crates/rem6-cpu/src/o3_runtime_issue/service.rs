@@ -212,9 +212,7 @@ impl O3RuntimeState {
             .collect::<Vec<_>>();
         self.complete_committed_live_issue_removals_at(now, &issued_sequences);
         let max_rows_at_tick = reserved_width.saturating_add(issued_rows);
-        let publication_tick_reentry =
-            self.pending_data_address_needs_publication_tick_reentry(&issued_sequences, now);
-        let post = self.classify_live_issue_queue_after_service(now, publication_tick_reentry)?;
+        let post = self.classify_live_issue_queue_after_service(now)?;
         if let Some(sequence) = post.replay_boundary {
             return self.finish_live_issue_replay_at(
                 now,
@@ -246,9 +244,7 @@ impl O3RuntimeState {
         max_rows_at_tick: usize,
     ) -> Result<O3LiveIssueServiceOutcome, O3RuntimeError> {
         self.discard_pending_data_address_at_internal(sequence, Some(now));
-        let publication_tick_reentry =
-            self.pending_data_address_needs_publication_tick_reentry(issued_sequences, now);
-        let post = self.classify_live_issue_queue_after_service(now, publication_tick_reentry)?;
+        let post = self.classify_live_issue_queue_after_service(now)?;
         if let Some(sequence) = post.replay_boundary {
             return Err(O3RuntimeError::InvalidLiveIssueQueueEntry { sequence });
         }
@@ -311,7 +307,6 @@ impl O3RuntimeState {
     fn classify_live_issue_queue_after_service(
         &mut self,
         now: u64,
-        publication_tick_reentry: bool,
     ) -> Result<O3LiveIssuePostService, O3RuntimeError> {
         if self.live_issue.resident_sequences().is_empty() {
             self.live_issue.clear_requested_service_tick();
@@ -338,6 +333,8 @@ impl O3RuntimeState {
             live_issue_trace_rows(&queue, post_plan.resource_blocked())?;
         let dependency_blocked_trace_rows =
             live_issue_trace_rows(&queue, post_plan.dependency_blocked())?;
+        let publication_tick_reentry =
+            self.pending_data_address_needs_publication_tick_reentry(now);
         let same_tick = (!post_plan.issued().is_empty()).then_some(now);
         let resource_tick = (!post_plan.resource_blocked().is_empty())
             .then(|| now.checked_add(1))
@@ -390,12 +387,14 @@ impl O3RuntimeState {
                 })
             });
         let live_data_tick = waits_for_due_live_data_dependency.then_some(now);
+        let publication_tick = publication_tick_reentry.then_some(now);
         let next_service_tick = [
             same_tick,
             resource_tick,
             dependency_tick,
             pending_tick,
             live_data_tick,
+            publication_tick,
         ]
         .into_iter()
         .flatten()

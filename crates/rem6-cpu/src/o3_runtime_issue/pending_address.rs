@@ -128,22 +128,35 @@ impl O3RuntimeState {
 
     pub(super) fn pending_data_address_needs_publication_tick_reentry(
         &self,
-        issued_sequences: &[u64],
         actual_tick: u64,
     ) -> bool {
         let issued_pending = self.pending_data_addresses.iter().any(|pending| {
-            issued_sequences.contains(&pending.sequence)
-                && pending.selected_issue_tick == Some(actual_tick)
+            pending.selected_issue_tick == Some(actual_tick)
                 && pending.materialized.is_some()
+                && !self
+                    .live_issue
+                    .issue_was_observed_at(actual_tick, pending.sequence)
+        });
+        let issued_root_dependent = self.pending_data_addresses.iter().any(|pending| {
+            pending.selected_issue_tick == Some(actual_tick)
+                && pending.materialized.is_some()
+                && !self
+                    .live_issue
+                    .issue_was_observed_at(actual_tick, pending.sequence)
+                && pending.producer_sequence == pending.root_head.sequence
+                && pending
+                    .published_producer_ready_tick
+                    .is_some_and(|tick| tick <= actual_tick)
         });
         issued_pending
             && self.pending_data_addresses.iter().any(|pending| {
                 pending.materialized.is_none()
                     && pending.selected_issue_tick.is_none()
-                    && pending.requested_wake_tick == Some(actual_tick)
-                    && pending
-                        .published_producer_ready_tick
-                        .is_some_and(|tick| tick <= actual_tick)
+                    && (issued_root_dependent
+                        || (pending.requested_wake_tick == Some(actual_tick)
+                            && pending
+                                .published_producer_ready_tick
+                                .is_some_and(|tick| tick <= actual_tick)))
             })
     }
 

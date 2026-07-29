@@ -567,6 +567,13 @@ fn riscv_core_translated_checkpoint_fence_allows_data_progress_without_younger_f
         .schedule_after(core.partition(), 1, |_context| {})
         .unwrap();
     scheduler.run_until_idle_conservative();
+    core.prepare_source_local_checkpoint_restore(100);
+    assert_eq!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        None,
+        "restore source fence must pause already-fetched data issue until delivery"
+    );
+    core.release_source_local_checkpoint_restore(100);
 
     assert!(matches!(
         drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),

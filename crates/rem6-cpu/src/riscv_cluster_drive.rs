@@ -499,7 +499,9 @@ pub(crate) fn prepare_fetch_ahead_speculation(
 }
 
 pub(crate) fn fetch_before_pipeline_is_admitted(core: &RiscvCore, now: u64) -> bool {
-    if core.source_local_checkpoint_capture_blocks_fetch(now) {
+    if core.source_local_checkpoint_capture_blocks_fetch(now)
+        || core.o3_writeback_wake_blocks_fetch(now)
+    {
         return false;
     }
     if inherited_o3_retirement_suppresses_pipeline(core) {
@@ -508,6 +510,17 @@ pub(crate) fn fetch_before_pipeline_is_admitted(core: &RiscvCore, now: u64) -> b
     core.detailed_o3_window_prefers_fetch_ahead()
         || (!core.has_pending_o3_live_data_access_retirement()
             && core.in_order_fetch_admission().allows_fetch())
+}
+
+impl RiscvCore {
+    pub(crate) fn o3_writeback_wake_blocks_fetch(&self, now: Tick) -> bool {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .o3_writeback_wake
+            .checkpoint_scheduled_wake()
+            .is_some_and(|wake| wake.tick() <= now)
+    }
 }
 
 fn inherited_o3_retirement_suppresses_pipeline(core: &RiscvCore) -> bool {
