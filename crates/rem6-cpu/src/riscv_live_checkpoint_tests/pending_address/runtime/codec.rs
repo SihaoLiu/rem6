@@ -4,11 +4,11 @@ use super::*;
 fn o3_live_checkpoint_v2_round_trips_pending_store_and_decodes_v1() {
     let expected = pending_store_payload();
     let encoded = expected.encode().unwrap();
-    assert_eq!(encoded[4], 2);
+    assert_eq!(encoded[4], 3);
     assert_eq!(encoded[5], 2);
     assert_eq!(
         RiscvO3LiveCheckpointPayload::decode_versioned(&encoded),
-        Ok((2, expected.clone())),
+        Ok((3, expected.clone())),
     );
     assert_eq!(RiscvO3LiveCheckpointPayload::decode(&encoded), Ok(expected));
 
@@ -38,18 +38,18 @@ fn o3_live_checkpoint_v1_rejects_pending_profile_tag() {
 #[test]
 fn o3_live_checkpoint_pending_profile_rejects_missing_pending_row() {
     let mut value = pending_store_payload();
-    value.pending_address = None;
+    value.pending_addresses.clear();
     assert_bad_pending_value(value);
 }
 
 #[test]
 fn o3_live_checkpoint_compute_and_fp_profiles_reject_pending_row() {
-    let pending = pending_store_payload().pending_address;
+    let pending = pending_store_payload().pending_addresses;
     for mut value in [
         compute_payload(),
         completed_fp_payload(MemoryWidth::Doubleword),
     ] {
-        value.pending_address = pending.clone();
+        value.pending_addresses = pending.clone();
         assert_bad_pending_value(value);
     }
 }
@@ -114,7 +114,7 @@ fn o3_live_checkpoint_pending_profile_rejects_sequence_lineage_mismatches() {
 #[test]
 fn o3_live_checkpoint_pending_profile_rejects_publication_after_capture() {
     assert_bad_pending(|value| {
-        pending_mut(value).published_producer_ready_tick = value.captured_tick + 1;
+        pending_mut(value).published_producer_ready_tick = Some(value.captured_tick + 1);
     });
 }
 
@@ -122,7 +122,7 @@ fn o3_live_checkpoint_pending_profile_rejects_publication_after_capture() {
 fn o3_live_checkpoint_pending_profile_rejects_wake_before_publication() {
     assert_bad_pending(|value| {
         let pending = pending_mut(value);
-        pending.requested_wake_tick = pending.published_producer_ready_tick - 1;
+        pending.requested_wake_tick = Some(pending.published_producer_ready_tick.unwrap() - 1);
     });
 }
 

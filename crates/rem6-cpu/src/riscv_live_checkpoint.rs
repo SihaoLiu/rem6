@@ -221,7 +221,7 @@ pub struct RiscvO3LiveCheckpointPayload {
     pub writeback_published_sequences: Vec<u64>,
     pub reservation: Option<RiscvO3LiveCheckpointReservation>,
     pub completed_result: Option<RiscvO3LiveCheckpointCompletedFpLoad>,
-    pub pending_address: Option<RiscvO3LiveCheckpointPendingDataAddress>,
+    pub pending_addresses: Vec<RiscvO3LiveCheckpointPendingDataAddress>,
     pub wake: RiscvO3LiveCheckpointWake,
 }
 
@@ -668,8 +668,8 @@ fn capture_live_from_guards(
         ));
     }
     if runtime.pending_address.as_ref().is_some_and(|pending| {
-        pending.requested_wake_tick != runtime.service.requested_tick
-            || pending.requested_wake_tick != wake.tick()
+        pending.requested_wake_tick != Some(runtime.service.requested_tick)
+            || pending.requested_wake_tick != Some(wake.tick())
     }) {
         return Err(invalid("pending store wake authority is inconsistent"));
     }
@@ -689,6 +689,7 @@ fn capture_live_from_guards(
         .as_ref()
         .map(|pending| Address::new(pending.fetch.pc().get().saturating_add(4)))
         .unwrap_or_else(|| cpu.pc());
+    let pending_addresses = runtime.pending_address.into_iter().collect();
     Ok(Some((
         RiscvO3LiveCheckpointPayload {
             profile: runtime.profile,
@@ -707,7 +708,7 @@ fn capture_live_from_guards(
             writeback_published_sequences: runtime.writeback_published_sequences,
             reservation: runtime.reservation,
             completed_result: runtime.completed_result,
-            pending_address: runtime.pending_address,
+            pending_addresses,
             wake: RiscvO3LiveCheckpointWake {
                 scheduler_instance_raw: wake.scheduler().checkpoint_raw(),
                 partition: wake.event().partition(),

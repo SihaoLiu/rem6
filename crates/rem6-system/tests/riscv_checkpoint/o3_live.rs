@@ -123,7 +123,7 @@ fn pending_address_second_bank_corruption_mutates_no_core_or_scheduler() {
     assert_eq!(O3RuntimeCheckpointPayload::decode(registry.chunk(&cpu1, O3RT).unwrap()).unwrap(), source1.stable);
     let mut invalid = RiscvO3LiveCheckpointPayload::decode(registry.chunk(&cpu1, O3LC).unwrap()).unwrap();
     let corrupt_sequence = STORE_SEQUENCE + 1;
-    invalid.pending_address.as_mut().unwrap().sequence = corrupt_sequence;
+    invalid.pending_addresses[0].sequence = corrupt_sequence;
     invalid.issue_rows[0].sequence = corrupt_sequence;
     invalid.resident_sequences[0] = corrupt_sequence;
     registry.write_chunk(&cpu1, O3LC, invalid.encode().unwrap()).unwrap();
@@ -320,7 +320,7 @@ fn valid_compute_o3lc() -> Vec<u8> {
         },
         writeback_counted_sequences: Vec::new(), writeback_published_sequences: Vec::new(),
         reservation: None, completed_result: None,
-        pending_address: None,
+        pending_addresses: Vec::new(),
         wake: RiscvO3LiveCheckpointWake {
             scheduler_instance_raw: 1, partition: PartitionId::new(0),
             tick: 21, scheduler_order: 1, kind: ScheduledEventKind::Parallel,

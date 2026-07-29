@@ -11,7 +11,7 @@ pub(super) fn operational_fetch_projection(
 ) -> Result<OperationalFetchProjection, RiscvCoreCheckpointRestoreError> {
     let fetches = match live.profile {
         crate::RiscvO3LiveCheckpointProfile::PendingDataAddress => {
-            let Some(pending) = live.pending_address.as_ref() else {
+            let [pending] = live.pending_addresses.as_slice() else {
                 return Err(live_error(
                     "pending-address profile lacks its pending fetch",
                 ));

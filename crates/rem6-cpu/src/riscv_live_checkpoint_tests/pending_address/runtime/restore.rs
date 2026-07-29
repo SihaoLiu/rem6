@@ -5,7 +5,7 @@ fn pending_store_capture_uses_pending_profile_after_producer_commit() {
     let fixture = PendingStoreCheckpointFixture::new();
     let projection = fixture.capture();
     let live = captured_pending(&projection);
-    let pending = live.pending_address.as_ref().expect("pending store row");
+    let pending = live.pending_addresses.first().expect("pending store row");
 
     assert_eq!(
         live.profile,
@@ -31,8 +31,8 @@ fn pending_store_capture_uses_pending_profile_after_producer_commit() {
     assert_eq!(pending.root_sequence, LIVE_PRODUCER_SEQUENCE);
     assert_eq!(pending.root_range.start(), Address::new(ROOT_ADDRESS));
     assert_eq!(pending.root_range.size(), AccessSize::new(8).unwrap());
-    assert_eq!(pending.published_producer_ready_tick, CAPTURED_TICK);
-    assert_eq!(pending.requested_wake_tick, CAPTURED_TICK);
+    assert_eq!(pending.published_producer_ready_tick, Some(CAPTURED_TICK));
+    assert_eq!(pending.requested_wake_tick, Some(CAPTURED_TICK));
     assert_eq!(fixture.core.read_register(reg(5)), STORE_ADDRESS);
 }
 
@@ -164,8 +164,8 @@ fn pending_store_prepare_restores_fetch_without_execution_or_data_issue() {
     let fixture = PendingStoreCheckpointFixture::new();
     let projection = fixture.capture();
     let pending = captured_pending(&projection)
-        .pending_address
-        .as_ref()
+        .pending_addresses
+        .first()
         .expect("pending store row")
         .clone();
     let destination = pending_store_core();

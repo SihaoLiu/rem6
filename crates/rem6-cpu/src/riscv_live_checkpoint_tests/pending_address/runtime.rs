@@ -254,7 +254,8 @@ fn checkpoint_input_with_live(
     )
 }
 
-fn pending_store_payload() -> RiscvO3LiveCheckpointPayload {
+pub(in crate::riscv_live_checkpoint_tests::pending_address) fn pending_store_payload(
+) -> RiscvO3LiveCheckpointPayload {
     let mut value = compute_payload();
     value.profile = RiscvO3LiveCheckpointProfile::PendingDataAddress;
     value.next_fetch_pc = Address::new(STORE_PC + 4);
@@ -268,12 +269,13 @@ fn pending_store_payload() -> RiscvO3LiveCheckpointPayload {
     value.executed_fetch_requests.clear();
     value.issued_fetch_requests.clear();
     value.service.telemetry.current_occupancy = 1;
-    value.pending_address = Some(RiscvO3LiveCheckpointPendingDataAddress {
+    value.pending_addresses = vec![RiscvO3LiveCheckpointPendingDataAddress {
         sequence: STORE_SEQUENCE,
         fetch: pending_fetch(store(6, 5, MemoryWidth::Doubleword)),
         consumed_requests: vec![request(STORE_SEQUENCE)],
         fetch_predecessor_request: request(PRODUCER_SEQUENCE),
         producer_register: reg(5),
+        destination: None,
         producer_sequence: PRODUCER_SEQUENCE,
         root_sequence: PRODUCER_SEQUENCE,
         root_fetch_request: request(PRODUCER_SEQUENCE),
@@ -282,9 +284,9 @@ fn pending_store_payload() -> RiscvO3LiveCheckpointPayload {
         root_atomic: false,
         lsq_kind: O3LoadStoreQueueKind::Store,
         expected_lsq_bytes: 8,
-        published_producer_ready_tick: 99,
-        requested_wake_tick: value.wake.tick,
-    });
+        published_producer_ready_tick: Some(99),
+        requested_wake_tick: Some(value.wake.tick),
+    }];
     value
 }
 
@@ -313,7 +315,7 @@ fn replace_pending_instruction(value: &mut RiscvO3LiveCheckpointPayload, raw: u3
 fn pending_mut(
     value: &mut RiscvO3LiveCheckpointPayload,
 ) -> &mut RiscvO3LiveCheckpointPendingDataAddress {
-    value.pending_address.as_mut().unwrap()
+    value.pending_addresses.first_mut().unwrap()
 }
 
 fn assert_bad_pending(change: impl FnOnce(&mut RiscvO3LiveCheckpointPayload)) {

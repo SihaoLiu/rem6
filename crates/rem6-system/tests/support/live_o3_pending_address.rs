@@ -152,12 +152,13 @@ pub fn pending_address_live(
         writeback_published_sequences: Vec::new(),
         reservation: None,
         completed_result: None,
-        pending_address: Some(RiscvO3LiveCheckpointPendingDataAddress {
+        pending_addresses: vec![RiscvO3LiveCheckpointPendingDataAddress {
             sequence: STORE_SEQUENCE,
             fetch,
             consumed_requests: vec![fetch_request],
             fetch_predecessor_request: request(cpu, PRODUCER_SEQUENCE),
             producer_register: reg(5),
+            destination: None,
             producer_sequence: PRODUCER_SEQUENCE,
             root_sequence: PRODUCER_SEQUENCE,
             root_fetch_request: request(cpu, PRODUCER_SEQUENCE),
@@ -166,9 +167,9 @@ pub fn pending_address_live(
             root_atomic: false,
             lsq_kind: O3LoadStoreQueueKind::Store,
             expected_lsq_bytes: 8,
-            published_producer_ready_tick: PRODUCER_READY_TICK,
-            requested_wake_tick: LIVE_TICK,
-        }),
+            published_producer_ready_tick: Some(PRODUCER_READY_TICK),
+            requested_wake_tick: Some(LIVE_TICK),
+        }],
         wake: RiscvO3LiveCheckpointWake {
             scheduler_instance_raw: scheduler.instance_id().checkpoint_raw(),
             partition: PartitionId::new(0),
@@ -307,12 +308,15 @@ fn assert_pending_address_shape(
         .iter()
         .all(|row| row.sequence() != PRODUCER_SEQUENCE));
 
-    let pending = live.pending_address.as_ref().unwrap();
+    let pending = live.pending_addresses.first().unwrap();
     assert_eq!(pending.sequence, STORE_SEQUENCE);
     assert_eq!(pending.root_sequence, PRODUCER_SEQUENCE);
     assert_eq!(pending.producer_sequence, PRODUCER_SEQUENCE);
-    assert_eq!(pending.published_producer_ready_tick, PRODUCER_READY_TICK);
-    assert_eq!(pending.requested_wake_tick, LIVE_TICK);
+    assert_eq!(
+        pending.published_producer_ready_tick,
+        Some(PRODUCER_READY_TICK)
+    );
+    assert_eq!(pending.requested_wake_tick, Some(LIVE_TICK));
     assert_eq!(live.next_fetch_request_sequence, 3);
     assert_eq!(live.next_fetch_pc, Address::new(STORE_PC + 4));
     assert!(live.events.is_empty());

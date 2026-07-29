@@ -32,7 +32,7 @@ fn response_admitted_flw_and_fld_capture_exact_result_and_prepared_restore() {
         let live = captured_live(&projection);
 
         assert_eq!(live.profile, RiscvO3LiveCheckpointProfile::CompletedFpLoad);
-        assert!(live.pending_address.is_none());
+        assert!(live.pending_addresses.is_empty());
         assert_eq!(live.captured_tick, CAPTURED_TICK);
         assert_eq!(live.events.len(), 2);
         assert_eq!(

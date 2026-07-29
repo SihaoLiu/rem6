@@ -21,7 +21,7 @@ fn capture_o3_live_checkpoint_returns_compute_profile() {
     let live = captured_live(&projection);
     assert_eq!((live.captured_tick, live.service.requested_tick), (100, 100));
     assert_eq!(live.profile, RiscvO3LiveCheckpointProfile::ComputeQueue);
-    assert!(live.pending_address.is_none());
+        assert!(live.pending_addresses.is_empty());
     assert_eq!(live.resident_sequences, fixture.sequences);
     assert_eq!(live.issue_rows.iter().map(|row| row.fetch_request).collect::<Vec<_>>(), vec![request(1), request(2)]);
     assert_eq!(live.events.len(), 2);

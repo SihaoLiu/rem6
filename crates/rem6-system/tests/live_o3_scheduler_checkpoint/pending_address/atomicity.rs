@@ -67,7 +67,7 @@ fn pending_address_corrupt_live_chunk_is_full_executor_atomic() {
     );
     let corrupt = rewrite_o3lc(&manifest, &cpus[0], |live| {
         let sequence = pending_address_support::STORE_SEQUENCE + 1;
-        live.pending_address.as_mut().unwrap().sequence = sequence;
+        live.pending_addresses[0].sequence = sequence;
         live.issue_rows[0].sequence = sequence;
         live.resident_sequences[0] = sequence;
     });

@@ -100,6 +100,7 @@ pub(super) fn capture(
         consumed_requests: row.consumed_requests.clone(),
         fetch_predecessor_request: row.fetch_predecessor_request,
         producer_register: row.producer_register,
+        destination: None,
         producer_sequence: row.producer_sequence,
         root_sequence: row.root_head.sequence,
         root_fetch_request: row.root_head.fetch_request,
@@ -107,16 +108,24 @@ pub(super) fn capture(
         root_atomic: row.root_head.atomic_head,
         lsq_kind: row.lsq_kind,
         expected_lsq_bytes: row.expected_lsq_bytes,
-        published_producer_ready_tick: published_tick,
-        requested_wake_tick,
+        published_producer_ready_tick: Some(published_tick),
+        requested_wake_tick: Some(requested_wake_tick),
     }))
 }
 
 pub(super) fn validate_restore_payload(
     live: &RiscvO3LiveCheckpointPayload,
 ) -> Result<&RiscvO3LiveCheckpointPendingDataAddress, Error> {
-    let Some(pending) = live.pending_address.as_ref() else {
-        return Err(invalid("pending-address profile lacks its pending row"));
+    let [pending] = live.pending_addresses.as_slice() else {
+        return Err(invalid(
+            "pending-address profile lacks its exact pending row",
+        ));
+    };
+    let (Some(published_tick), Some(requested_wake_tick)) = (
+        pending.published_producer_ready_tick,
+        pending.requested_wake_tick,
+    ) else {
+        return Err(invalid("pending store lacks publication or wake"));
     };
     let expected_issue = RiscvO3LiveCheckpointIssueRow {
         sequence: pending.sequence,
@@ -132,8 +141,9 @@ pub(super) fn validate_restore_payload(
         || !live.writeback_published_sequences.is_empty()
         || live.reservation.is_some()
         || live.completed_result.is_some()
-        || live.service.requested_tick != pending.requested_wake_tick
-        || live.wake.tick != pending.requested_wake_tick
+        || pending.destination.is_some()
+        || live.service.requested_tick != requested_wake_tick
+        || live.wake.tick != requested_wake_tick
         || live.wake.partition != pending.fetch.partition()
     {
         return Err(invalid("pending-address ownership is inconsistent"));
@@ -155,8 +165,8 @@ pub(super) fn validate_restore_payload(
         || pending.root_range.size().bytes() != 8
         || pending.lsq_kind != O3LoadStoreQueueKind::Store
         || pending.expected_lsq_bytes != 8
-        || pending.published_producer_ready_tick > live.captured_tick
-        || live.captured_tick > pending.requested_wake_tick
+        || published_tick > live.captured_tick
+        || live.captured_tick > requested_wake_tick
         || pending
             .fetch
             .pc()
@@ -237,8 +247,8 @@ pub(super) fn restore(
             destination: None,
             lsq_kind: O3LoadStoreQueueKind::Store,
             expected_lsq_bytes: 8,
-            published_producer_ready_tick: Some(pending.published_producer_ready_tick),
-            requested_wake_tick: Some(pending.requested_wake_tick),
+            published_producer_ready_tick: pending.published_producer_ready_tick,
+            requested_wake_tick: pending.requested_wake_tick,
             selected_issue_tick: None,
             materialized: None,
         })

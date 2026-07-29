@@ -27,7 +27,8 @@ mod pending_address;
 
 const MAGIC: [u8; 4] = *b"O3LC";
 const VERSION_LEGACY: u8 = 1;
-const VERSION_CURRENT: u8 = 2;
+const VERSION_PENDING_SINGLE: u8 = 2;
+const VERSION_CURRENT: u8 = 3;
 const MAX_ROWS: usize = 65_536;
 const MAX_EVENTS: usize = 4_096;
 const MAX_ENDPOINT_BYTES: usize = 1_024;
@@ -140,7 +141,7 @@ fn encode_impl(
     )?;
     write_reservation(&mut out, checkpoint.reservation);
     write_completed_result(&mut out, checkpoint.completed_result.as_ref())?;
-    pending_address::write(&mut out, checkpoint.pending_address.as_ref())?;
+    pending_address::write(&mut out, &checkpoint.pending_addresses)?;
     write_wake(&mut out, checkpoint.wake);
     Ok(out)
 }
@@ -153,13 +154,15 @@ pub(super) fn decode_versioned(
         return Err(Error::InvalidMagic);
     }
     let version = reader.byte("version")?;
-    if !matches!(version, VERSION_LEGACY | VERSION_CURRENT) {
+    if !(VERSION_LEGACY..=VERSION_CURRENT).contains(&version) {
         return Err(Error::UnsupportedVersion { version });
     }
     let profile = match (version, reader.byte("profile")?) {
         (_, 0) => RiscvO3LiveCheckpointProfile::ComputeQueue,
         (_, 1) => RiscvO3LiveCheckpointProfile::CompletedFpLoad,
-        (VERSION_CURRENT, 2) => RiscvO3LiveCheckpointProfile::PendingDataAddress,
+        (VERSION_PENDING_SINGLE | VERSION_CURRENT, 2) => {
+            RiscvO3LiveCheckpointProfile::PendingDataAddress
+        }
         (_, profile) => return Err(Error::UnsupportedProfile { profile }),
     };
     let captured_tick = reader.u64("captured tick")?;
@@ -188,10 +191,11 @@ pub(super) fn decode_versioned(
     let writeback_published_sequences = read_u64_vec(&mut reader, "writeback published sequences")?;
     let reservation = read_reservation(&mut reader)?;
     let completed_result = read_completed_result(&mut reader)?;
-    let pending_address = if version == VERSION_CURRENT {
-        pending_address::read(&mut reader)?
-    } else {
-        None
+    let pending_addresses = match version {
+        VERSION_LEGACY => Vec::new(),
+        VERSION_PENDING_SINGLE => pending_address::read_v2(&mut reader)?,
+        VERSION_CURRENT => pending_address::read_v3(&mut reader)?,
+        _ => unreachable!("validated O3LC version"),
     };
     let wake = read_wake(&mut reader)?;
     if reader.remaining() != 0 {
@@ -216,7 +220,7 @@ pub(super) fn decode_versioned(
         writeback_published_sequences,
         reservation,
         completed_result,
-        pending_address,
+        pending_addresses,
         wake,
     };
     validate(&checkpoint)?;
@@ -678,7 +682,7 @@ fn validate(value: &RiscvO3LiveCheckpointPayload) -> Result<(), Error> {
                 .collect::<BTreeSet<_>>();
             if value.reservation.is_some()
                 || value.completed_result.is_some()
-                || value.pending_address.is_some()
+                || !value.pending_addresses.is_empty()
                 || !value.issued_fetch_requests.is_empty()
                 || !value.writeback_counted_sequences.is_empty()
                 || !value.writeback_published_sequences.is_empty()
@@ -694,7 +698,7 @@ fn validate(value: &RiscvO3LiveCheckpointPayload) -> Result<(), Error> {
             }
         }
         RiscvO3LiveCheckpointProfile::CompletedFpLoad => {
-            if value.pending_address.is_some() {
+            if !value.pending_addresses.is_empty() {
                 return Err(invalid_shape(
                     "completed FP load carries a pending-address row",
                 ));
@@ -766,7 +770,7 @@ fn preflight(value: &RiscvO3LiveCheckpointPayload) -> Result<(), Error> {
     if let Some(result) = &value.completed_result {
         check_lengths!(MAX_RESPONSE_BYTES; "completed response bytes" => result.response_bytes);
     }
-    pending_address::preflight(value.pending_address.as_ref())?;
+    pending_address::preflight(&value.pending_addresses)?;
     Ok(())
 }
 

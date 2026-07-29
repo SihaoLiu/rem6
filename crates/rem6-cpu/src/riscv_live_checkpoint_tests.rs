@@ -125,7 +125,7 @@ fn base_payload(
         },
         finalized_writeback: finalized_writeback(),
         writeback_counted_sequences: if profile == RiscvO3LiveCheckpointProfile::ComputeQueue { Vec::new() } else { vec![71] }, writeback_published_sequences: if profile == RiscvO3LiveCheckpointProfile::ComputeQueue { Vec::new() } else { vec![70] },
-        reservation, completed_result, pending_address: None,
+        reservation, completed_result, pending_addresses: Vec::new(),
         wake: RiscvO3LiveCheckpointWake {
             scheduler_instance_raw: 0x4455_6677_8899_aabb, partition: PartitionId::new(2),
             tick: 108, scheduler_order: 77, kind: ScheduledEventKind::Parallel,
