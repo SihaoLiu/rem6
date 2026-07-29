@@ -9,6 +9,9 @@ use crate::{
     CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore, RiscvCoreCheckpointRestoreInput,
 };
 
+#[path = "restore/materialization.rs"]
+mod materialization;
+
 const ROOT_FETCH_SEQUENCE: u64 = 0;
 const FIRST_LOAD_SEQUENCE: u64 = 1;
 const ROOT_PC: u64 = 0x8000;
@@ -229,6 +232,7 @@ fn pending_load_graph_restore_rebuilds_rob_rename_lsq_and_fetches() {
 
     install_graph_projection(&destination, &fixture.core, &projection);
 
+    assert_eq!(destination.read_register(reg(ROOT_REGISTER)), ROOT_VALUE);
     let snapshot = destination.o3_runtime_snapshot();
     assert_restored_snapshot_owns_graph(&snapshot, live.pending_addresses.as_slice());
     assert_eq!(
@@ -287,58 +291,6 @@ fn pending_load_graph_recapture_before_wake_is_identical() {
 
     assert_eq!(captured_graph(&second), captured_graph(&first));
     assert_eq!(second.stable(), first.stable());
-}
-
-#[test]
-fn pending_load_graph_rejects_materialized_transport_and_bad_stable_owner() {
-    assert_graph_prepare_rejected_atomically(|_stable, live| {
-        live.events
-            .push(materialized_pending_event(&live.pending_addresses[0]));
-    });
-    assert_graph_prepare_rejected_atomically(|_stable, live| {
-        for row in &mut live.pending_addresses {
-            row.root_atomic = true;
-        }
-    });
-    assert_graph_prepare_rejected_atomically(|stable, live| {
-        let rows = live.pending_addresses.as_slice();
-        let lsq = stable
-            .snapshot()
-            .load_store_queue()
-            .iter()
-            .map(|entry| {
-                if entry.sequence() == rows[1].sequence {
-                    O3LoadStoreQueueEntry::load(
-                        entry.sequence(),
-                        Some(Address::new(ROOT_VALUE)),
-                        entry.bytes(),
-                    )
-                } else {
-                    *entry
-                }
-            })
-            .collect();
-        *stable = super::compute::rebuilt_stable(stable, None, Some(lsq), None).unwrap();
-    });
-    assert_graph_prepare_rejected_atomically(|stable, live| {
-        let bad_sequence = live.pending_addresses[2].sequence;
-        let rob = stable
-            .snapshot()
-            .reorder_buffer()
-            .iter()
-            .map(|entry| {
-                if entry.sequence() == bad_sequence {
-                    O3ReorderBufferEntry::new(entry.sequence(), entry.pc(), entry.destination())
-                        .with_ready(entry.is_ready())
-                        .with_ready_tick(entry.ready_tick())
-                        .with_live_staged_rename_for_checkpoint(O3RegisterClass::Integer, 9)
-                } else {
-                    *entry
-                }
-            })
-            .collect();
-        *stable = super::compute::rebuilt_stable(stable, Some(rob), None, None).unwrap();
-    });
 }
 
 fn graph_core(issue_width: usize) -> RiscvCore {
@@ -440,28 +392,6 @@ fn atomic_root_event() -> RiscvCpuExecutionEvent {
             }),
         ),
     )
-}
-
-fn materialized_pending_event(
-    pending: &RiscvO3LiveCheckpointPendingDataAddress,
-) -> RiscvO3LiveCheckpointEvent {
-    let destination = pending.destination.unwrap();
-    RiscvO3LiveCheckpointEvent {
-        fetch: pending.fetch.clone(),
-        execution_pc: pending.fetch.pc().get(),
-        next_pc: pending.fetch.pc().get() + 4,
-        instruction_bytes: 4,
-        register_writes: Vec::new(),
-        float_register_writes: Vec::new(),
-        memory_access: Some(MemoryAccessKind::Load {
-            rd: reg(destination.architectural() as u8),
-            address: ROOT_VALUE,
-            width: MemoryWidth::Doubleword,
-            signed: false,
-        }),
-        data_access_event_kind: None,
-        counts_as_retired_instruction: true,
-    }
 }
 
 fn completed_fetch(pc: u64, sequence: u64, raw: u32) -> CpuFetchEvent {
@@ -568,39 +498,8 @@ fn assert_stable_graph_owner_set(
     rows: &[RiscvO3LiveCheckpointPendingDataAddress],
 ) {
     let snapshot = stable.snapshot();
-    assert_eq!(
-        snapshot
-            .reorder_buffer()
-            .iter()
-            .map(|row| row.sequence())
-            .collect::<Vec<_>>(),
-        [1, 2, 3]
-    );
-    assert_eq!(
-        snapshot
-            .load_store_queue()
-            .iter()
-            .map(|row| row.sequence())
-            .collect::<Vec<_>>(),
-        [1, 2, 3]
-    );
-    for (owner, pending) in snapshot.reorder_buffer().iter().zip(rows) {
-        let destination = pending.destination.expect("pending load destination");
-        assert_eq!(owner.pc(), pending.fetch.pc());
-        assert_eq!(owner.destination(), Some(destination.physical()));
-        assert_eq!(
-            owner.rename_destination(),
-            Some((destination.register_class(), destination.architectural()))
-        );
-        assert!(owner.is_live_staged());
-        assert!(!owner.is_ready());
-    }
-    assert!(snapshot.load_store_queue().iter().all(|entry| {
-        entry.kind() == O3LoadStoreQueueKind::Load
-            && entry.address().is_none()
-            && entry.bytes() == 8
-            && !entry.is_completed()
-    }));
+    assert_graph_rob_rows(snapshot.reorder_buffer(), rows);
+    assert_graph_lsq_rows(snapshot.load_store_queue(), rows);
     assert_eq!(snapshot.rename_map().len(), 1);
     assert_eq!(
         (
@@ -615,27 +514,8 @@ fn assert_restored_snapshot_owns_graph(
     snapshot: &O3RuntimeSnapshot,
     rows: &[RiscvO3LiveCheckpointPendingDataAddress],
 ) {
-    assert_eq!(snapshot.reorder_buffer().len(), 3);
-    assert_eq!(snapshot.load_store_queue().len(), 3);
-    for (owner, pending) in snapshot.reorder_buffer().iter().zip(rows) {
-        let destination = pending.destination.expect("pending load destination");
-        assert_eq!(owner.sequence(), pending.sequence);
-        assert_eq!(owner.pc(), pending.fetch.pc());
-        assert_eq!(owner.destination(), Some(destination.physical()));
-        assert_eq!(
-            owner.rename_destination(),
-            Some((destination.register_class(), destination.architectural()))
-        );
-        assert!(owner.is_live_staged());
-        assert!(!owner.is_ready());
-    }
-    assert!(snapshot.load_store_queue().iter().all(|entry| {
-        rows.iter().any(|row| row.sequence == entry.sequence())
-            && entry.kind() == O3LoadStoreQueueKind::Load
-            && entry.address().is_none()
-            && entry.bytes() == 8
-            && !entry.is_completed()
-    }));
+    assert_graph_rob_rows(snapshot.reorder_buffer(), rows);
+    assert_graph_lsq_rows(snapshot.load_store_queue(), rows);
     let destinations = rows
         .iter()
         .map(|row| row.destination.unwrap())
@@ -654,6 +534,39 @@ fn assert_restored_snapshot_owns_graph(
     assert!(snapshot.rename_map().iter().any(|entry| {
         entry.register_class() == O3RegisterClass::Integer
             && entry.architectural() == u32::from(ROOT_REGISTER)
+    }));
+}
+
+fn assert_graph_rob_rows(
+    owners: &[O3ReorderBufferEntry],
+    rows: &[RiscvO3LiveCheckpointPendingDataAddress],
+) {
+    assert_eq!(owners.len(), rows.len());
+    for (owner, pending) in owners.iter().zip(rows) {
+        let destination = pending.destination.expect("pending load destination");
+        assert_eq!(owner.sequence(), pending.sequence);
+        assert_eq!(owner.pc(), pending.fetch.pc());
+        assert_eq!(owner.destination(), Some(destination.physical()));
+        assert_eq!(
+            owner.rename_destination(),
+            Some((destination.register_class(), destination.architectural()))
+        );
+        assert!(owner.is_live_staged());
+        assert!(!owner.is_ready());
+    }
+}
+
+fn assert_graph_lsq_rows(
+    entries: &[O3LoadStoreQueueEntry],
+    rows: &[RiscvO3LiveCheckpointPendingDataAddress],
+) {
+    assert_eq!(entries.len(), rows.len());
+    assert!(entries.iter().zip(rows).all(|(entry, row)| {
+        entry.sequence() == row.sequence
+            && entry.kind() == O3LoadStoreQueueKind::Load
+            && entry.address().is_none()
+            && entry.bytes() == 8
+            && !entry.is_completed()
     }));
 }
 
@@ -676,36 +589,6 @@ fn assert_restored_issue_plan(
 
     assert_eq!(issued, expected_issued);
     assert_eq!(dependency_blocked, expected_dependency_blocked);
-}
-
-fn assert_graph_prepare_rejected_atomically(
-    mutation: impl FnOnce(&mut O3RuntimeCheckpointPayload, &mut RiscvO3LiveCheckpointPayload),
-) {
-    let fixture = PendingLoadGraphCheckpointFixture::new([5, 5, 7], 2);
-    let projection = fixture.capture();
-    let mut stable = projection.stable().clone();
-    let mut live = captured_graph(&projection).clone();
-    mutation(&mut stable, &mut live);
-    let destination = graph_core(fixture.issue_width);
-    destination.write_register(reg(9), 0xfeed_face);
-    destination.inner().set_pc(Address::new(0xb000));
-    let before_cpu = destination.core.checkpoint_state();
-    let before_riscv = destination.state.lock().expect("riscv core lock").clone();
-
-    assert!(destination
-        .prepare_checkpoint_restore(checkpoint_input_with_replay_hart(
-            &projection,
-            &fixture.core,
-            stable,
-            live,
-        ))
-        .is_err());
-
-    assert_eq!(destination.core.checkpoint_state(), before_cpu);
-    assert_eq!(
-        *destination.state.lock().expect("riscv core lock"),
-        before_riscv
-    );
 }
 
 fn expected_issue_rows() -> Vec<RiscvO3LiveCheckpointIssueRow> {

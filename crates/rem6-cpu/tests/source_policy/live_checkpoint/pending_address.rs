@@ -8,30 +8,20 @@ const CAPTURE_GRAPH: &str = "src/o3_runtime_live_checkpoint/pending_address/grap
 const TESTS: &str = "src/riscv_live_checkpoint_tests/pending_address/runtime.rs";
 const CODEC_TESTS: &str = "src/riscv_live_checkpoint_tests/pending_address/runtime/codec.rs";
 const RESTORE_TESTS: &str = "src/riscv_live_checkpoint_tests/pending_address/runtime/restore.rs";
-const GRAPH_RESTORE_TESTS: &str =
-    "src/riscv_live_checkpoint_tests/pending_address/graph/restore.rs";
+const GRAPH_TESTS: &str = "src/riscv_live_checkpoint_tests/pending_address/graph/restore.rs";
+const MATERIALIZATION_TESTS: &str =
+    "src/riscv_live_checkpoint_tests/pending_address/graph/restore/materialization.rs";
 
 #[test]
 fn pending_address_live_checkpoint_cpu_sources_are_attached_and_focused() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let parent =
-        fs::read_to_string(crate_dir.join("tests/source_policy/live_checkpoint.rs")).unwrap();
-    let child = fs::read_to_string(crate_dir.join(POLICY)).unwrap();
-    let attached = |parent: &str, child: &str| {
-        active_unconditional_path_owned_module_declaration_count(
-            parent,
-            child,
-            "live_checkpoint/pending_address.rs",
-            "pending_address",
-        ) == 1
-    };
-    assert!(attached(&parent, &child));
-    let declaration = "#[path = \"live_checkpoint/pending_address.rs\"]\nmod pending_address;";
-    for conditional in ["#[cfg(any())]\n", "#[cfg_attr(all(), cfg(any()))]\n"] {
-        let mutated = parent.replacen(declaration, &format!("{conditional}{declaration}"), 1);
-        assert_ne!(mutated, parent);
-        assert!(!attached(&mutated, &child));
-    }
+    assert_unconditional_attachment(
+        crate_dir,
+        "tests/source_policy/live_checkpoint.rs",
+        POLICY,
+        "live_checkpoint/pending_address.rs",
+        "pending_address",
+    );
 
     for (owner, child, path, module) in [
         (
@@ -63,9 +53,15 @@ fn pending_address_live_checkpoint_cpu_sources_are_attached_and_focused() {
         (CAPTURE, CAPTURE_GRAPH, "pending_address/graph.rs", "graph"),
         (
             "src/riscv_live_checkpoint_tests/pending_address/graph.rs",
-            GRAPH_RESTORE_TESTS,
+            GRAPH_TESTS,
             "graph/restore.rs",
             "restore",
+        ),
+        (
+            GRAPH_TESTS,
+            MATERIALIZATION_TESTS,
+            "restore/materialization.rs",
+            "materialization",
         ),
     ] {
         assert_unconditional_attachment(crate_dir, owner, child, path, module);
@@ -86,7 +82,8 @@ fn pending_address_live_checkpoint_cpu_sources_are_attached_and_focused() {
         (TESTS, 500),
         (CODEC_TESTS, 500),
         (RESTORE_TESTS, 500),
-        (GRAPH_RESTORE_TESTS, 750),
+        (GRAPH_TESTS, 750),
+        (MATERIALIZATION_TESTS, 240),
     ] {
         let path = crate_dir.join(relative);
         let lines = line_count(&path);
@@ -227,9 +224,15 @@ fn pending_capture_contract(source: &str, graph_source: &str, tests: &str) -> bo
 }
 
 fn pending_address_tests(crate_dir: &Path) -> String {
-    [TESTS, CODEC_TESTS, RESTORE_TESTS, GRAPH_RESTORE_TESTS]
-        .map(|path| fs::read_to_string(crate_dir.join(path)).unwrap())
-        .join("\n")
+    [
+        TESTS,
+        CODEC_TESTS,
+        RESTORE_TESTS,
+        GRAPH_TESTS,
+        MATERIALIZATION_TESTS,
+    ]
+    .map(|path| fs::read_to_string(crate_dir.join(path)).unwrap())
+    .join("\n")
 }
 
 fn assert_unconditional_attachment(
@@ -241,14 +244,8 @@ fn assert_unconditional_attachment(
 ) {
     let owner = fs::read_to_string(crate_dir.join(owner_path)).unwrap();
     let child = fs::read_to_string(crate_dir.join(child_path)).unwrap();
-    let attached = |owner: &str| {
-        active_unconditional_path_owned_module_declaration_count(
-            owner,
-            &child,
-            attribute_path,
-            module,
-        ) == 1
-    };
+    let count = active_unconditional_path_owned_module_declaration_count;
+    let attached = |owner: &str| count(owner, &child, attribute_path, module) == 1;
     assert!(attached(&owner));
 
     let declaration = format!("#[path = \"{attribute_path}\"]\nmod {module};");

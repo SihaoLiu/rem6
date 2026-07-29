@@ -473,7 +473,7 @@ impl O3RuntimeState {
     }
 
     #[cfg(test)]
-    pub(super) fn bind_oldest_pending_data_address_for_test(
+    pub(crate) fn bind_oldest_pending_data_address_for_test(
         &mut self,
         data_request: MemoryRequestId,
         address: Address,
