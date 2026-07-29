@@ -398,7 +398,7 @@ git push
 - Modify: `crates/rem6-cpu/src/riscv_live_checkpoint_tests/pending_address.rs`
 - Modify: `crates/rem6/tests/cli_run/m5_host_actions/o3/writeback_port/dependent_result_address/dependent_store/live_checkpoint.rs`
 
-- [ ] **Step 1: Write CPU capture/prepare RED tests**
+- [x] **Step 1: Write CPU capture/prepare RED tests**
 
 Drive the existing pending-address production fixture through producer
 publication, not through `set_pending_data_address_*_for_test`. Assert these
@@ -418,7 +418,7 @@ service request, `selected_issue_tick == None`, `materialized == None`, empty
 live data access/transport/writeback owners, and a scheduled wake whose exact
 snapshot is passed to capture.
 
-- [ ] **Step 2: Add the direct top-level RED**
+- [x] **Step 2: Add the direct top-level RED**
 
 Extend the CLI support child with a schedule discovered from baseline timing:
 
@@ -435,7 +435,7 @@ both actions through `rem6 run --execute`, allow source progress through the
 store before restore, and expect a successful run with one captured version-2
 `pending_data_address` chunk and one rebound wake.
 
-- [ ] **Step 3: Run behavioral RED**
+- [x] **Step 3: Run behavioral RED**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib riscv_live_checkpoint_tests::pending_address -- --nocapture
@@ -446,7 +446,7 @@ Expected: CPU capture returns unsupported transient authority and the CLI exits
 2 with the existing non-quiescent CPU checkpoint error. The natural-window
 assertions must execute before that failure.
 
-- [ ] **Step 4: Implement focused runtime capture**
+- [x] **Step 4: Implement focused runtime capture**
 
 Attach `o3_runtime_live_checkpoint/pending_address.rs` and have it return
 `None` unless there is exactly one pending row. For one row, require every
@@ -477,7 +477,7 @@ materialized store, live suffix, or extra transient retains the old rejection.
 Populate the runtime projection with profile `PendingDataAddress`, empty
 completed result/reservation/finalized rows, and the typed pending row.
 
-- [ ] **Step 5: Keep the pending fetch out of generic replay events**
+- [x] **Step 5: Keep the pending fetch out of generic replay events**
 
 In the extracted fetch-projection child, continue selecting the completed fetch
 for every issue request, but branch by profile. For the pending profile,
@@ -497,7 +497,7 @@ events.is_empty()
 Existing compute/FP event projection and replay remain byte-for-byte in their
 current branches.
 
-- [ ] **Step 6: Implement prepared reconstruction**
+- [x] **Step 6: Implement prepared reconstruction**
 
 Add a doc-hidden destinationless live-staged constructor used by integration
 fixtures:
@@ -544,7 +544,7 @@ agent, route, endpoint, PC, request frontier, and `next_fetch_pc == pc + 4`.
 `replace_operational_fetch` receives that set, while restored RISC-V execution
 events and executed/data-issued memberships stay empty for the store.
 
-- [ ] **Step 7: Run CPU and direct CLI GREEN**
+- [x] **Step 7: Run CPU and direct CLI GREEN**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib riscv_live_checkpoint_tests::pending_address -- --nocapture
@@ -558,7 +558,7 @@ captured wake, one authoritative restored store request, exact restored issue
 and commit timing, one final target mutation, exact registers/memory, and one
 rebound O3 wake after source progress.
 
-- [ ] **Step 8: Commit and push the CPU lifecycle unit**
+- [x] **Step 8: Commit and push the CPU lifecycle unit**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo fmt --all
