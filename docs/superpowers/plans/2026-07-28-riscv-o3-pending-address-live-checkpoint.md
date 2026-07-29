@@ -588,7 +588,7 @@ git push
 - Modify: `crates/rem6-cpu/src/o3_runtime_live_checkpoint/pending_address.rs`
 - Modify: `crates/rem6-cpu/src/riscv_core_checkpoint_restore/pending_address.rs`
 
-- [ ] **Step 1: Build a fully validated system fixture**
+- [x] **Step 1: Build a fully validated system fixture**
 
 Create a core whose stable image contains only live-staged ROB sequence 2 and
 addressless store LSQ sequence 2. Set architectural `x5` to the committed
@@ -598,7 +598,7 @@ sequence 3. Prepare/install the payload through
 `RiscvCore::prepare_checkpoint_restore`, schedule the exact serial or parallel
 wake, and mark it through the canonical wake tracker.
 
-- [ ] **Step 2: Write scheduler and bank RED tests**
+- [x] **Step 2: Write scheduler and bank RED tests**
 
 Add these exact tests:
 
@@ -616,7 +616,7 @@ but stable `O3RT` cross-validation fails. Seed sentinel registers, destination
 wakes, scheduler snapshot, and checkpoint registry, then assert all remain
 unchanged after restore fails.
 
-- [ ] **Step 3: Run system RED**
+- [x] **Step 3: Run system RED**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6-system --test live_o3_scheduler_checkpoint pending_address -- --nocapture
@@ -627,7 +627,7 @@ Expected: the fixture or at least one corruption/replacement assertion fails
 until every pending-row/core-fetch cross-reference is validated before bank
 installation. Existing generic wake behavior may already satisfy some rows.
 
-- [ ] **Step 4: Close validation gaps without adding scheduler behavior**
+- [x] **Step 4: Close validation gaps without adding scheduler behavior**
 
 Keep scheduler production code unchanged unless a RED proves a generic claim
 or rebind bug. Add missing validation only in the CPU pending-address children:
@@ -642,7 +642,7 @@ install CPU images -> restore scheduler projection -> rebind canonical wake
 
 Do not add a pending-address-specific scheduler callback.
 
-- [ ] **Step 5: Run system GREEN and existing live-O3 regressions**
+- [x] **Step 5: Run system GREEN and existing live-O3 regressions**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo test -p rem6-system --test live_o3_scheduler_checkpoint -- --nocapture
@@ -650,7 +650,7 @@ TMPDIR=$PWD/target/tmp cargo test -p rem6-system --test riscv_checkpoint o3_live
 TMPDIR=$PWD/target/tmp cargo test -p rem6-cpu --lib riscv_live_checkpoint_tests -- --nocapture
 ```
 
-- [ ] **Step 6: Commit and push the scheduler proof unit**
+- [x] **Step 6: Commit and push the scheduler proof unit**
 
 ```bash
 TMPDIR=$PWD/target/tmp cargo fmt --all
