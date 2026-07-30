@@ -35,7 +35,9 @@ impl O3FinalizedWritebackPortStats {
         }
     }
 
-    pub(in crate::o3_runtime) fn from_aggregate(stats: O3RuntimeStats) -> Self {
+    pub(in crate::o3_runtime::o3_runtime_writeback) fn from_aggregate(
+        stats: O3RuntimeStats,
+    ) -> Self {
         Self {
             cycles: stats.writeback_port_cycles(),
             admitted_rows: stats.writeback_port_admitted_rows(),

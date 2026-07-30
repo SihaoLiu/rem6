@@ -109,6 +109,10 @@ impl SchedulerCheckpointAccess<'_> {
         self.scheduler.pending_event_snapshot(id)
     }
 
+    pub fn cancel_event(&mut self, id: PartitionEventId) -> Result<(), SchedulerError> {
+        self.scheduler.cancel_event(id)
+    }
+
     pub fn schedule_at_kind<F>(
         &mut self,
         partition: PartitionId,

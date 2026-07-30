@@ -31,15 +31,23 @@ impl SystemActionExecutor {
         }
     }
 
-    pub(crate) fn prepare_source_local_checkpoint_restore(&self, deadline: u64) {
+    pub(crate) fn prepare_source_local_checkpoint_restore_after(
+        &self,
+        source_tick: u64,
+        deadline: u64,
+    ) {
         if let Some(bank) = &self.riscv_checkpoints {
-            bank.prepare_source_local_checkpoint_restore(deadline);
+            bank.prepare_source_local_checkpoint_restore_after(source_tick, deadline);
         }
     }
 
-    pub(crate) fn release_source_local_checkpoint_restore(&self, deadline: u64) {
+    pub(crate) fn release_source_local_checkpoint_restore_after(
+        &self,
+        source_tick: u64,
+        deadline: u64,
+    ) {
         if let Some(bank) = &self.riscv_checkpoints {
-            bank.release_source_local_checkpoint_restore(deadline);
+            bank.release_source_local_checkpoint_restore_after(source_tick, deadline);
         }
     }
 

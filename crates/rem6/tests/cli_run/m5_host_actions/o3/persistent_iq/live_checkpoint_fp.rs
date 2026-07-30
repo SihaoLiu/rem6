@@ -148,7 +148,7 @@ fn assert_live_fp_actions(
         );
         let live =
             decoded_cpu_checkpoint_chunk(action, O3_LIVE_CHECKPOINT_CHUNK, "o3_live_checkpoint");
-        assert_eq!(live.pointer("/version").and_then(Value::as_u64), Some(2));
+        assert_eq!(live.pointer("/version").and_then(Value::as_u64), Some(3));
         assert_eq!(
             live.pointer("/profile").and_then(Value::as_str),
             Some("completed_fp_load"),

@@ -33,6 +33,7 @@ mod dependent_result_address_three_pending;
 mod dependent_result_address_two_pending;
 mod detailed_o3_control;
 mod o3_wake_driver;
+mod pending_data_policy;
 mod producer_forwarded_chain_validation;
 mod producer_forwarded_control_validation;
 mod producer_forwarded_return;

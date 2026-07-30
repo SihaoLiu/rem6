@@ -912,17 +912,25 @@ impl RiscvCoreCheckpointBank {
         }
     }
 
-    pub(crate) fn prepare_source_local_checkpoint_restore(&self, deadline: u64) {
+    pub(crate) fn prepare_source_local_checkpoint_restore_after(
+        &self,
+        source_tick: u64,
+        deadline: u64,
+    ) {
         for port in self.ports.values() {
             port.core()
-                .prepare_source_local_checkpoint_restore(deadline);
+                .prepare_source_local_checkpoint_restore_after(source_tick, deadline);
         }
     }
 
-    pub(crate) fn release_source_local_checkpoint_restore(&self, deadline: u64) {
+    pub(crate) fn release_source_local_checkpoint_restore_after(
+        &self,
+        source_tick: u64,
+        deadline: u64,
+    ) {
         for port in self.ports.values() {
             port.core()
-                .release_source_local_checkpoint_restore(deadline);
+                .release_source_local_checkpoint_restore_after(source_tick, deadline);
         }
     }
 

@@ -19,8 +19,6 @@ use crate::{
     SchedulerCheckpointError, SystemError, SystemHostController, SystemRunController,
 };
 
-use self::scheduler_checkpoint_delivery::handle_host_delivery_with_scheduler_checkpoint;
-
 const GEM5_M5_CHECKPOINT_LABEL: &str = "gem5-m5-checkpoint";
 
 #[derive(Clone, Debug)]
@@ -189,12 +187,14 @@ impl SystemHostEventPort {
             context,
             event,
             move |delivery, context| {
-                handle_host_delivery_with_scheduler_checkpoint(
+                scheduler_checkpoint_delivery::handle_host_delivery_with_scheduler_checkpoint(
                     context,
                     delivery,
                     period,
                     component,
                     delivery_controller,
+                    false,
+                    None,
                 );
             },
         )?;

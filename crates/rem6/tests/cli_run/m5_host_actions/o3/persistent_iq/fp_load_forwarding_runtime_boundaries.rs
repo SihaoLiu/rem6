@@ -46,7 +46,7 @@ fn rem6_run_o3_fp_load_forwarding_handoff_rejects_live_state() {
         let path = fp_load_forwarding_binary(run);
         let baseline = run_fp_load_path_json(run, &path, MAX_TICK, &[]);
         let boundary = FpConsumerBoundary::discover(&baseline, run);
-        let switch = format!("{}:cpu0:timing", boundary.response_live_tick);
+        let switch = format!("{}:cpu0:timing", boundary.handoff_source_tick);
         let label = format!(
             "{} {} live handoff",
             run.precision.label(),
@@ -82,6 +82,7 @@ pub(super) struct FpConsumerBoundary {
     pub(super) queued_tick: u64,
     pub(super) response_tick: u64,
     pub(super) response_live_tick: u64,
+    pub(super) handoff_source_tick: u64,
     pub(super) selected_tick: u64,
 }
 
@@ -112,10 +113,18 @@ impl FpConsumerBoundary {
                     run.precision.label()
                 )
             });
+        let handoff_source_tick = if run.hierarchy_collision() {
+            response_live_tick
+                .checked_sub(1)
+                .expect("hierarchy response source precedes its live delivery")
+        } else {
+            response_live_tick
+        };
         let boundary = Self {
             queued_tick,
             response_tick,
             response_live_tick,
+            handoff_source_tick,
             selected_tick,
         };
         boundary.assert_exact_lifecycle(&lifecycle, run);
@@ -124,7 +133,7 @@ impl FpConsumerBoundary {
 
     fn assert_exact_lifecycle(self, lifecycle: &[&Value], run: FpLoadForwardingRun) {
         let queued_delivery_tick = self.queued_tick + 1;
-        let response_delivery_tick = self.response_live_tick + 1;
+        let response_delivery_tick = self.handoff_source_tick + 1;
         assert!(
             self.queued_tick < self.response_tick,
             "{} consumer must queue before its load response: {self:?}",

@@ -11,6 +11,8 @@ pub(super) fn handle_host_delivery_with_scheduler_checkpoint(
     period: Tick,
     component: CheckpointComponentId,
     controller: Arc<Mutex<SystemHostController>>,
+    release_source_local_preparation: bool,
+    source_local_restore_activation_tick: Option<Tick>,
 ) {
     let source_partition = delivery.source_partition();
     let host_partition = delivery.host_partition();
@@ -24,22 +26,26 @@ pub(super) fn handle_host_delivery_with_scheduler_checkpoint(
             component.clone(),
             context.checkpoint_access(),
         );
-    if matches!(
-        event.kind(),
-        GuestEventKind::Checkpoint { .. } | GuestEventKind::RestoreCheckpoint { .. }
-    ) {
+    if release_source_local_preparation
+        && matches!(
+            event.kind(),
+            GuestEventKind::Checkpoint { .. } | GuestEventKind::RestoreCheckpoint { .. }
+        )
+    {
         controller
             .lock()
             .expect("system host controller lock")
             .executor()
             .release_source_local_checkpoint_capture(delivery_tick);
     }
-    if matches!(event.kind(), GuestEventKind::RestoreCheckpoint { .. }) {
+    if let Some(source_tick) = source_local_restore_activation_tick
+        .filter(|_| matches!(event.kind(), GuestEventKind::RestoreCheckpoint { .. }))
+    {
         controller
             .lock()
             .expect("system host controller lock")
             .executor()
-            .release_source_local_checkpoint_restore(delivery_tick);
+            .release_source_local_checkpoint_restore_after(source_tick, delivery_tick);
     }
 
     if period == 0 || context.now().checked_add(period).is_none() {
@@ -55,6 +61,8 @@ pub(super) fn handle_host_delivery_with_scheduler_checkpoint(
             period,
             next_component,
             next_controller,
+            release_source_local_preparation,
+            source_local_restore_activation_tick,
         );
     }) else {
         return;

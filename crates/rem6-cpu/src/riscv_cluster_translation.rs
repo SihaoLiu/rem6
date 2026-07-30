@@ -22,6 +22,9 @@ pub(crate) fn schedule_pending_data_translation_wake(
     core: &RiscvCore,
     scheduler: &mut PartitionedScheduler,
 ) -> Result<(), RiscvClusterError> {
+    if core.source_local_checkpoint_restore_blocks_new_work(scheduler.now()) {
+        return Ok(());
+    }
     let Some(ready_tick) = core.next_data_translation_ready_tick() else {
         return Ok(());
     };
@@ -55,6 +58,9 @@ pub(crate) fn advance_parallel_data_translation(
     scheduler: &PartitionedScheduler,
     page_map: &TranslationPageMap,
 ) -> Result<bool, RiscvClusterError> {
+    if core.source_local_checkpoint_restore_blocks_new_work(scheduler.now()) {
+        return Ok(true);
+    }
     if core.ready_translated_memory_fetch_ahead_is_pending() {
         return Ok(true);
     }
@@ -124,7 +130,6 @@ where
     let fetch_ahead = core
         .prepare_fetch_ahead_speculation(&decision)
         .map_err(|error| RiscvClusterError::Core { cpu, error })?;
-    core.set_fetch_ahead_pc(decision.pc());
     push_prepared_parallel_fetch_action(
         cpu,
         core,
@@ -136,6 +141,7 @@ where
         transaction_cpus,
         transactions,
         fetch_ahead,
+        Some(decision.pc()),
     )?;
     Ok(true)
 }

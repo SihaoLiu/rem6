@@ -51,27 +51,63 @@ impl RiscvO3WritebackWake {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct RiscvO3WritebackWakeState {
     desired_tick: Option<Tick>,
+    restored_tick: Option<Tick>,
+    exclusive_pipeline_fetch_bypass_tick: Option<Tick>,
     scheduled: Option<RiscvO3WritebackWake>,
     detached: Vec<RiscvO3WritebackWake>,
     fired_through: Option<Tick>,
 }
 
 impl RiscvO3WritebackWakeState {
-    pub(crate) fn checkpoint_scheduled_wake(&self) -> Option<RiscvO3WritebackWake> {
+    fn desired_scheduled_wake(&self) -> Option<RiscvO3WritebackWake> {
         let wake = self.scheduled?;
-        (self.detached.is_empty() && self.desired_tick == Some(wake.tick())).then_some(wake)
+        (self.desired_tick == Some(wake.tick())).then_some(wake)
+    }
+
+    pub(crate) fn checkpoint_scheduled_wake(&self) -> Option<RiscvO3WritebackWake> {
+        if !self.detached.is_empty() {
+            return None;
+        }
+        self.desired_scheduled_wake()
+    }
+
+    fn restored_scheduled_wake(&self) -> Option<RiscvO3WritebackWake> {
+        let wake = self.desired_scheduled_wake()?;
+        (self.restored_tick == Some(wake.tick())).then_some(wake)
     }
 
     pub(crate) fn restore_desired_unscheduled(&mut self, tick: Tick) {
         *self = Self {
             desired_tick: Some(tick),
+            restored_tick: Some(tick),
             ..Self::default()
         };
     }
 
+    #[cfg(test)]
     pub(crate) fn set_desired_tick(&mut self, desired: Option<Tick>, now: Tick) {
+        self.set_desired_tick_with_fetch_bypass(desired, false, now);
+    }
+
+    pub(crate) fn set_desired_tick_with_fetch_bypass(
+        &mut self,
+        desired: Option<Tick>,
+        exclusive_pipeline_fetch_bypass: bool,
+        now: Tick,
+    ) {
         self.prune(now);
+        let exclusive_pipeline_fetch_bypass_tick = if exclusive_pipeline_fetch_bypass {
+            desired
+        } else {
+            None
+        };
         if self.desired_tick == desired {
+            let matching_wake_is_scheduled = self
+                .scheduled
+                .is_some_and(|wake| desired == Some(wake.tick()));
+            if !matching_wake_is_scheduled || exclusive_pipeline_fetch_bypass_tick.is_none() {
+                self.exclusive_pipeline_fetch_bypass_tick = exclusive_pipeline_fetch_bypass_tick;
+            }
             return;
         }
         if let Some(wake) = self
@@ -82,7 +118,11 @@ impl RiscvO3WritebackWakeState {
                 self.detached.push(wake);
             }
         }
+        if self.restored_tick != desired {
+            self.restored_tick = None;
+        }
         self.desired_tick = desired;
+        self.exclusive_pipeline_fetch_bypass_tick = exclusive_pipeline_fetch_bypass_tick;
     }
     pub(crate) fn requested_tick(&mut self, now: Tick) -> Option<Tick> {
         self.requested_tick_with_current(now, false)
@@ -118,6 +158,12 @@ impl RiscvO3WritebackWakeState {
         }
         if self.desired_tick == fired_tick {
             self.desired_tick = None;
+        }
+        if self.restored_tick == fired_tick {
+            self.restored_tick = None;
+        }
+        if self.exclusive_pipeline_fetch_bypass_tick == fired_tick {
+            self.exclusive_pipeline_fetch_bypass_tick = None;
         }
         self.fired_through = Some(self.fired_through.map_or(now, |tick| tick.max(now)));
         self.prune(now);
@@ -169,9 +215,23 @@ impl RiscvO3WritebackWakeState {
     fn prune(&mut self, now: Tick) {
         self.detached.retain(|wake| wake.tick() >= now);
     }
+
+    fn scheduled_wake_blocks_fetch(&self, now: Tick) -> bool {
+        let Some(wake) = self.desired_scheduled_wake() else {
+            return false;
+        };
+        wake.tick() <= now
+            && (self.restored_scheduled_wake().is_some()
+                || self.exclusive_pipeline_fetch_bypass_tick != Some(wake.tick()))
+    }
 }
 
 impl RiscvCore {
+    pub(crate) fn o3_writeback_wake_blocks_fetch(&self, now: Tick) -> bool {
+        let state = self.state.lock().expect("riscv core lock");
+        state.o3_writeback_wake.scheduled_wake_blocks_fetch(now)
+    }
+
     pub fn requested_o3_writeback_wake_tick(&self, now: Tick) -> Option<Tick> {
         let translated_result_pair = match self.translated_result_pair_progress(now) {
             crate::riscv_data_issue::O3ResultPairProgress::WaitUntil(tick) => Some(tick),
@@ -182,9 +242,11 @@ impl RiscvCore {
         let mut state = self.state.lock().expect("riscv core lock");
         state.o3_runtime.prune_writeback_calendar_before(now);
         let demand = desired_o3_writeback_wake(&state, now, translated_result_pair);
-        state
-            .o3_writeback_wake
-            .set_desired_tick(demand.desired_tick, now);
+        state.o3_writeback_wake.set_desired_tick_with_fetch_bypass(
+            demand.desired_tick,
+            demand.exclusive_pipeline_fetch_bypass,
+            now,
+        );
         if demand.allow_current {
             state
                 .o3_writeback_wake
@@ -259,7 +321,7 @@ impl RiscvCore {
 impl RiscvCoreState {
     pub(crate) fn finalize_quiescent_o3_writeback_state_for_checkpoint(&mut self) {
         if !self.o3_runtime.live_issue_is_quiescent()
-            || self.o3_runtime.has_live_writeback_owner()
+            || !self.o3_runtime.checkpoint_history_allows_finalization()
             || self
                 .o3_runtime
                 .earliest_unpublished_memory_result_writeback_tick()
@@ -275,22 +337,30 @@ impl RiscvCoreState {
                 .get_or_insert(RiscvCpuError::O3Runtime(error));
             return;
         }
+        self.o3_runtime.finalize_quiescent_checkpoint_history();
         self.o3_writeback_wake.finalize_fired_detached_wakes();
     }
 
     pub(crate) fn refresh_o3_writeback_wake(&mut self, now: Tick) {
         let demand = desired_o3_writeback_wake(self, now, None);
-        self.o3_writeback_wake
-            .set_desired_tick(demand.desired_tick, now);
+        self.o3_writeback_wake.set_desired_tick_with_fetch_bypass(
+            demand.desired_tick,
+            demand.exclusive_pipeline_fetch_bypass,
+            now,
+        );
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[path = "checkpoint_finalization_tests.rs"]
+    mod checkpoint_finalization_tests;
     #[path = "fixtures.rs"]
     mod fixtures;
     #[path = "late_wake_tests.rs"]
     mod late_wake_tests;
+    #[path = "state_tests.rs"]
+    mod state_tests;
 
     use fixtures::scalar_load_event;
 
@@ -310,119 +380,6 @@ mod tests {
         CpuCore, CpuFetchConfig, CpuFetchEvent, CpuFetchRecord, CpuId, CpuResetState,
         O3RuntimeError, RiscvCpuExecutionEvent, RiscvDataAccessEventKind,
     };
-
-    #[test]
-    fn o3_writeback_wake_identical_request_deduplicates() {
-        let mut state = RiscvO3WritebackWakeState::default();
-        state.set_desired_tick(Some(20), 10);
-        let (scheduler, event) = wake(20);
-        state.mark_scheduled(scheduler, event);
-
-        state.set_desired_tick(Some(20), 11);
-
-        assert_eq!(state.requested_tick(11), None);
-        assert_eq!(state.owned_wakes().len(), 1);
-    }
-
-    #[test]
-    fn o3_writeback_wake_earlier_request_detaches_later_schedule() {
-        let mut state = RiscvO3WritebackWakeState::default();
-        state.set_desired_tick(Some(20), 10);
-        let (scheduler, event) = wake(20);
-        state.mark_scheduled(scheduler, event);
-
-        state.set_desired_tick(Some(15), 11);
-
-        assert_eq!(state.requested_tick(11), Some(15));
-        assert_eq!(state.owned_wakes().len(), 1);
-    }
-
-    #[test]
-    fn o3_writeback_wake_fired_schedule_clears_ownership() {
-        let mut state = RiscvO3WritebackWakeState::default();
-        state.set_desired_tick(Some(20), 10);
-        let (scheduler, event) = wake(20);
-        state.mark_scheduled(scheduler, event);
-
-        state.mark_fired(20);
-
-        assert!(state.owned_wakes().is_empty());
-        assert!(!state.has_desired_tick());
-    }
-
-    #[test]
-    fn o3_writeback_wake_detached_schedule_prunes_after_later_tick() {
-        let mut state = RiscvO3WritebackWakeState::default();
-        state.set_desired_tick(Some(20), 10);
-        let (scheduler, event) = wake(20);
-        state.mark_scheduled(scheduler, event);
-        state.set_desired_tick(Some(15), 11);
-
-        assert_eq!(state.owned_wakes().len(), 1);
-        assert_eq!(state.requested_tick(20), None);
-        assert_eq!(state.owned_wakes().len(), 1);
-        assert_eq!(state.requested_tick(21), None);
-        assert!(state.owned_wakes().is_empty());
-    }
-
-    #[test]
-    fn checkpoint_finalization_clears_consumed_calendar_history() {
-        let core = core();
-        core.reserve_test_fixed_fu_writeback(4, 20).unwrap();
-        assert!(!core.data_access_lifecycle_is_quiescent());
-
-        core.finalize_quiescent_o3_writeback_for_checkpoint();
-
-        let state = core.state.lock().expect("riscv core lock");
-        assert!(state.o3_runtime.writeback_reservation(4).is_none());
-        assert!(state.o3_writeback_wake.owned_wakes().is_empty());
-        drop(state);
-        assert!(core.data_access_lifecycle_is_quiescent());
-        assert_eq!(
-            core.reserve_test_fixed_fu_writeback(5, 20).unwrap_err(),
-            O3RuntimeError::WritebackReservationTickClosed {
-                sequence: 5,
-                raw_ready_tick: 20,
-                closed_before_tick: 21,
-            }
-        );
-    }
-
-    #[test]
-    fn checkpoint_finalization_keeps_scheduled_writeback_wake_nonquiescent() {
-        let core = core();
-        core.reserve_test_fixed_fu_writeback(4, 20).unwrap();
-        let (scheduler, event) = wake(20);
-        {
-            let mut state = core.state.lock().expect("riscv core lock");
-            state.o3_writeback_wake.set_desired_tick(Some(20), 10);
-            state.o3_writeback_wake.mark_scheduled(scheduler, event);
-        }
-
-        core.finalize_quiescent_o3_writeback_for_checkpoint();
-
-        let state = core.state.lock().expect("riscv core lock");
-        assert!(state.o3_runtime.writeback_reservation(4).is_some());
-        assert_eq!(state.o3_writeback_wake.owned_wakes().len(), 1);
-        drop(state);
-        assert!(!core.data_access_lifecycle_is_quiescent());
-    }
-
-    #[test]
-    fn checkpoint_finalization_reports_max_tick_seal_error_without_clearing() {
-        let core = core();
-        core.reserve_test_fixed_fu_writeback(4, u64::MAX).unwrap();
-
-        core.finalize_quiescent_o3_writeback_for_checkpoint();
-
-        assert_eq!(
-            core.pending_callback_error(),
-            Some(RiscvCpuError::O3Runtime(
-                O3RuntimeError::WritebackClosureTickOverflow { tick: u64::MAX }
-            ))
-        );
-        assert_eq!(core.o3_runtime_writeback_reservations().len(), 1);
-    }
 
     #[test]
     fn scheduled_writeback_wakes_advance_through_publication_and_finalize() {
@@ -560,6 +517,26 @@ mod tests {
         let core = core_with_live_issue_request(15);
 
         assert_eq!(core.requested_o3_writeback_wake_tick(20), Some(20));
+    }
+
+    #[test]
+    fn live_issue_only_wake_uses_production_fetch_bypass_classification() {
+        let core = core_with_live_issue_request(24);
+        assert_eq!(core.requested_o3_writeback_wake_tick(10), Some(24));
+        let (scheduler, event) = wake(24);
+        core.mark_o3_writeback_wake_scheduled(scheduler, event);
+
+        assert!(!core.o3_writeback_wake_blocks_fetch(24));
+    }
+
+    #[test]
+    fn unpublished_memory_result_wake_uses_production_blocking_classification() {
+        let core = core_with_completed_scalar_loads();
+        assert_eq!(core.requested_o3_writeback_wake_tick(10), Some(20));
+        let (scheduler, event) = wake(20);
+        core.mark_o3_writeback_wake_scheduled(scheduler, event);
+
+        assert!(core.o3_writeback_wake_blocks_fetch(20));
     }
 
     #[test]

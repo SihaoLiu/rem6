@@ -1084,12 +1084,13 @@ impl RiscvCore {
             O3ResultPairProgress::Ready { .. } => true,
             O3ResultPairProgress::WaitUntil(_) | O3ResultPairProgress::Blocked => return Ok(None),
         };
-        let has_data_work = self.has_unissued_data_access()
-            || if translated_result_pair_ready {
-                self.translated_result_pair_has_translation_work()
-            } else {
-                self.has_pending_data_access()
-            };
+        let has_data_work = !self.source_local_checkpoint_restore_blocks_new_work(scheduler.now())
+            && (self.has_unissued_data_access()
+                || if translated_result_pair_ready {
+                    self.translated_result_pair_has_translation_work()
+                } else {
+                    self.has_pending_data_access()
+                });
         if has_data_work {
             if !translated_result_pair_ready
                 && self.ready_translated_memory_fetch_ahead_is_pending()
@@ -1113,12 +1114,12 @@ impl RiscvCore {
                         self.next_ready_translated_memory_fetch_ahead_before_issue(fetch_request)
                     {
                         let fetch_ahead = self.prepare_fetch_ahead_speculation(&decision)?;
-                        self.set_fetch_ahead_pc(decision.pc());
-                        let event = self.issue_next_fetch_with_prepared_fetch_ahead(
+                        let event = self.issue_next_fetch_with_prepared_fetch_ahead_at_pc(
                             scheduler,
                             transport,
                             fetch_trace,
                             fetch_responder,
+                            Some(decision.pc()),
                             fetch_ahead,
                         )?;
                         return Ok(Some(RiscvCoreDriveAction::FetchIssued { event }));
@@ -1179,12 +1180,12 @@ impl RiscvCore {
         if !fetch_blocked && fetch_admission.allows_fetch() {
             if let Some(decision) = self.next_cached_translated_memory_fetch_ahead_before_retire() {
                 let fetch_ahead = self.prepare_fetch_ahead_speculation(&decision)?;
-                self.set_fetch_ahead_pc(decision.pc());
-                let event = self.issue_next_fetch_with_prepared_fetch_ahead(
+                let event = self.issue_next_fetch_with_prepared_fetch_ahead_at_pc(
                     scheduler,
                     transport,
                     fetch_trace,
                     fetch_responder,
+                    Some(decision.pc()),
                     fetch_ahead,
                 )?;
                 return Ok(Some(RiscvCoreDriveAction::FetchIssued { event }));
@@ -1222,7 +1223,7 @@ impl RiscvCore {
         if fetch_blocked {
             return Ok(None);
         }
-        if !fetch_admission.allows_fetch() {
+        if !detailed_o3_fetch && !self.in_order_fetch_admission().allows_fetch() {
             return Ok(None);
         }
 

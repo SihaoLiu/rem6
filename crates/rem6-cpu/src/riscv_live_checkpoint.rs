@@ -3,7 +3,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use rem6_isa_riscv::{FloatRegister, MemoryWidth, RiscvInstruction};
+use rem6_isa_riscv::{FloatRegister, MemoryWidth};
 use rem6_kernel::{PartitionId, ScheduledEventKind, Tick};
 use rem6_memory::{AccessSize, Address, AddressRange, MemoryRequestId};
 
@@ -590,10 +590,7 @@ fn capture_live_from_guards(
                                 && authorization.resolved_range() == Some(range)
                         }))
         }
-        None => {
-            state.memory_result_window_authorizations.is_empty()
-                || pending_graph_authorizations_match(state, &runtime.pending_addresses)
-        }
+        None => state.memory_result_window_authorizations.is_empty(),
     };
     if !pending_terminal_matches_completed
         || !state.pending_data_translations.is_empty()
@@ -694,11 +691,26 @@ fn capture_live_from_guards(
         wake.event().partition(),
     )?;
     let projected_stable = runtime.stable.clone();
-    let next_fetch_pc = runtime
-        .pending_addresses
-        .last()
-        .map(|pending| Address::new(pending.fetch.pc().get().saturating_add(4)))
-        .unwrap_or_else(|| cpu.pc());
+    let pending_store = matches!(
+        runtime.pending_addresses.as_slice(),
+        [pending] if pending.destination.is_none()
+    );
+    let next_fetch_pc = match runtime.pending_addresses.last() {
+        Some(pending) => {
+            let next = pending
+                .fetch
+                .pc()
+                .get()
+                .checked_add(4)
+                .map(Address::new)
+                .ok_or(invalid("pending-address fetch cursor overflows"))?;
+            if !pending_store && cpu.pc() != next {
+                return Err(invalid("pending-address fetch cursor is inconsistent"));
+            }
+            next
+        }
+        None => cpu.pc(),
+    };
     let pending_addresses = runtime.pending_addresses;
     Ok(Some((
         RiscvO3LiveCheckpointPayload {
@@ -730,67 +742,6 @@ fn capture_live_from_guards(
         projected_stable,
         fetch_projection.projected_hart,
     )))
-}
-
-fn pending_graph_authorizations_match(
-    state: &RiscvCoreState,
-    rows: &[RiscvO3LiveCheckpointPendingDataAddress],
-) -> bool {
-    !rows.is_empty()
-        && state.memory_result_window_authorizations.len() == rows.len()
-        && rows.iter().enumerate().all(|(index, row)| {
-            let Some(authorization) = state
-                .memory_result_window_authorizations
-                .get(&row.fetch.request_id())
-                .copied()
-            else {
-                return false;
-            };
-            let Some(destination) = row.destination else {
-                return false;
-            };
-            let raw: [u8; 4] = match row.fetch.data().and_then(|bytes| bytes.try_into().ok()) {
-                Some(raw) => raw,
-                None => return false,
-            };
-            let Ok(decoded) = RiscvInstruction::decode_with_length(u32::from_le_bytes(raw)) else {
-                return false;
-            };
-            let RiscvInstruction::Load {
-                rd,
-                rs1,
-                offset,
-                width: MemoryWidth::Doubleword,
-                ..
-            } = decoded.instruction()
-            else {
-                return false;
-            };
-            if authorization.integer_destination() != Some(rd)
-                || destination.architectural() != u32::from(rd.index())
-                || rs1 != row.producer_register
-            {
-                return false;
-            }
-            if index == 0 {
-                let Ok(size) = AccessSize::new(u64::from(row.expected_lsq_bytes)) else {
-                    return false;
-                };
-                authorization.role() == crate::riscv_fetch_ahead::O3MemoryResultWindowRole::Head
-                    && authorization.route()
-                        == crate::riscv_fetch_ahead::O3MemoryResultWindowRoute::Memory
-                    && authorization
-                        .resolved_range()
-                        .is_some_and(|range| range.size() == size)
-            } else {
-                authorization.role()
-                    == crate::riscv_fetch_ahead::O3MemoryResultWindowRole::YoungerDependentRead
-                    && authorization.route()
-                        == crate::riscv_fetch_ahead::O3MemoryResultWindowRoute::Memory
-                    && authorization.dependent_source()
-                        == Some((rs1, MemoryWidth::Doubleword, offset))
-            }
-        })
 }
 
 fn project_event(event: &crate::RiscvCpuExecutionEvent) -> RiscvO3LiveCheckpointEvent {

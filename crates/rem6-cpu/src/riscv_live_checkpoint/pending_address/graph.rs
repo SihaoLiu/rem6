@@ -23,6 +23,7 @@ pub(super) fn validate(
     let root = &rows[0];
     if root.producer_sequence != root.root_sequence
         || root.producer_register.is_zero()
+        || root.root_atomic
         || root.root_fetch_request.agent() != root.fetch.request_id().agent()
         || root.root_fetch_request.sequence() >= root.fetch.request_id().sequence()
         || root.root_fetch_request.sequence() >= value.next_fetch_request_sequence

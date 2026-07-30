@@ -589,12 +589,8 @@ fn riscv_cluster_translated_checkpoint_fence_allows_data_progress_without_younge
     assert!(drive(&mut scheduler).is_empty());
     scheduler.run_until_idle_parallel().unwrap();
     core.prepare_source_local_checkpoint_restore(100);
-    assert!(
-        drive(&mut scheduler).is_empty(),
-        "restore source fence must pause parallel data issue until delivery"
-    );
+    assert!(drive(&mut scheduler).is_empty());
     core.release_source_local_checkpoint_restore(100);
-
     let data = drive(&mut scheduler);
     assert!(matches!(
         data[0].action(),

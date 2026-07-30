@@ -288,7 +288,7 @@ fn o3_fp_load_forwarding_ledger_claim_is_bounded_and_score_neutral() {
         assert!(cpu.contains(anchor), "CPU ledger missing `{anchor}`");
     }
     assert!(cpu.contains(
-        "Pre-response producer transport, general IQ shapes, multiple pending-address rows, materialized or submitted stores, dependent atomics, translated/MMIO memory, broader memory/result state, broad O3 restoration, and a general O3 engine remain non-restorable."
+        "Pre-response producer transport, materialized or submitted pending-address rows, dependent atomics, translated/MMIO pending-address rows, nonadjacent or fourth-and-deeper pending-address graphs, broader memory/result state, broad O3 restoration, restorable live transport ownership, and a general O3 engine remain non-restorable."
     ));
     let normalized = normalized_policy_text(cpu);
     for overclaim in [

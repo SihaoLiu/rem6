@@ -41,7 +41,30 @@ impl RiscvCore {
     where
         F: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
     {
-        let issue = self.prepare_fetch(scheduler.now(), transport)?;
+        self.issue_next_fetch_with_prepared_fetch_ahead_at_pc(
+            scheduler,
+            transport,
+            trace,
+            responder,
+            None,
+            fetch_ahead,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn issue_next_fetch_with_prepared_fetch_ahead_at_pc<F>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        trace: MemoryTrace,
+        responder: F,
+        fetch_pc: Option<Address>,
+        fetch_ahead: Option<PreparedRiscvFetchAheadSpeculation>,
+    ) -> Result<PartitionEventId, RiscvCpuError>
+    where
+        F: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
+    {
+        let issue = self.prepare_fetch_at_pc(scheduler.now(), transport, fetch_pc)?;
         let request = MemoryRequest::instruction_fetch(
             issue.request_id,
             issue.pc,
@@ -63,7 +86,7 @@ impl RiscvCore {
             )
             .map_err(RiscvCpuError::Transport)?;
 
-        self.record_issued_fetch(issue, fetch_ahead)?;
+        self.record_fetch_ahead_issue(issue, fetch_pc, fetch_ahead)?;
         Ok(event)
     }
 
@@ -97,8 +120,38 @@ impl RiscvCore {
             + Send
             + 'static,
     {
-        let (issue, transaction) =
-            self.prepare_fetch_parallel_transaction(scheduler.now(), transport, trace, responder)?;
+        self.issue_next_fetch_parallel_with_prepared_fetch_ahead_at_pc(
+            scheduler,
+            transport,
+            trace,
+            responder,
+            None,
+            fetch_ahead,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn issue_next_fetch_parallel_with_prepared_fetch_ahead_at_pc<F>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        trace: MemoryTrace,
+        responder: F,
+        fetch_pc: Option<Address>,
+        fetch_ahead: Option<PreparedRiscvFetchAheadSpeculation>,
+    ) -> Result<PartitionEventId, RiscvCpuError>
+    where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        let (issue, transaction) = self.prepare_fetch_parallel_transaction_at_pc(
+            scheduler.now(),
+            transport,
+            trace,
+            responder,
+            fetch_pc,
+        )?;
         let event = transport
             .submit_parallel_batch(scheduler, [transaction])
             .map_err(RiscvCpuError::Transport)?
@@ -106,23 +159,24 @@ impl RiscvCore {
             .next()
             .expect("single fetch transaction returns one event");
 
-        self.record_issued_fetch(issue, fetch_ahead)?;
+        self.record_fetch_ahead_issue(issue, fetch_pc, fetch_ahead)?;
         Ok(event)
     }
 
-    pub(crate) fn prepare_fetch_parallel_transaction<F>(
+    pub(crate) fn prepare_fetch_parallel_transaction_at_pc<F>(
         &self,
         tick: Tick,
         transport: &MemoryTransport,
         trace: MemoryTrace,
         responder: F,
+        fetch_pc: Option<Address>,
     ) -> Result<(OutstandingFetch, ParallelMemoryTransaction), RiscvCpuError>
     where
         F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
             + Send
             + 'static,
     {
-        let issue = self.prepare_fetch(tick, transport)?;
+        let issue = self.prepare_fetch_at_pc(tick, transport, fetch_pc)?;
         let request = MemoryRequest::instruction_fetch(
             issue.request_id,
             issue.pc,
@@ -143,6 +197,54 @@ impl RiscvCore {
         Ok((issue, transaction))
     }
 
+    fn prepare_fetch_at_pc(
+        &self,
+        tick: Tick,
+        transport: &MemoryTransport,
+        fetch_pc: Option<Address>,
+    ) -> Result<OutstandingFetch, RiscvCpuError> {
+        let previous_pc = fetch_pc.map(|pc| {
+            let previous = self.inner().pc();
+            self.set_fetch_ahead_pc(pc);
+            previous
+        });
+        let prepared = self.prepare_fetch(tick, transport);
+        if let Some(previous_pc) = previous_pc {
+            self.set_fetch_ahead_pc(previous_pc);
+        }
+        prepared
+    }
+
+    pub(crate) fn record_prepared_fetch_issue_at_pc(
+        &self,
+        issue: OutstandingFetch,
+        fetch_pc: Option<Address>,
+        fetch_ahead: Option<PreparedRiscvFetchAheadSpeculation>,
+    ) -> Result<(), RiscvCpuError> {
+        self.record_fetch_ahead_issue(issue, fetch_pc, fetch_ahead)
+    }
+
+    fn record_fetch_ahead_issue(
+        &self,
+        issue: OutstandingFetch,
+        fetch_pc: Option<Address>,
+        fetch_ahead: Option<PreparedRiscvFetchAheadSpeculation>,
+    ) -> Result<(), RiscvCpuError> {
+        let previous_pc = fetch_pc.map(|pc| {
+            let previous = self.inner().pc();
+            self.set_fetch_ahead_pc(pc);
+            previous
+        });
+        if let Err(error) = self.record_issued_fetch(issue, fetch_ahead) {
+            if let Some(previous_pc) = previous_pc {
+                self.set_fetch_ahead_pc(previous_pc);
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
     pub(crate) fn record_prepared_fetch_issue_with_prepared_fetch_ahead(
         &self,
         issue: OutstandingFetch,

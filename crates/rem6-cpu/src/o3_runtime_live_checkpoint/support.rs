@@ -1,5 +1,38 @@
 use super::*;
 
+impl O3RuntimeState {
+    pub(crate) fn checkpoint_history_is_terminal(&self) -> bool {
+        !self.live_speculative_executions.is_empty()
+            && self.live_issue_is_quiescent()
+            && self.live_data_accesses.is_empty()
+            && !self.has_pending_data_address()
+            && self.live_retired_instructions.is_empty()
+            && self.live_speculative_executions.iter().all(|execution| {
+                self.snapshot
+                    .reorder_buffer
+                    .iter()
+                    .all(|owner| owner.sequence() != execution.sequence)
+            })
+    }
+
+    pub(crate) fn checkpoint_history_allows_finalization(&self) -> bool {
+        if self.live_speculative_executions.is_empty() {
+            !self.has_live_writeback_owner()
+        } else {
+            self.checkpoint_history_is_terminal()
+        }
+    }
+
+    pub(crate) fn finalize_quiescent_checkpoint_history(&mut self) {
+        debug_assert!(self.live_issue_is_quiescent());
+        debug_assert!(self.checkpoint_history_allows_finalization());
+        self.live_speculative_executions.clear();
+        if self.live_data_accesses.is_empty() && !self.has_pending_data_address() {
+            self.live_data_access_younger_sequences.clear();
+        }
+    }
+}
+
 pub(super) fn checkpoint_telemetry(value: O3LiveIssueTelemetry) -> RiscvO3LiveCheckpointTelemetry {
     RiscvO3LiveCheckpointTelemetry {
         enqueued_rows: value.enqueued_rows(),

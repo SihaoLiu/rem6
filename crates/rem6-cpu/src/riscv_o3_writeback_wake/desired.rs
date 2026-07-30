@@ -6,6 +6,7 @@ use super::*;
 pub(super) struct RiscvO3WritebackWakeDemand {
     pub(super) desired_tick: Option<Tick>,
     pub(super) allow_current: bool,
+    pub(super) exclusive_pipeline_fetch_bypass: bool,
 }
 
 pub(super) fn desired_o3_writeback_wake(
@@ -43,6 +44,13 @@ pub(super) fn desired_o3_writeback_wake(
         })
         .map(|forwarded| forwarded.ready_tick().max(now));
     let translated_result_retry = state.translated_result_pair_retry_wake_tick(now);
+    let blocking_demands = [
+        memory_result,
+        pending_address,
+        restored_live_gate,
+        translated_result_pair,
+        translated_result_retry,
+    ];
     let desired_tick = [
         memory_result,
         pending_address,
@@ -55,6 +63,16 @@ pub(super) fn desired_o3_writeback_wake(
     .into_iter()
     .flatten()
     .min();
+    let exclusive_pipeline_fetch_bypass = desired_tick.is_some_and(|desired| {
+        let forwarded_only_at_tick = forwarded_control == Some(desired)
+            && live_issue != Some(desired)
+            && blocking_demands.iter().all(|tick| *tick != Some(desired));
+        let live_issue_without_blocking_authority = live_issue == Some(desired)
+            && forwarded_control != Some(desired)
+            && blocking_demands.iter().all(Option::is_none)
+            && !state.o3_runtime.has_live_data_access_window();
+        forwarded_only_at_tick || live_issue_without_blocking_authority
+    });
     let allow_current = [
         memory_result,
         pending_address,
@@ -68,5 +86,6 @@ pub(super) fn desired_o3_writeback_wake(
     RiscvO3WritebackWakeDemand {
         desired_tick,
         allow_current,
+        exclusive_pipeline_fetch_bypass,
     }
 }

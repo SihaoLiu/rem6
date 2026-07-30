@@ -8,12 +8,12 @@ use rem6_transport::{MemoryRouteId, MemoryTrace, MemoryTransport, RequestDeliver
 
 use crate::riscv_cluster_drive::{
     can_retire_completed_fetch_while_fetch_pending, completed_fetch_drive_event,
-    fetch_before_pipeline_is_admitted, finish_prepared_parallel_actions,
-    prepare_fetch_ahead_speculation, push_completed_fetch_drive_event,
-    push_pipeline_cycle_drive_event, push_prepared_completed_fetch_drive_event,
-    push_prepared_data_action, push_prepared_parallel_fetch_action,
-    push_prepared_pipeline_cycle_drive_event, record_pending_fetch_resource_stall,
-    PreparedParallelAction, PreparedParallelActions,
+    finish_prepared_parallel_actions, prepare_fetch_ahead_speculation,
+    push_completed_fetch_drive_event, push_pipeline_cycle_drive_event,
+    push_prepared_completed_fetch_drive_event, push_prepared_data_action,
+    push_prepared_parallel_fetch_action, push_prepared_pipeline_cycle_drive_event,
+    record_pending_fetch_resource_stall, sync_and_check_fetch_admission, PreparedParallelAction,
+    PreparedParallelActions,
 };
 pub use crate::riscv_cluster_error::RiscvClusterError;
 pub use crate::riscv_cluster_htm::{RiscvClusterHtmAbortOutcome, RiscvClusterHtmBeginOutcome};
@@ -312,11 +312,10 @@ impl RiscvCluster {
                 record_pending_fetch_resource_stall(*cpu, core)?;
                 continue;
             }
-            let fetch_admitted = fetch_before_pipeline_is_admitted(core, scheduler.now());
+            let fetch_admitted = sync_and_check_fetch_admission(*cpu, core, scheduler.now())?;
             if fetch_admitted {
                 if let Some(decision) = core.next_fetch_ahead_before_retire() {
                     let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
-                    core.set_fetch_ahead_pc(decision.pc());
                     push_prepared_parallel_fetch_action(
                         *cpu,
                         core,
@@ -328,6 +327,7 @@ impl RiscvCluster {
                         &mut transaction_cpus,
                         &mut transactions,
                         fetch_ahead,
+                        Some(decision.pc()),
                     )?;
                     continue;
                 }
@@ -365,6 +365,7 @@ impl RiscvCluster {
                 &mut prepared_actions,
                 &mut transaction_cpus,
                 &mut transactions,
+                None,
                 None,
             )?;
         }
@@ -449,12 +450,10 @@ impl RiscvCluster {
                 record_pending_fetch_resource_stall(*cpu, core)?;
                 continue;
             }
-
-            let fetch_admitted = fetch_before_pipeline_is_admitted(core, scheduler.now());
+            let fetch_admitted = sync_and_check_fetch_admission(*cpu, core, scheduler.now())?;
             if fetch_admitted {
                 if let Some(decision) = core.next_pending_data_fetch_ahead(pending_data_blocks) {
                     let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
-                    core.set_fetch_ahead_pc(decision.pc());
                     push_prepared_parallel_fetch_action(
                         *cpu,
                         core,
@@ -466,6 +465,7 @@ impl RiscvCluster {
                         &mut transaction_cpus,
                         &mut transactions,
                         fetch_ahead,
+                        Some(decision.pc()),
                     )?;
                     continue;
                 }
@@ -502,6 +502,7 @@ impl RiscvCluster {
                 &mut prepared_actions,
                 &mut transaction_cpus,
                 &mut transactions,
+                None,
                 None,
             )?;
         }
@@ -596,11 +597,10 @@ impl RiscvCluster {
                 continue;
             }
             let fetch_admitted = !instruction_budget_exhausted
-                && fetch_before_pipeline_is_admitted(core, scheduler.now());
+                && sync_and_check_fetch_admission(*cpu, core, scheduler.now())?;
             if fetch_admitted {
                 if let Some(decision) = core.next_pending_data_fetch_ahead(pending_data_blocks) {
                     let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
-                    core.set_fetch_ahead_pc(decision.pc());
                     push_prepared_parallel_fetch_action(
                         *cpu,
                         core,
@@ -612,6 +612,7 @@ impl RiscvCluster {
                         &mut transaction_cpus,
                         &mut transactions,
                         fetch_ahead,
+                        Some(decision.pc()),
                     )?;
                     continue;
                 }
@@ -659,6 +660,7 @@ impl RiscvCluster {
                 &mut prepared_actions,
                 &mut transaction_cpus,
                 &mut transactions,
+                None,
                 None,
             )?;
         }
@@ -808,14 +810,12 @@ impl RiscvCluster {
                 }
                 continue;
             }
-
-            let fetch_admitted = fetch_before_pipeline_is_admitted(core, scheduler.now());
+            let fetch_admitted = sync_and_check_fetch_admission(*cpu, core, scheduler.now())?;
             if fetch_admitted {
                 if let Some(decision) =
                     core.next_cached_translated_memory_fetch_ahead_before_retire()
                 {
                     let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
-                    core.set_fetch_ahead_pc(decision.pc());
                     push_prepared_parallel_fetch_action(
                         *cpu,
                         core,
@@ -827,6 +827,7 @@ impl RiscvCluster {
                         &mut transaction_cpus,
                         &mut transactions,
                         fetch_ahead,
+                        Some(decision.pc()),
                     )?;
                     continue;
                 }
@@ -864,6 +865,7 @@ impl RiscvCluster {
                 &mut prepared_actions,
                 &mut transaction_cpus,
                 &mut transactions,
+                None,
                 None,
             )?;
         }
@@ -1036,11 +1038,10 @@ impl RiscvCluster {
                 continue;
             }
 
-            let fetch_admitted = fetch_before_pipeline_is_admitted(core, scheduler.now());
+            let fetch_admitted = sync_and_check_fetch_admission(*cpu, core, scheduler.now())?;
             if fetch_admitted {
                 if let Some(decision) = core.next_mmio_aware_fetch_ahead_before_retire(bus) {
                     let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
-                    core.set_fetch_ahead_pc(decision.pc());
                     push_prepared_parallel_fetch_action(
                         *cpu,
                         core,
@@ -1052,6 +1053,7 @@ impl RiscvCluster {
                         &mut transaction_cpus,
                         &mut transactions,
                         fetch_ahead,
+                        Some(decision.pc()),
                     )?;
                     continue;
                 }
@@ -1089,6 +1091,7 @@ impl RiscvCluster {
                 &mut prepared_actions,
                 &mut transaction_cpus,
                 &mut transactions,
+                None,
                 None,
             )?;
         }
@@ -1179,19 +1182,19 @@ impl RiscvCluster {
                 record_pending_fetch_resource_stall(*cpu, core)?;
                 continue;
             }
-            let fetch_admitted = fetch_before_pipeline_is_admitted(core, scheduler.now());
+            let fetch_admitted = sync_and_check_fetch_admission(*cpu, core, scheduler.now())?;
             if fetch_admitted {
                 if let Some(decision) =
                     core.next_pending_data_mmio_fetch_ahead(bus, pending_data_blocks)
                 {
                     let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
-                    core.set_fetch_ahead_pc(decision.pc());
                     let event = core
-                        .issue_next_fetch_parallel_with_prepared_fetch_ahead(
+                        .issue_next_fetch_parallel_with_prepared_fetch_ahead_at_pc(
                             scheduler,
                             transport,
                             fetch_trace.clone(),
                             fetch_responder(*cpu),
+                            Some(decision.pc()),
                             fetch_ahead,
                         )
                         .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
@@ -1322,19 +1325,19 @@ impl RiscvCluster {
                 continue;
             }
             let fetch_admitted = !instruction_budget_exhausted
-                && fetch_before_pipeline_is_admitted(core, scheduler.now());
+                && sync_and_check_fetch_admission(*cpu, core, scheduler.now())?;
             if fetch_admitted {
                 if let Some(decision) =
                     core.next_pending_data_mmio_fetch_ahead(bus, pending_data_blocks)
                 {
                     let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
-                    core.set_fetch_ahead_pc(decision.pc());
                     let event = core
-                        .issue_next_fetch_parallel_with_prepared_fetch_ahead(
+                        .issue_next_fetch_parallel_with_prepared_fetch_ahead_at_pc(
                             scheduler,
                             transport,
                             fetch_trace.clone(),
                             fetch_responder(*cpu),
+                            Some(decision.pc()),
                             fetch_ahead,
                         )
                         .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;

@@ -305,6 +305,12 @@ fn two_pending_staging_removes_both_authorizations_only_after_schedule() {
     assert!(!authorizations.contains_key(&request(11)));
     assert!(!authorizations.contains_key(&request(12)));
     assert!(authorizations.contains_key(&unrelated));
+    let authorizations = authorizations.clone();
+    drop(state);
+
+    assert_eq!(core.next_pending_data_fetch_ahead(true), None);
+    let state = core.state.lock().unwrap();
+    assert_eq!(state.memory_result_window_authorizations, authorizations);
 }
 #[test]
 fn two_pending_siblings_width_one_issue_oldest_across_ticks() {

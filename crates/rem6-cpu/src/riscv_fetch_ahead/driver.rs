@@ -7,9 +7,8 @@ use crate::{riscv_data_issue::mmio_request, CpuFetchEventKind, RiscvCore, RiscvC
 use super::{
     can_retire_completed_fetch_with_branch_speculations, completed_fetch_window, detailed_o3,
     fetch_ahead_decision, hart_has_enabled_pending_interrupt, next_fetch_ahead_candidate,
-    preview_selected_branch_speculation, PredictedControlTargetAuthority,
-    PreparedRiscvFetchAheadSpeculation, ProducerForwardedScalarContinuation,
-    RiscvFetchAheadDecision,
+    preview_selected_branch_speculation, PreparedRiscvFetchAheadSpeculation,
+    ProducerForwardedScalarContinuation, RiscvFetchAheadDecision,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -32,7 +31,11 @@ impl RiscvCore {
     ) -> Option<RiscvFetchAheadDecision> {
         if pending_data_blocks_new_work {
             (!self.has_pending_fetch())
-                .then(|| producer_forwarded_control_decision(self.next_fetch_ahead_before_retire()))
+                .then(|| {
+                    self.next_producer_forwarded_fetch_ahead_before_retire_with_translation(
+                        detailed_o3::TranslatedMemoryFetchAhead::Disabled,
+                    )
+                })
                 .flatten()
         } else {
             self.next_fetch_ahead_before_retire()
@@ -135,14 +138,9 @@ impl RiscvCore {
         &self,
         bus: &MmioBus,
     ) -> Option<RiscvFetchAheadDecision> {
-        let translated = match self.data_access_result_head_route(bus) {
-            DataAccessResultHeadRoute::Memory => {
-                detailed_o3::TranslatedMemoryFetchAhead::CachedMemory
-            }
-            DataAccessResultHeadRoute::Mmio => detailed_o3::TranslatedMemoryFetchAhead::Mmio,
-            DataAccessResultHeadRoute::Blocked => detailed_o3::TranslatedMemoryFetchAhead::Blocked,
-        };
-        self.next_fetch_ahead_before_retire_with_translation(translated)
+        self.next_fetch_ahead_before_retire_with_translation(
+            self.data_access_result_head_translation(bus),
+        )
     }
 
     pub(crate) fn next_pending_data_mmio_fetch_ahead(
@@ -153,8 +151,8 @@ impl RiscvCore {
         if pending_data_blocks_new_work {
             (!self.has_pending_fetch())
                 .then(|| {
-                    producer_forwarded_control_decision(
-                        self.next_mmio_aware_fetch_ahead_before_retire(bus),
+                    self.next_producer_forwarded_fetch_ahead_before_retire_with_translation(
+                        self.data_access_result_head_translation(bus),
                     )
                 })
                 .flatten()
@@ -166,6 +164,21 @@ impl RiscvCore {
     fn next_fetch_ahead_before_retire_with_translation(
         &self,
         translated: detailed_o3::TranslatedMemoryFetchAhead,
+    ) -> Option<RiscvFetchAheadDecision> {
+        self.next_fetch_ahead_before_retire_with_translation_policy(translated, false)
+    }
+
+    fn next_producer_forwarded_fetch_ahead_before_retire_with_translation(
+        &self,
+        translated: detailed_o3::TranslatedMemoryFetchAhead,
+    ) -> Option<RiscvFetchAheadDecision> {
+        self.next_fetch_ahead_before_retire_with_translation_policy(translated, true)
+    }
+
+    fn next_fetch_ahead_before_retire_with_translation_policy(
+        &self,
+        translated: detailed_o3::TranslatedMemoryFetchAhead,
+        producer_forwarded_only: bool,
     ) -> Option<RiscvFetchAheadDecision> {
         let fetch_events = self.core.fetch_events();
         let mut state = self.state.lock().expect("riscv core lock");
@@ -217,6 +230,7 @@ impl RiscvCore {
             &fetch_events,
             &completed,
             translated,
+            producer_forwarded_only,
         ) {
             detailed_o3::DetailedFetchAheadCandidate::Ready(pc) => {
                 return Some(RiscvFetchAheadDecision::straight_line(pc));
@@ -438,6 +452,19 @@ impl RiscvCore {
         }
     }
 
+    fn data_access_result_head_translation(
+        &self,
+        bus: &MmioBus,
+    ) -> detailed_o3::TranslatedMemoryFetchAhead {
+        match self.data_access_result_head_route(bus) {
+            DataAccessResultHeadRoute::Memory => {
+                detailed_o3::TranslatedMemoryFetchAhead::CachedMemory
+            }
+            DataAccessResultHeadRoute::Mmio => detailed_o3::TranslatedMemoryFetchAhead::Mmio,
+            DataAccessResultHeadRoute::Blocked => detailed_o3::TranslatedMemoryFetchAhead::Blocked,
+        }
+    }
+
     fn can_retire_completed_fetch_while_fetch_pending_with_translation(
         &self,
         translated: detailed_o3::TranslatedMemoryFetchAhead,
@@ -463,19 +490,4 @@ impl RiscvCore {
 
         can_retire_completed_fetch_with_branch_speculations(&mut state, &fetch_events)
     }
-}
-
-fn producer_forwarded_control_decision(
-    decision: Option<RiscvFetchAheadDecision>,
-) -> Option<RiscvFetchAheadDecision> {
-    decision.filter(|decision| {
-        decision.producer_forwarded_scalar_continuation.is_some()
-            || decision.branch_speculation().is_some_and(|speculation| {
-                matches!(
-                    speculation.target_authority(),
-                    PredictedControlTargetAuthority::ProducerForwarded(_)
-                        | PredictedControlTargetAuthority::ProducerForwardedReturn(_)
-                )
-            })
-    })
 }

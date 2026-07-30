@@ -1,90 +1,9 @@
 use super::*;
 
-impl SystemHostEventPort {
-    fn emit_with_scheduler_checkpoint_on_source(
-        &self,
-        context: &mut SchedulerContext<'_>,
-        event: GuestEvent,
-        component: CheckpointComponentId,
-        capture_prepared: bool,
-    ) -> Result<PartitionEventId, SystemError> {
-        let capture_deadline = matches!(
-            event.kind(),
-            GuestEventKind::Checkpoint { .. } | GuestEventKind::RestoreCheckpoint { .. }
-        )
-        .then(|| {
-            context
-                .now()
-                .checked_add(self.channel.host_latency())
-                .ok_or(SystemError::Scheduler(SchedulerError::TickOverflow {
-                    now: context.now(),
-                    delay: self.channel.host_latency(),
-                }))
-        })
-        .transpose()?;
-        let restore_deadline = capture_deadline
-            .filter(|_| matches!(event.kind(), GuestEventKind::RestoreCheckpoint { .. }));
-        if let Some(deadline) = capture_deadline.filter(|_| !capture_prepared) {
-            self.controller
-                .lock()
-                .expect("system host controller lock")
-                .executor()
-                .prepare_source_local_checkpoint_capture(deadline);
-        }
-        if let Some(deadline) = restore_deadline {
-            self.controller
-                .lock()
-                .expect("system host controller lock")
-                .executor()
-                .prepare_source_local_checkpoint_restore(deadline);
-        }
-        let delivery_controller = Arc::clone(&self.controller);
-        let registration_controller = Arc::clone(&self.controller);
-        let scheduler_event = self.channel.emit_with_scheduler_checkpoint_on_source(
-            context,
-            event,
-            move |delivery, context| {
-                handle_host_delivery_with_scheduler_checkpoint(
-                    context,
-                    delivery,
-                    0,
-                    component,
-                    delivery_controller,
-                );
-            },
-        );
-        let scheduler_event = match scheduler_event {
-            Ok(event) => event,
-            Err(error) => {
-                if let Some(deadline) = capture_deadline {
-                    self.controller
-                        .lock()
-                        .expect("system host controller lock")
-                        .executor()
-                        .release_source_local_checkpoint_capture(deadline);
-                }
-                if let Some(deadline) = restore_deadline {
-                    self.controller
-                        .lock()
-                        .expect("system host controller lock")
-                        .executor()
-                        .release_source_local_checkpoint_restore(deadline);
-                }
-                return Err(error);
-            }
-        };
-        let scheduler = context.checkpoint_access();
-        let event = scheduler
-            .pending_event_snapshot(scheduler_event)
-            .expect("new source-local scheduler checkpoint control delivery is pending");
-        registration_controller
-            .lock()
-            .expect("system host controller lock")
-            .executor_mut()
-            .register_scheduler_checkpoint_control_event(scheduler.instance_id(), event);
-        Ok(scheduler_event)
-    }
-}
+#[path = "source_local_checkpoint/restore_fence.rs"]
+mod restore_fence;
+
+use restore_fence::SourceLocalRestoreFenceOwnership;
 
 impl RiscvTrapEventPort {
     fn emit_guest_event_kind_with_source_local_scheduler_checkpoint(
@@ -93,6 +12,7 @@ impl RiscvTrapEventPort {
         event: GuestEventId,
         kind: GuestEventKind,
         capture_prepared: bool,
+        restore_fence_ownership: Option<Arc<SourceLocalRestoreFenceOwnership>>,
     ) -> Result<PartitionEventId, SystemError> {
         let component =
             self.scheduler_checkpoint_component
@@ -105,6 +25,7 @@ impl RiscvTrapEventPort {
             GuestEvent::new(event, self.source, kind),
             component,
             capture_prepared,
+            restore_fence_ownership,
         )
     }
 
@@ -156,55 +77,151 @@ impl RiscvTrapEventPort {
                 SchedulerCheckpointError::BorrowedSchedulerContextRequired,
             ));
         }
+        let restore_fence_ownership = matches!(kind, GuestEventKind::RestoreCheckpoint { .. })
+            .then(|| Arc::new(SourceLocalRestoreFenceOwnership::default()));
         let preparation = if matches!(kind, GuestEventKind::RestoreCheckpoint { .. }) {
-            source_tick
+            let deadline = source_tick
+                .checked_add(self.host.channel.host_latency())
+                .ok_or(SystemError::Scheduler(SchedulerError::TickOverflow {
+                    now: source_tick,
+                    delay: self.host.channel.host_latency(),
+                }))?;
+            let cleanup_controller = Arc::clone(&self.host.controller);
+            let cleanup_ownership = Arc::clone(
+                restore_fence_ownership
+                    .as_ref()
+                    .expect("restore scheduling owns a fence release token"),
+            );
+            let cleanup = scheduler
+                .schedule_at(source, deadline, move |_| {
+                    if !cleanup_ownership.is_activated() {
+                        cleanup_ownership.release_capture_once(&cleanup_controller, deadline);
+                    }
+                })
+                .map_err(SystemError::Scheduler)?;
+            let preflight = match source_tick
                 .checked_sub(1)
                 .filter(|prepare_tick| *prepare_tick >= scheduler.now())
-                .map(|prepare_tick| {
-                    let deadline = source_tick
-                        .checked_add(self.host.channel.host_latency())
-                        .ok_or(SystemError::Scheduler(SchedulerError::TickOverflow {
-                            now: source_tick,
-                            delay: self.host.channel.host_latency(),
-                        }))?;
-                    let controller = Arc::clone(&self.host.controller);
-                    scheduler
-                        .schedule_at(source, prepare_tick, move |_| {
-                            controller
-                                .lock()
-                                .expect("system host controller lock")
-                                .executor()
-                                .prepare_source_local_checkpoint_capture(deadline);
-                        })
-                        .map_err(SystemError::Scheduler)
-                })
-                .transpose()?
+            {
+                Some(prepare_tick) => {
+                    let prepare_controller = Arc::clone(&self.host.controller);
+                    let prepared = scheduler.schedule_at(source, prepare_tick, move |_| {
+                        let controller = prepare_controller
+                            .lock()
+                            .expect("system host controller lock");
+                        controller
+                            .executor()
+                            .prepare_source_local_checkpoint_capture(deadline);
+                    });
+                    match prepared {
+                        Ok(prepared) => Some(prepared),
+                        Err(error) => {
+                            scheduler
+                                .cancel_event(cleanup)
+                                .expect("new restore cleanup event remains pending");
+                            return Err(SystemError::Scheduler(error));
+                        }
+                    }
+                }
+                None => {
+                    let controller = self
+                        .host
+                        .controller
+                        .lock()
+                        .expect("system host controller lock");
+                    controller
+                        .executor()
+                        .prepare_source_local_checkpoint_capture(deadline);
+                    None
+                }
+            };
+            Some((preflight, cleanup, deadline))
         } else {
             None
         };
         let port = self.clone();
         let capture_prepared = preparation.is_some();
+        let preflight = preparation.and_then(|(preflight, _, _)| preflight);
+        let restore_deadline = preparation.map(|(_, _, deadline)| deadline);
+        let source_fence_ownership = restore_fence_ownership.clone();
         let scheduler_event = match scheduler.schedule_at(source, source_tick, move |context| {
-            port.emit_guest_event_kind_with_source_local_scheduler_checkpoint(
+            let result = port.emit_guest_event_kind_with_source_local_scheduler_checkpoint(
                 context,
                 event,
                 kind,
                 capture_prepared,
-            )
-            .expect("validated source-local scheduler checkpoint control scheduling");
+                source_fence_ownership.clone(),
+            );
+            if let (Ok(_), Some(ownership), Some(deadline)) =
+                (&result, source_fence_ownership.as_ref(), restore_deadline)
+            {
+                let fallback_ownership = Arc::clone(ownership);
+                let fallback_controller = Arc::clone(&port.host.controller);
+                let fallback = context
+                    .schedule_local_after(port.host.channel.host_latency(), move |_| {
+                        fallback_ownership.release_restore_once(
+                            &fallback_controller,
+                            source_tick,
+                            deadline,
+                        );
+                    })
+                    .expect("validated restore fallback cleanup scheduling");
+                let scheduler = context.checkpoint_access();
+                let event = scheduler
+                    .pending_event_snapshot(fallback)
+                    .expect("new restore fallback cleanup is pending");
+                port.host
+                    .controller
+                    .lock()
+                    .expect("system host controller lock")
+                    .executor_mut()
+                    .register_scheduler_checkpoint_control_event(scheduler.instance_id(), event);
+                ownership.activate();
+            }
+            if result.is_err() {
+                if let Some(preflight) = preflight.filter(|preflight| {
+                    context
+                        .checkpoint_access()
+                        .pending_event_snapshot(*preflight)
+                        .is_some()
+                }) {
+                    context
+                        .checkpoint_access()
+                        .cancel_event(preflight)
+                        .expect("restore preflight remains pending after source emit failure");
+                }
+            }
+            result.expect("validated source-local scheduler checkpoint control scheduling");
         }) {
             Ok(event) => event,
             Err(error) => {
-                if let Some(preparation) = preparation {
+                if let Some((preparation, cleanup, deadline)) = preparation {
+                    if let Some(preparation) = preparation {
+                        scheduler
+                            .cancel_event(preparation)
+                            .expect("new restore preparation event remains pending");
+                    } else {
+                        let controller = self
+                            .host
+                            .controller
+                            .lock()
+                            .expect("system host controller lock");
+                        controller
+                            .executor()
+                            .release_source_local_checkpoint_capture(deadline);
+                    }
                     scheduler
-                        .cancel_event(preparation)
-                        .expect("new restore preparation event remains pending");
+                        .cancel_event(cleanup)
+                        .expect("new restore cleanup event remains pending");
                 }
                 return Err(SystemError::Scheduler(error));
             }
         };
-        if let Some(preparation) = preparation {
-            self.register_scheduler_checkpoint_control_event(scheduler, preparation);
+        if let Some((preparation, cleanup, _)) = preparation {
+            if let Some(preparation) = preparation {
+                self.register_scheduler_checkpoint_control_event(scheduler, preparation);
+            }
+            self.register_scheduler_checkpoint_control_event(scheduler, cleanup);
         }
         self.register_scheduler_checkpoint_control_event(scheduler, scheduler_event);
         Ok(scheduler_event)
@@ -236,6 +253,9 @@ mod tests {
     };
 
     use super::*;
+
+    #[path = "restore_fences.rs"]
+    mod restore_fences;
 
     struct SourceLocalFixture {
         controller: Arc<Mutex<SystemHostController>>,
@@ -392,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_source_local_restore_releases_only_its_prepare_reference() {
+    fn failed_source_local_restore_preserves_foreign_prepare_references() {
         let fixture = fixture(3, 2);
         fixture.core.prepare_source_local_checkpoint_capture(100);
         fixture.core.prepare_source_local_checkpoint_restore(100);
@@ -426,39 +446,7 @@ mod tests {
     }
 
     #[test]
-    fn scheduled_restore_prepares_before_same_tick_fetch_admission() {
-        let fixture = fixture(3, 2);
-        let mut scheduler = fixture.scheduler.lock().unwrap();
-        fixture
-            .trap
-            .schedule_host_checkpoint_restore_event_on_source_parallel(
-                &mut scheduler,
-                GuestEventId::new(1),
-                PartitionId::new(0),
-                2,
-                "missing".to_string(),
-            )
-            .unwrap();
-
-        assert_eq!(scheduler.snapshot().total_pending_events(), 2);
-        scheduler.run_next_epoch();
-        assert_eq!(scheduler.now(), 1);
-        assert!(drive_fetch(&fixture, &mut scheduler).is_none());
-
-        run_until_next_host_result(&fixture, &mut scheduler);
-
-        assert!(matches!(
-            fixture.controller.lock().unwrap().action_errors(),
-            [SystemError::MissingCheckpointManifest { label }] if label == "missing"
-        ));
-        assert!(matches!(
-            drive_fetch(&fixture, &mut scheduler),
-            Some(RiscvCoreDriveAction::FetchIssued { .. })
-        ));
-    }
-
-    #[test]
-    fn successful_source_local_restore_scrubs_all_prepare_references() {
+    fn successful_source_local_restore_preserves_foreign_prepare_references() {
         let fixture = fixture(3, 2);
         let mut scheduler = fixture.scheduler.lock().unwrap();
         fixture
@@ -494,6 +482,10 @@ mod tests {
             .unwrap()
             .action_errors()
             .is_empty());
+        assert!(drive_fetch(&fixture, &mut scheduler).is_none());
+        fixture.core.release_source_local_checkpoint_capture(100);
+        assert!(drive_fetch(&fixture, &mut scheduler).is_none());
+        fixture.core.release_source_local_checkpoint_restore(100);
         assert!(matches!(
             drive_fetch(&fixture, &mut scheduler),
             Some(RiscvCoreDriveAction::FetchIssued { .. })
@@ -698,7 +690,7 @@ mod tests {
                                 .schedule_remote_after(source, 2, move |context| {
                                     trap
                                         .emit_guest_event_kind_with_source_local_scheduler_checkpoint(
-                                            context, event, kind, false,
+                                            context, event, kind, false, None,
                                         )
                                         .unwrap();
                                 })

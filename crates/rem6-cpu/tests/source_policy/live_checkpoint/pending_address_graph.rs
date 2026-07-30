@@ -6,9 +6,12 @@ const PENDING_CODEC: &str = "src/riscv_live_checkpoint/codec/pending_address.rs"
 const RUNTIME: &str = "src/o3_runtime_live_checkpoint.rs";
 const PENDING_SET: &str = "src/o3_runtime_pending_address_set.rs";
 const CAPTURE_GRAPH: &str = "src/o3_runtime_live_checkpoint/pending_address/graph.rs";
+const PENDING_TESTS: &str = "src/riscv_live_checkpoint_tests/pending_address.rs";
 const GRAPH_TESTS: &str = "src/riscv_live_checkpoint_tests/pending_address/graph.rs";
 const CODEC_TESTS: &str = "src/riscv_live_checkpoint_tests/pending_address/graph/codec.rs";
 const RESTORE_TESTS: &str = "src/riscv_live_checkpoint_tests/pending_address/graph/restore.rs";
+const CAPTURE_TESTS: &str =
+    "src/riscv_live_checkpoint_tests/pending_address/graph/restore/capture.rs";
 const MATERIALIZATION_TESTS: &str =
     "src/riscv_live_checkpoint_tests/pending_address/graph/restore/materialization.rs";
 const SCHEDULING_TESTS: &str =
@@ -37,8 +40,20 @@ fn pending_address_graph_cpu_sources_are_attached_and_focused() {
             "pending_address/graph.rs",
             "graph",
         ),
+        (
+            PENDING_TESTS,
+            GRAPH_TESTS,
+            "pending_address/graph.rs",
+            "graph",
+        ),
         (GRAPH_TESTS, CODEC_TESTS, "graph/codec.rs", "codec"),
         (GRAPH_TESTS, RESTORE_TESTS, "graph/restore.rs", "restore"),
+        (
+            RESTORE_TESTS,
+            CAPTURE_TESTS,
+            "restore/capture.rs",
+            "capture",
+        ),
         (
             RESTORE_TESTS,
             MATERIALIZATION_TESTS,
@@ -56,13 +71,14 @@ fn pending_address_graph_cpu_sources_are_attached_and_focused() {
     }
 
     for (relative, maximum) in [
-        (GRAPH_POLICY, 280),
+        (GRAPH_POLICY, 290),
         (CODEC, 1_100),
         (PENDING_CODEC, 225),
         (CAPTURE_GRAPH, 625),
         (GRAPH_TESTS, 20),
         (CODEC_TESTS, 750),
         (RESTORE_TESTS, 725),
+        (CAPTURE_TESTS, 175),
         (MATERIALIZATION_TESTS, 175),
         (SCHEDULING_TESTS, 100),
         ("src/riscv_core_checkpoint_restore/pending_address.rs", 125),

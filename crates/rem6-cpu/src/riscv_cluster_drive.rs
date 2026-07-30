@@ -25,6 +25,7 @@ pub(crate) enum PreparedParallelAction {
         cpu: CpuId,
         core: RiscvCore,
         issue: OutstandingFetch,
+        fetch_pc: Option<rem6_memory::Address>,
         fetch_ahead: Option<PreparedRiscvFetchAheadSpeculation>,
         transaction_index: usize,
     },
@@ -197,11 +198,10 @@ pub(crate) fn finish_prepared_parallel_actions(
                 cpu,
                 core,
                 issue,
+                fetch_pc,
                 fetch_ahead,
                 transaction_index,
-            } => match core
-                .record_prepared_fetch_issue_with_prepared_fetch_ahead(issue, fetch_ahead)
-            {
+            } => match core.record_prepared_fetch_issue_at_pc(issue, fetch_pc, fetch_ahead) {
                 Ok(()) => actions.push(RiscvClusterDriveEvent::new(
                     cpu,
                     RiscvCoreDriveAction::FetchIssued {
@@ -409,12 +409,19 @@ pub(crate) fn push_prepared_parallel_fetch_action<F>(
     transaction_cpus: &mut Vec<CpuId>,
     transactions: &mut Vec<ParallelMemoryTransaction>,
     fetch_ahead: Option<PreparedRiscvFetchAheadSpeculation>,
+    fetch_pc: Option<rem6_memory::Address>,
 ) -> Result<(), RiscvClusterError>
 where
     F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome + Send + 'static,
 {
     let (issue, transaction) = core
-        .prepare_fetch_parallel_transaction(tick, transport, fetch_trace, fetch_responder)
+        .prepare_fetch_parallel_transaction_at_pc(
+            tick,
+            transport,
+            fetch_trace,
+            fetch_responder,
+            fetch_pc,
+        )
         .map_err(|error| RiscvClusterError::Core { cpu, error })?;
     let transaction_index = transactions.len();
     transaction_cpus.push(cpu);
@@ -423,6 +430,7 @@ where
         cpu,
         core: core.clone(),
         issue,
+        fetch_pc,
         fetch_ahead,
         transaction_index,
     });
@@ -512,15 +520,14 @@ pub(crate) fn fetch_before_pipeline_is_admitted(core: &RiscvCore, now: u64) -> b
             && core.in_order_fetch_admission().allows_fetch())
 }
 
-impl RiscvCore {
-    pub(crate) fn o3_writeback_wake_blocks_fetch(&self, now: Tick) -> bool {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .o3_writeback_wake
-            .checkpoint_scheduled_wake()
-            .is_some_and(|wake| wake.tick() <= now)
-    }
+pub(crate) fn sync_and_check_fetch_admission(
+    cpu: CpuId,
+    core: &RiscvCore,
+    now: Tick,
+) -> Result<bool, RiscvClusterError> {
+    core.sync_in_order_fetch_state()
+        .map_err(|error| RiscvClusterError::Core { cpu, error })?;
+    Ok(fetch_before_pipeline_is_admitted(core, now))
 }
 
 fn inherited_o3_retirement_suppresses_pipeline(core: &RiscvCore) -> bool {

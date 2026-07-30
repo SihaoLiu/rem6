@@ -3,8 +3,9 @@ use std::sync::{Arc, Mutex};
 use rem6_boot::BootImage;
 use rem6_cpu::{
     decode_sv39_pte_read_response, CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState,
-    CpuTranslationFrontend, CpuTranslationOutcome, CpuTranslationRequest, InOrderPipelineStage,
-    RiscvCore, RiscvCoreDriveAction, RiscvCpuError, RiscvDataAccessEventKind, RiscvLoadReservation,
+    CpuTranslationFrontend, CpuTranslationOutcome, CpuTranslationRequest,
+    InOrderPipelineInstruction, InOrderPipelineSnapshot, InOrderPipelineStage, RiscvCore,
+    RiscvCoreDriveAction, RiscvCpuError, RiscvDataAccessEventKind, RiscvLoadReservation,
     RiscvSv39PageTableResolver, RiscvSv39PteReadRequestError, RiscvSv39PteReadResponseError,
 };
 use rem6_isa_riscv::{
@@ -475,6 +476,42 @@ fn riscv_core_translated_driver_waits_for_data_translation_before_next_fetch() {
 }
 
 #[test]
+fn riscv_core_translated_driver_reconciles_orphaned_restored_fetch_before_admission() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    let config = core.in_order_pipeline_snapshot().config().clone();
+    core.redirect_pc(Address::new(0x8000));
+    core.restore_in_order_pipeline_snapshot(InOrderPipelineSnapshot::with_cycle(
+        config,
+        7,
+        [InOrderPipelineInstruction::new(
+            1,
+            InOrderPipelineStage::Fetch1,
+        )],
+    ))
+    .unwrap();
+    let store = loaded_program_store(0x8000, &[i_type(1, 0, 0x0, 6, 0x13)], &[]);
+
+    assert!(matches!(
+        drive_one_translated_action(
+            &core,
+            store,
+            &mut scheduler,
+            &transport,
+            &TranslationPageMap::new(TranslationPageSize::new(4096).unwrap()),
+        ),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert_eq!(
+        core.in_order_pipeline_snapshot().in_flight(),
+        &[InOrderPipelineInstruction::new(
+            0,
+            InOrderPipelineStage::Fetch1,
+        )]
+    );
+}
+
+#[test]
 fn riscv_core_translated_driver_fetches_cold_younger_window_before_data_issue() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = translated_data_core_with_latency(fetch_route, data_route, 0x8000, 1);
@@ -570,11 +607,9 @@ fn riscv_core_translated_checkpoint_fence_allows_data_progress_without_younger_f
     core.prepare_source_local_checkpoint_restore(100);
     assert_eq!(
         drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
-        None,
-        "restore source fence must pause already-fetched data issue until delivery"
+        None
     );
     core.release_source_local_checkpoint_restore(100);
-
     assert!(matches!(
         drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
         Some(RiscvCoreDriveAction::DataAccessIssued { .. })

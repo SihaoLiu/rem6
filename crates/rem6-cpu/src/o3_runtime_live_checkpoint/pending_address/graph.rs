@@ -198,6 +198,12 @@ fn validate_runtime_graph(
     if rows.is_empty() || rows.len() > MAX_PENDING_ADDRESSES {
         return Err(invalid("pending load graph row count is unsupported"));
     }
+    if rows.windows(2).any(|window| {
+        window[0].sequence >= window[1].sequence
+            || window[0].fetch.request_id().sequence() >= window[1].fetch.request_id().sequence()
+    }) {
+        return Err(invalid("pending load graph is not ordered"));
+    }
     let root = rows[0];
     validate_runtime_authority(runtime, rows)?;
     validate_stable_runtime_owners(runtime, rows)?;

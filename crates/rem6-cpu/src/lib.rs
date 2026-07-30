@@ -926,7 +926,7 @@ struct RiscvCoreState {
     executed_fetches: BTreeSet<MemoryRequestId>,
     pending_fetch_prefix: Option<riscv_execute::RiscvPendingFetchPrefix>,
     source_local_checkpoint_capture_deadlines: BTreeMap<u64, u64>,
-    source_local_checkpoint_restore_deadlines: BTreeMap<u64, u64>,
+    source_local_checkpoint_restore_deadlines: BTreeMap<(Option<u64>, u64), u64>,
     pending_terminal_memory_result:
         Option<riscv_live_retire_window::RiscvPendingTerminalMemoryResult>,
     next_terminal_memory_result_issue_wake_generation: u64,

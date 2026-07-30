@@ -321,6 +321,9 @@ impl RiscvCore {
         tick: Tick,
         transport: &MemoryTransport,
     ) -> Result<Option<PreparedDataAccess>, RiscvCpuError> {
+        if self.source_local_checkpoint_restore_blocks_new_work(tick) {
+            return Ok(None);
+        }
         if let Some(buffered) = self.ready_buffered_o3_effect() {
             return Ok(Some(PreparedDataAccess::BufferedEffect(buffered)));
         }
@@ -475,6 +478,9 @@ impl RiscvCore {
         scheduler: &PartitionedScheduler,
         bus: &MmioBus,
     ) -> Result<Option<OutstandingDataAccess>, RiscvCpuError> {
+        if self.source_local_checkpoint_restore_blocks_new_work(scheduler.now()) {
+            return Ok(None);
+        }
         if self.has_outstanding_data_request() {
             return Ok(None);
         }

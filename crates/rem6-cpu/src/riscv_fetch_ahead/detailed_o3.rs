@@ -289,28 +289,36 @@ pub(super) fn additional_fetch_candidate(
     fetch_events: &[CpuFetchEvent],
     completed: &[&CpuFetchEvent],
     translated: TranslatedMemoryFetchAhead,
+    producer_forwarded_only: bool,
 ) -> DetailedFetchAheadCandidate {
-    if !state.live_retire_gate.detailed_policy_enabled() {
+    if !producer_forwarded_only && !state.live_retire_gate.detailed_policy_enabled() {
         return DetailedFetchAheadCandidate::NotApplicable;
     }
     if translated == TranslatedMemoryFetchAhead::Blocked {
         return DetailedFetchAheadCandidate::Blocked;
     }
-    if let Some(candidate) = producer_forwarded_control_fetch_candidate(state, fetch_events) {
-        return candidate;
+    let producer_forwarded = producer_forwarded_control_fetch_candidate(state, fetch_events)
+        .or_else(|| producer_forwarded_return_fetch_candidate(state, fetch_events))
+        .or_else(|| producer_forwarded_scalar_continuation_fetch_candidate(state, fetch_events))
+        .or_else(|| retained_producer_forwarded_scalar_return_fetch_candidate(state, fetch_events));
+    if let Some(candidate) = producer_forwarded {
+        let explicitly_forwarded = matches!(
+            &candidate,
+            DetailedFetchAheadCandidate::ReadyProducerForwardedScalar { .. }
+                | DetailedFetchAheadCandidate::ReadyPredictedControl {
+                    target_authority: PredictedControlTargetAuthority::ProducerForwarded(_)
+                        | PredictedControlTargetAuthority::ProducerForwardedReturn(_),
+                    ..
+                }
+        );
+        return if !producer_forwarded_only || explicitly_forwarded {
+            candidate
+        } else {
+            DetailedFetchAheadCandidate::Blocked
+        };
     }
-    if let Some(candidate) = producer_forwarded_return_fetch_candidate(state, fetch_events) {
-        return candidate;
-    }
-    if let Some(candidate) =
-        producer_forwarded_scalar_continuation_fetch_candidate(state, fetch_events)
-    {
-        return candidate;
-    }
-    if let Some(candidate) =
-        retained_producer_forwarded_scalar_return_fetch_candidate(state, fetch_events)
-    {
-        return candidate;
+    if producer_forwarded_only {
+        return DetailedFetchAheadCandidate::Blocked;
     }
     if let Some(candidate) =
         retained_data_access_result_window_candidate(state, fetch_events, translated)

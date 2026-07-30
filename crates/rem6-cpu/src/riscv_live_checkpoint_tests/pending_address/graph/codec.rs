@@ -27,6 +27,23 @@ fn pending_store_v2_fixture_decodes_as_one_logical_row() {
 }
 
 #[test]
+fn compute_queue_v2_without_pending_row_decodes_compatibly() {
+    const WAKE_WIRE_BYTES: usize = 8 + 4 + 8 + 8 + 1;
+
+    let expected = compute_payload();
+    let mut encoded = expected.encode().unwrap();
+    let pending_count = encoded.len() - WAKE_WIRE_BYTES - 4;
+    assert_eq!(&encoded[pending_count..pending_count + 4], &[0; 4]);
+    encoded[4] = 2;
+    encoded.splice(pending_count..pending_count + 4, [0]);
+
+    assert_eq!(
+        RiscvO3LiveCheckpointPayload::decode_versioned(&encoded),
+        Ok((2, expected))
+    );
+}
+
+#[test]
 fn pending_load_graph_v3_round_trips_sibling_chain_and_mixed() {
     for (name, producers) in [
         ("siblings", [5, 5, 5]),
@@ -98,6 +115,11 @@ fn pending_load_graph_v3_rejects_malformed_graph_cases() {
         MalformedCase::new(
             "multi-row store",
             multi_row_store,
+            ExpectedMalformed::AnyInvalidShape,
+        ),
+        MalformedCase::new(
+            "atomic root",
+            atomic_root,
             ExpectedMalformed::AnyInvalidShape,
         ),
         MalformedCase::new(
@@ -363,6 +385,14 @@ fn multi_row_store() -> RiscvO3LiveCheckpointPayload {
     value.next_fetch_pc = Address::new(FIRST_LOAD_PC + 8);
     value.next_fetch_request_sequence = FIRST_LOAD_SEQUENCE + 2;
     sync_rows(&mut value);
+    value
+}
+
+fn atomic_root() -> RiscvO3LiveCheckpointPayload {
+    let mut value = pending_load_graph([5, 5, 5]);
+    for pending in &mut value.pending_addresses {
+        pending.root_atomic = true;
+    }
     value
 }
 

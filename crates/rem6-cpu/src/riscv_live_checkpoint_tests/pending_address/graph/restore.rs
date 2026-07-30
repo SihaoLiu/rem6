@@ -12,6 +12,8 @@ use crate::{
     CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore, RiscvCoreCheckpointRestoreInput,
 };
 
+#[path = "restore/capture.rs"]
+mod capture;
 #[path = "restore/materialization.rs"]
 mod materialization;
 #[path = "restore/scheduling.rs"]
@@ -38,11 +40,27 @@ struct PendingLoadGraphCheckpointFixture {
 
 impl PendingLoadGraphCheckpointFixture {
     fn new(producers: [u8; 3], issue_width: usize) -> Self {
-        Self::new_with_root(producers, issue_width, root_event(), Some([1, 2, 3]))
+        Self::new_with_root(
+            producers,
+            issue_width,
+            root_event(),
+            Some([1, 2, 3]),
+            [1, 2, 3],
+        )
+    }
+
+    fn new_with_request_gaps(producers: [u8; 3], issue_width: usize) -> Self {
+        Self::new_with_root(
+            producers,
+            issue_width,
+            root_event(),
+            Some([1, 2, 3]),
+            [1, 3, 4],
+        )
     }
 
     fn new_with_atomic_root(producers: [u8; 3], issue_width: usize) -> Self {
-        Self::new_with_root(producers, issue_width, atomic_root_event(), None)
+        Self::new_with_root(producers, issue_width, atomic_root_event(), None, [1, 2, 3])
     }
 
     fn new_with_root(
@@ -50,11 +68,12 @@ impl PendingLoadGraphCheckpointFixture {
         issue_width: usize,
         root: RiscvCpuExecutionEvent,
         expected_resident_sequences: Option<[u64; 3]>,
+        fetch_request_sequences: [u64; 3],
     ) -> Self {
         let core = graph_core(issue_width);
         core.write_register(reg(2), ROOT_ADDRESS);
 
-        let pending = pending_requests(producers);
+        let pending = pending_requests(producers, fetch_request_sequences);
         {
             let mut cpu = core.core.state.lock().expect("cpu core lock");
             cpu.events = std::iter::once(root.fetch().clone())
@@ -110,7 +129,7 @@ impl PendingLoadGraphCheckpointFixture {
         assert_eq!(core.read_register(reg(ROOT_REGISTER)), ROOT_VALUE);
         core.inner().set_pc(Address::new(next_fetch_pc()));
         core.inner()
-            .advance_sequence_past(request(last_load_sequence()));
+            .advance_sequence_past(request(fetch_request_sequences[2]));
         core.state
             .lock()
             .expect("riscv core lock")
@@ -167,118 +186,6 @@ impl PendingLoadGraphCheckpointFixture {
     fn capture(&self) -> RiscvO3CheckpointProjection {
         self.core.capture_checkpoint_projection(CAPTURED_TICK)
     }
-}
-
-#[test]
-fn pending_load_graph_capture_projects_all_addressless_owners() {
-    let fixture = PendingLoadGraphCheckpointFixture::new([5, 5, 7], 2);
-    let projection = fixture.capture();
-    let live = captured_graph(&projection);
-    let rows = live.pending_addresses.as_slice();
-
-    assert_eq!(
-        live.profile,
-        RiscvO3LiveCheckpointProfile::PendingDataAddress
-    );
-    assert_eq!(live.captured_tick, CAPTURED_TICK);
-    assert_eq!(live.events, []);
-    assert_eq!(live.resident_sequences, [1, 2, 3]);
-    assert_eq!(live.issue_rows, expected_issue_rows());
-    assert_eq!(live.rename_rows, []);
-    assert_eq!(live.executed_fetch_requests, []);
-    assert_eq!(live.issued_fetch_requests, []);
-    assert!(live.completed_result.is_none());
-    assert!(live.reservation.is_none());
-    assert_eq!(live.service.requested_tick, CAPTURED_TICK);
-    assert_eq!(live.wake.tick, CAPTURED_TICK);
-    assert_eq!(
-        live.wake.scheduler_instance_raw,
-        fixture.scheduler.checkpoint_raw()
-    );
-    assert_payload_rows(rows, [5, 5, 7], [0, 0, 2], [true, true, false]);
-    assert_stable_graph_owner_set(projection.stable(), rows);
-    assert_eq!(projection.replay().hart.pc(), FIRST_LOAD_PC);
-
-    let extra_fetch = PendingLoadGraphCheckpointFixture::new([5, 5, 7], 2);
-    extra_fetch
-        .core
-        .core
-        .state
-        .lock()
-        .expect("cpu core lock")
-        .events
-        .push(completed_fetch(
-            next_fetch_pc(),
-            last_load_sequence() + 1,
-            ld(9, ROOT_REGISTER),
-        ));
-    extra_fetch
-        .core
-        .inner()
-        .advance_sequence_past(request(last_load_sequence() + 1));
-    assert!(matches!(
-        extra_fetch.capture().live_capture(),
-        RiscvO3LiveCheckpointCapture::Rejected
-    ));
-
-    let atomic_root = PendingLoadGraphCheckpointFixture::new_with_atomic_root([5, 5, 7], 2);
-    assert!(matches!(
-        atomic_root.capture().live_capture(),
-        RiscvO3LiveCheckpointCapture::Rejected
-    ));
-}
-
-#[test]
-fn pending_load_graph_capture_normalizes_only_matching_fetch_authorizations() {
-    let fixture = PendingLoadGraphCheckpointFixture::new([5, 6, 7], 4);
-    install_graph_authorizations(&fixture.core, [5, 6, 7]);
-
-    let projection = fixture.capture();
-    assert_eq!(captured_graph(&projection).pending_addresses.len(), 3);
-    let destination = graph_core(fixture.issue_width);
-    install_graph_projection(&destination, &fixture.core, &projection);
-    assert!(destination
-        .state
-        .lock()
-        .expect("riscv core lock")
-        .memory_result_window_authorizations
-        .is_empty());
-
-    let extra = PendingLoadGraphCheckpointFixture::new([5, 6, 7], 4);
-    install_graph_authorizations(&extra.core, [5, 6, 7]);
-    {
-        let mut state = extra.core.state.lock().expect("riscv core lock");
-        let authorization = state.memory_result_window_authorizations[&request(1)];
-        state
-            .memory_result_window_authorizations
-            .insert(request(99), authorization);
-    }
-    assert!(matches!(
-        extra.capture().live_capture(),
-        RiscvO3LiveCheckpointCapture::Rejected
-    ));
-
-    let mismatched = PendingLoadGraphCheckpointFixture::new([5, 6, 7], 4);
-    install_graph_authorizations(&mismatched.core, [5, 6, 7]);
-    mismatched
-        .core
-        .state
-        .lock()
-        .expect("riscv core lock")
-        .memory_result_window_authorizations
-        .insert(
-            request(2),
-            O3MemoryResultWindowAuthorization::dependent_for_test(
-                Some(reg(7)),
-                reg(5),
-                MemoryWidth::Doubleword,
-                Immediate::new(0),
-            ),
-        );
-    assert!(matches!(
-        mismatched.capture().live_capture(),
-        RiscvO3LiveCheckpointCapture::Rejected
-    ));
 }
 
 #[test]
@@ -375,22 +282,28 @@ fn graph_core(issue_width: usize) -> RiscvCore {
     core
 }
 
-fn pending_requests(producers: [u8; 3]) -> Vec<O3PendingDataAddressRequest> {
+fn pending_requests(
+    producers: [u8; 3],
+    fetch_request_sequences: [u64; 3],
+) -> Vec<O3PendingDataAddressRequest> {
+    let mut predecessor = request(ROOT_FETCH_SEQUENCE);
     producers
         .into_iter()
         .enumerate()
         .map(|(index, producer)| {
-            let sequence = FIRST_LOAD_SEQUENCE + index as u64;
+            let fetch_request_sequence = fetch_request_sequences[index];
             let pc = FIRST_LOAD_PC + 4 * index as u64;
             let destination = FIRST_DESTINATION_REGISTER + index as u8;
             let raw = ld(destination, producer);
-            O3PendingDataAddressRequest::new(
-                request(sequence - 1),
-                completed_fetch(pc, sequence, raw),
-                vec![request(sequence)],
+            let pending = O3PendingDataAddressRequest::new(
+                predecessor,
+                completed_fetch(pc, fetch_request_sequence, raw),
+                vec![request(fetch_request_sequence)],
                 RiscvInstruction::decode_with_length(raw).unwrap(),
                 reg(producer),
-            )
+            );
+            predecessor = request(fetch_request_sequence);
+            pending
         })
         .collect()
 }
@@ -400,7 +313,7 @@ fn install_graph_authorizations(core: &RiscvCore, producers: [u8; 3]) {
     let first = O3MemoryResultWindowAuthorization::resolved_for_test(
         Some(reg(FIRST_DESTINATION_REGISTER)),
         O3MemoryResultWindowRoute::Memory,
-        AddressRange::new(Address::new(21), AccessSize::new(8).unwrap()).unwrap(),
+        AddressRange::new(Address::new(ROOT_VALUE), AccessSize::new(8).unwrap()).unwrap(),
         O3MemoryResultWindowRole::Head,
     );
     state

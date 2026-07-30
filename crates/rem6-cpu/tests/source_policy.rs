@@ -4371,6 +4371,9 @@ fn producer_forwarded_pending_data_escape_is_fetch_only() {
     let fetch = production_rust_source(
         &fs::read_to_string(crate_dir.join("src/riscv_fetch_ahead.rs")).unwrap(),
     );
+    let detailed = production_rust_source(
+        &fs::read_to_string(crate_dir.join("src/riscv_fetch_ahead/detailed_o3.rs")).unwrap(),
+    );
     let drive =
         production_rust_source(&fs::read_to_string(crate_dir.join("src/riscv_drive.rs")).unwrap());
     let cluster = production_rust_source(
@@ -4411,29 +4414,50 @@ fn producer_forwarded_pending_data_escape_is_fetch_only() {
             "parallel producer-forwarded authority field remains: `{legacy}`"
         );
     }
-    let decision_filter = rust_function_definition(&driver, "producer_forwarded_control_decision")
-        .expect("missing producer_forwarded_control_decision definition");
+    assert!(
+        !driver.contains("producer_forwarded_control_decision"),
+        "pending-data fetch must restrict candidate selection instead of filtering a mutated decision"
+    );
+    let restricted_driver = rust_function_definition(
+        &driver,
+        "next_producer_forwarded_fetch_ahead_before_retire_with_translation",
+    )
+    .expect("missing producer-forwarded-only fetch driver");
+    assert!(
+        restricted_driver
+            .contains("next_fetch_ahead_before_retire_with_translation_policy(translated, true)"),
+        "the restricted driver must select producer-forwarded candidates before mutation"
+    );
+    let candidate = rust_function_definition(&detailed, "additional_fetch_candidate")
+        .expect("missing detailed O3 fetch candidate selector");
     for marker in [
-        "producer_forwarded_scalar_continuation.is_some()",
+        "ReadyProducerForwardedScalar",
         "PredictedControlTargetAuthority::ProducerForwarded(",
         "PredictedControlTargetAuthority::ProducerForwardedReturn(",
     ] {
         assert!(
-            decision_filter.contains(marker),
-            "the fetch-only decision filter must require carried authority marker `{marker}`"
+            candidate.contains(marker),
+            "the fetch-only candidate gate must require carried authority marker `{marker}`"
         );
     }
+    assert!(
+        candidate.find("if producer_forwarded_only").unwrap()
+            < candidate
+                .find("retained_data_access_result_window_candidate")
+                .unwrap(),
+        "producer-forwarded-only selection must stop before result-window candidates"
+    );
     assert_eq!(
         driver.matches("(!self.has_pending_fetch())").count(),
         2,
         "both pending-data entry points must reject an already pending fetch before filtering"
     );
-    assert!(
+    assert_eq!(
         driver
-            .matches("producer_forwarded_control_decision(")
-            .count()
-            >= 3,
-        "pending-data entry points must apply the carried-authority filter directly"
+            .matches("next_producer_forwarded_fetch_ahead_before_retire_with_translation(")
+            .count(),
+        3,
+        "both pending-data entry points must call the focused candidate gate directly"
     );
     assert_eq!(
         drive.matches(direct_entry).count(),
@@ -6580,6 +6604,11 @@ fn o3_runtime_writeback_lives_in_focused_module() {
             "writeback ownership root still owns extracted projection `{anchor}`"
         );
     }
+    assert!(
+        ownership_projection
+            .contains("pub(in crate::o3_runtime::o3_runtime_writeback) fn from_aggregate("),
+        "writeback aggregate projection must remain private to its original writeback owner"
+    );
     for redundant in [
         "live_writeback_cycle_ticks",
         "live_writeback_ready_rows_by_tick",
@@ -6925,7 +6954,7 @@ fn riscv_o3_writeback_wake_lives_in_focused_module() {
         "struct RiscvO3WritebackWakeState",
         "scheduled: Option<RiscvO3WritebackWake>",
         "detached: Vec<RiscvO3WritebackWake>",
-        "fn set_desired_tick(",
+        "fn set_desired_tick_with_fetch_bypass(",
         "take_if(|wake| desired.is_none_or(|tick| tick < wake.tick()))",
         "self.detached.push(wake);",
     ];

@@ -71,4 +71,17 @@ fn pending_load_graph_restore_reenters_publication_tick_for_chain_dependency() {
         state.o3_runtime.live_issue_service_tick(),
         Some(CAPTURED_TICK)
     );
+    drop(state);
+
+    destination.mark_o3_writeback_wake_scheduled(fixture.scheduler, fixture.wake);
+    destination.mark_o3_writeback_wake_fired(CAPTURED_TICK);
+
+    let state = destination.state.lock().expect("riscv core lock");
+    assert_eq!(
+        state
+            .o3_runtime
+            .pending_data_address_selected_issue_ticks_for_test(),
+        [Some(CAPTURED_TICK), None, None]
+    );
+    assert_eq!(state.o3_runtime.live_issue_service_tick(), None);
 }

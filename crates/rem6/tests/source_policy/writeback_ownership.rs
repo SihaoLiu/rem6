@@ -102,7 +102,7 @@ const TWO_PENDING_RESULT_ADDRESS_CHILD_MODULES: [ExpectedModuleDeclaration; 1] =
         name: "boundaries",
         path: "two_pending/boundaries.rs",
     }];
-const THREE_PENDING_RESULT_ADDRESS_CHILD_MODULES: [ExpectedModuleDeclaration; 2] = [
+const THREE_PENDING_RESULT_ADDRESS_CHILD_MODULES: [ExpectedModuleDeclaration; 3] = [
     ExpectedModuleDeclaration {
         name: "boundaries",
         path: "three_pending/boundaries.rs",
@@ -110,6 +110,10 @@ const THREE_PENDING_RESULT_ADDRESS_CHILD_MODULES: [ExpectedModuleDeclaration; 2]
     ExpectedModuleDeclaration {
         name: "fixture",
         path: "three_pending/fixture.rs",
+    },
+    ExpectedModuleDeclaration {
+        name: "live_checkpoint",
+        path: "three_pending/live_checkpoint.rs",
     },
 ];
 const RESULT_BOUNDARY_SUPPORT_MODULES: [ExpectedModuleDeclaration; 1] =
@@ -1762,6 +1766,8 @@ fn writeback_three_pending_result_address_module_policy_rejects_wrong_ownership(
 mod boundaries;
 #[path = "three_pending/fixture.rs"]
 mod fixture;
+#[path = "three_pending/live_checkpoint.rs"]
+mod live_checkpoint;
 "#;
     assert!(module_declaration_failures(
         "synthetic.rs",
@@ -1774,6 +1780,7 @@ mod fixture;
         "#[path = \"three_pending/boundaries.rs\"]\nmod boundaries;",
         "#[path = \"wrong.rs\"]\nmod boundaries;\n#[path = \"three_pending/fixture.rs\"]\nmod fixture;",
         "#[path = \"three_pending/boundaries.rs\"]\nmod boundaries;\n#[path = \"three_pending/fixture.rs\"]\nmod fixture {}",
+        "#[path = \"three_pending/boundaries.rs\"]\nmod boundaries;\n#[path = \"three_pending/fixture.rs\"]\nmod fixture;\n#[path = \"wrong.rs\"]\nmod live_checkpoint;",
     ] {
         assert!(!module_declaration_failures(
             "synthetic.rs",

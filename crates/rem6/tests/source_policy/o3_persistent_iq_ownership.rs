@@ -303,7 +303,7 @@ fn o3_persistent_iq_ledger_claims_match_executable_evidence() {
         assert!(cpu.contains(claim), "CPU evidence is missing `{claim}`");
     }
     assert!(cpu.contains(
-        "Pre-response producer transport, general IQ shapes, multiple pending-address rows, materialized or submitted stores, dependent atomics, translated/MMIO memory, broader memory/result state, broad O3 restoration, and a general O3 engine remain non-restorable."
+        "Pre-response producer transport, materialized or submitted pending-address rows, dependent atomics, translated/MMIO pending-address rows, nonadjacent or fourth-and-deeper pending-address graphs, broader memory/result state, broad O3 restoration, restorable live transport ownership, and a general O3 engine remain non-restorable."
     ));
     let normalized_ledger = normalized_policy_text(&ledger);
     for broad_claim in ["persistent vector arithmetic iq", "system issue support"] {

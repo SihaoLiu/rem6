@@ -8,10 +8,13 @@ const CODEC: &str = "src/riscv_live_checkpoint/codec.rs";
 const FETCH: &str = "src/riscv_live_checkpoint/fetch/pending_address.rs";
 const CAPTURE: &str = "src/o3_runtime_live_checkpoint/pending_address.rs";
 const CAPTURE_GRAPH: &str = "src/o3_runtime_live_checkpoint/pending_address/graph.rs";
+const PAYLOAD_GRAPH: &str = "src/riscv_live_checkpoint/pending_address/graph.rs";
 const TESTS: &str = "src/riscv_live_checkpoint_tests/pending_address/runtime.rs";
 const CODEC_TESTS: &str = "src/riscv_live_checkpoint_tests/pending_address/runtime/codec.rs";
 const RESTORE_TESTS: &str = "src/riscv_live_checkpoint_tests/pending_address/runtime/restore.rs";
 const GRAPH_TESTS: &str = "src/riscv_live_checkpoint_tests/pending_address/graph/restore.rs";
+const GRAPH_CAPTURE_TESTS: &str =
+    "src/riscv_live_checkpoint_tests/pending_address/graph/restore/capture.rs";
 const MATERIALIZATION_TESTS: &str =
     "src/riscv_live_checkpoint_tests/pending_address/graph/restore/materialization.rs";
 
@@ -62,6 +65,12 @@ fn pending_address_live_checkpoint_cpu_sources_are_attached_and_focused() {
         ),
         (
             GRAPH_TESTS,
+            GRAPH_CAPTURE_TESTS,
+            "restore/capture.rs",
+            "capture",
+        ),
+        (
+            GRAPH_TESTS,
             MATERIALIZATION_TESTS,
             "restore/materialization.rs",
             "materialization",
@@ -71,7 +80,7 @@ fn pending_address_live_checkpoint_cpu_sources_are_attached_and_focused() {
     }
 
     for (relative, maximum) in [
-        (POLICY, 260),
+        (POLICY, 360),
         ("src/riscv_live_checkpoint/pending_address.rs", 180),
         ("src/riscv_live_checkpoint/codec/pending_address.rs", 260),
         ("src/riscv_live_checkpoint/fetch.rs", 220),
@@ -86,6 +95,7 @@ fn pending_address_live_checkpoint_cpu_sources_are_attached_and_focused() {
         (CODEC_TESTS, 500),
         (RESTORE_TESTS, 500),
         (GRAPH_TESTS, 750),
+        (GRAPH_CAPTURE_TESTS, 175),
         (MATERIALIZATION_TESTS, 240),
     ] {
         let path = crate_dir.join(relative);
@@ -137,10 +147,16 @@ fn pending_address_capture_and_fetch_ownership_are_mutation_locked() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let fetch = fs::read_to_string(crate_dir.join(FETCH)).unwrap();
     let capture = fs::read_to_string(crate_dir.join(CAPTURE)).unwrap();
+    let payload_graph = fs::read_to_string(crate_dir.join(PAYLOAD_GRAPH)).unwrap();
     let capture_graph = fs::read_to_string(crate_dir.join(CAPTURE_GRAPH)).unwrap();
     let tests = pending_address_tests(crate_dir);
     assert!(pending_fetch_contract(&fetch, &tests));
-    assert!(pending_capture_contract(&capture, &capture_graph, &tests));
+    assert!(pending_capture_contract(
+        &capture,
+        &payload_graph,
+        &capture_graph,
+        &tests
+    ));
 
     let generic = fetch.replacen("events: Vec::new(),", "events: state.events.clone(),", 1);
     assert_ne!(generic, fetch, "generic-event mutation must apply");
@@ -154,13 +170,55 @@ fn pending_address_capture_and_fetch_ownership_are_mutation_locked() {
     assert_ne!(materialized, capture, "materialization mutation must apply");
     assert!(!pending_capture_contract(
         &materialized,
+        &payload_graph,
         &capture_graph,
         &tests
     ));
 
     let atomic = capture_graph.replacen("|| row.root_head.atomic_head", "|| false", 1);
     assert_ne!(atomic, capture_graph, "atomic graph mutation must apply");
-    assert!(!pending_capture_contract(&capture, &atomic, &tests));
+    assert!(!pending_capture_contract(
+        &capture,
+        &payload_graph,
+        &atomic,
+        &tests
+    ));
+
+    let request_order = ">= window[1].fetch.request_id().sequence()";
+    let wrong_request_order = "< window[1].fetch.request_id().sequence()";
+    let mut restore_mutation = capture_graph.clone();
+    let restore_order = restore_mutation
+        .rfind(request_order)
+        .expect("restore request-order guard");
+    restore_mutation.replace_range(
+        restore_order..restore_order + request_order.len(),
+        wrong_request_order,
+    );
+    for (name, payload, runtime) in [
+        (
+            "payload request order",
+            payload_graph.replacen(request_order, wrong_request_order, 1),
+            capture_graph.clone(),
+        ),
+        (
+            "capture request order",
+            payload_graph.clone(),
+            capture_graph.replacen(request_order, wrong_request_order, 1),
+        ),
+        (
+            "restore request order",
+            payload_graph.clone(),
+            restore_mutation,
+        ),
+    ] {
+        assert!(
+            payload != payload_graph || runtime != capture_graph,
+            "{name} mutation must apply"
+        );
+        assert!(!pending_capture_contract(
+            &capture, &payload, &runtime, &tests
+        ));
+    }
 }
 
 fn wire_contract(codec: &str, tests: &str) -> bool {
@@ -196,7 +254,12 @@ fn pending_fetch_contract(source: &str, tests: &str) -> bool {
         && tests.contains("pending_store_capture_keeps_generic_execution_events_empty")
 }
 
-fn pending_capture_contract(source: &str, graph_source: &str, tests: &str) -> bool {
+fn pending_capture_contract(
+    source: &str,
+    payload_graph_source: &str,
+    graph_source: &str,
+    tests: &str,
+) -> bool {
     let Some(capture) = unconditional_rust_function_definition(source, "capture") else {
         return false;
     };
@@ -204,9 +267,34 @@ fn pending_capture_contract(source: &str, graph_source: &str, tests: &str) -> bo
     else {
         return false;
     };
+    let Some(payload_validate) =
+        unconditional_rust_function_definition(payload_graph_source, "validate")
+    else {
+        return false;
+    };
+    let Some(graph_capture) =
+        unconditional_rust_function_definition(graph_source, "validate_runtime_graph")
+    else {
+        return false;
+    };
+    let Some(graph_authority) =
+        unconditional_rust_function_definition(graph_source, "validate_runtime_authority")
+    else {
+        return false;
+    };
+    let Some(graph_restore) =
+        unconditional_rust_function_definition(graph_source, "validate_payload_shape")
+    else {
+        return false;
+    };
     let capture = compact_rust_code(&capture);
     let store_capture = compact_rust_code(&store_capture);
-    let graph_capture = compact_rust_code(&production_rust_source(graph_source));
+    let payload_validate = compact_rust_code(&payload_validate);
+    let graph_capture = compact_rust_code(&graph_capture);
+    let graph_authority = compact_rust_code(&graph_authority);
+    let graph_restore = compact_rust_code(&graph_restore);
+    let request_order =
+        "window[0].fetch.request_id().sequence()>=window[1].fetch.request_id().sequence()";
     capture.contains("runtime.pending_data_addresses.is_empty()")
         && capture.contains("capture_store(runtime,captured_tick,resident_sequences)")
         && capture.contains("graph::capture(runtime,captured_tick,resident_sequences)")
@@ -218,12 +306,22 @@ fn pending_capture_contract(source: &str, graph_source: &str, tests: &str) -> bo
         && graph_capture.contains("row.selected_issue_tick.is_some()")
         && graph_capture.contains("row.materialized.is_some()")
         && graph_capture.contains("||row.root_head.atomic_head")
-        && graph_capture.contains("runtime.pending_data_accesses.is_empty()")
-        && graph_capture.contains("runtime.live_data_accesses.is_empty()")
-        && graph_capture.contains("live_data_access_younger_sequences")
+        && graph_capture.contains("validate_runtime_authority(runtime,rows)?")
+        && graph_authority.contains("runtime.pending_data_accesses.is_empty()")
+        && graph_authority.contains("runtime.live_data_accesses.is_empty()")
+        && graph_authority.contains("live_data_access_younger_sequences")
+        && payload_validate.contains(request_order)
+        && graph_capture.contains(request_order)
+        && graph_restore.contains(request_order)
         && tests.contains("pending_store_capture_uses_pending_profile_after_producer_commit")
         && tests.contains("pending_store_rebound_wake_materializes_restored_request")
         && tests.contains("pending_load_graph_capture_projects_all_addressless_owners")
+        && tests.contains(
+            "pending_load_graph_capture_restore_accepts_independent_request_sequence_gaps",
+        )
+        && tests.contains("pending_load_graph_v3_accepts_independent_root_and_row_request_gaps")
+        && tests
+            .contains("pending_load_graph_restore_accepts_independent_root_and_row_request_gaps")
 }
 
 fn pending_address_tests(crate_dir: &Path) -> String {
@@ -232,6 +330,7 @@ fn pending_address_tests(crate_dir: &Path) -> String {
         CODEC_TESTS,
         RESTORE_TESTS,
         GRAPH_TESTS,
+        GRAPH_CAPTURE_TESTS,
         MATERIALIZATION_TESTS,
     ]
     .map(|path| fs::read_to_string(crate_dir.join(path)).unwrap())

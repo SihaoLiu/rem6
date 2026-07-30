@@ -77,12 +77,12 @@ impl RiscvCore {
         if !fetch_blocked && fetch_admission.allows_fetch() {
             if let Some(decision) = self.next_pending_data_fetch_ahead(pending_data_blocks) {
                 let fetch_ahead = self.prepare_fetch_ahead_speculation(&decision)?;
-                self.set_fetch_ahead_pc(decision.pc());
-                let event = self.issue_next_fetch_with_prepared_fetch_ahead(
+                let event = self.issue_next_fetch_with_prepared_fetch_ahead_at_pc(
                     scheduler,
                     transport,
                     fetch_trace,
                     fetch_responder,
+                    Some(decision.pc()),
                     fetch_ahead,
                 )?;
                 return Ok(Some(RiscvCoreDriveAction::FetchIssued { event }));
